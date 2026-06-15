@@ -59,6 +59,7 @@ class SectionLabel(QLabel):
 class PredictWidget(QWidget):
     _log_signal = pyqtSignal(str)
     _done_signal = pyqtSignal(object, object)
+    _finish_signal = pyqtSignal()
 
     def __init__(self, viewer):
         super().__init__()
@@ -212,6 +213,7 @@ class PredictWidget(QWidget):
 
         self._log_signal.connect(self._append_log)
         self._done_signal.connect(self._show_results)
+        self._finish_signal.connect(self._on_done)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -324,8 +326,7 @@ class PredictWidget(QWidget):
             except Exception as e:
                 self._log_signal.emit(f"[ERROR] {e}")
             finally:
-                from PyQt6.QtCore import QMetaObject
-                QMetaObject.invokeMethod(self, "_on_done", Qt.ConnectionType.QueuedConnection)
+                self._finish_signal.emit()
 
         self._pred_thread = threading.Thread(target=run, daemon=True)
         self._pred_thread.start()

@@ -66,6 +66,7 @@ class SectionLabel(QLabel):
 
 class TrainWidget(QWidget):
     _log_signal = pyqtSignal(str)
+    _finish_signal = pyqtSignal()
 
     def __init__(self, viewer):
         super().__init__()
@@ -237,6 +238,7 @@ class TrainWidget(QWidget):
         self.setMinimumWidth(290)
 
         self._log_signal.connect(self._append_log)
+        self._finish_signal.connect(self._on_finish)
 
         self._timer = QTimer()
         self._timer.setInterval(1000)
@@ -414,8 +416,7 @@ class TrainWidget(QWidget):
             self._timer.stop()
 
     def _finish_training(self):
-        from PyQt6.QtCore import QMetaObject, Q_ARG
-        QMetaObject.invokeMethod(self, "_on_finish", Qt.ConnectionType.QueuedConnection)
+        self._finish_signal.emit()
 
     def _on_finish(self):
         self.start_btn.setEnabled(True)
