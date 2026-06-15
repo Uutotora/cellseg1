@@ -354,7 +354,12 @@ class PredictWidget(QWidget):
 
         self.viewer.add_image(image_arr, name=f"{name}_image")
         if label_mask is not None and label_mask.max() > 0:
-            self.viewer.add_labels(label_mask.astype(np.int32), name=f"{name}_masks")
+            labels_layer = self.viewer.add_labels(
+                label_mask.astype(np.int32),
+                name=f"{name}_masks",
+                opacity=0.7,
+            )
+            labels_layer.contour = 2
         self.viewer.reset_view()
 
     def _append_log(self, text):
