@@ -399,7 +399,20 @@ def _predict(config):
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     img_resized = resize_image(img_rgb, config["resize_size"])
-    label_mask = predict_images(config, [img_resized])[0]
+    label_mask_small = predict_images(config, [img_resized])[0]
+
+    # Scale mask back to original image dimensions (nearest-neighbor to keep integer labels)
+    orig_h, orig_w = img_rgb.shape[:2]
+    if label_mask_small.shape != (orig_h, orig_w):
+        import cv2
+        label_mask = cv2.resize(
+            label_mask_small.astype(np.float32),
+            (orig_w, orig_h),
+            interpolation=cv2.INTER_NEAREST,
+        ).astype(label_mask_small.dtype)
+    else:
+        label_mask = label_mask_small
+
     return img_rgb, label_mask
 
 

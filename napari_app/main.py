@@ -1,7 +1,6 @@
 import sys
 import os
 
-# Ensure project root is on path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -17,8 +16,12 @@ def main():
     train_widget = TrainWidget(viewer)
     predict_widget = PredictWidget(viewer)
 
-    viewer.window.add_dock_widget(train_widget, name="Train", area="right")
-    viewer.window.add_dock_widget(predict_widget, name="Predict", area="right")
+    train_dock = viewer.window.add_dock_widget(train_widget, name="Train", area="right")
+    predict_dock = viewer.window.add_dock_widget(predict_widget, name="Predict", area="right")
+
+    # Set minimum width so controls are not clipped
+    for dock in (train_dock, predict_dock):
+        dock.setMinimumWidth(340)
 
     napari.run()
 
