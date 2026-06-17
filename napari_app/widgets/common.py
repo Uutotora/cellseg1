@@ -5,17 +5,32 @@ from PyQt6.QtWidgets import (
 from napari_app.theme import BORDER, DIM, TEXT, ACCENT
 
 
-def section_header(text: str) -> QLabel:
-    """Static section label — no toggle, always visible."""
+def section_header(text: str) -> QWidget:
+    """Static section label with blue left-accent bar."""
+    container = QWidget()
+    container.setContentsMargins(0, 0, 0, 0)
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 14, 0, 5)
+    row.setSpacing(8)
+
+    bar = QFrame()
+    bar.setFixedWidth(2)
+    bar.setFixedHeight(11)
+    bar.setStyleSheet(f"background: {ACCENT}; border-radius: 1px;")
+
     lbl = QLabel(text.upper())
     lbl.setStyleSheet(
         f"color: {DIM};"
-        f"font-size: 10px;"
+        f"font-size: 11px;"
         f"font-weight: 700;"
-        f"letter-spacing: 1.8px;"
-        f"padding: 14px 0 5px 0;"
+        f"letter-spacing: 1.5px;"
     )
-    return lbl
+
+    row.addWidget(bar)
+    row.addWidget(lbl)
+    row.addStretch()
+    container.setLayout(row)
+    return container
 
 
 def divider() -> QFrame:
@@ -49,13 +64,8 @@ class CollapsibleSection(QWidget):
         vbox.setSpacing(6)
         vbox.setContentsMargins(0, 0, 0, 0)
 
-        # static header label instead of a toggle button
-        hdr = QLabel(title.upper())
-        hdr.setStyleSheet(
-            f"color: {DIM}; font-size: 10px; font-weight: 700;"
-            f"letter-spacing: 1.8px; padding: 12px 0 5px 0;"
-        )
-        vbox.addWidget(hdr)
+        # static header — matches section_header() style
+        vbox.addWidget(section_header(title))
 
         self._content = QWidget()
         self._cl = QVBoxLayout()

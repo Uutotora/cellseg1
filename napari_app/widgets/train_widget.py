@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
     QProgressBar, QFileDialog, QScrollArea,
-    QTextEdit, QSizePolicy, QFrame,
+    QTextEdit, QSizePolicy, QFrame, QAbstractSpinBox,
 )
 from napari_app.widgets.log_window import get_log_window
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -48,6 +48,7 @@ def _pick_dir(parent, le, start=None):
         parent, "Select folder", start or le.text() or str(Path.home()), _DLG)
     if p:
         le.setText(p)
+        le.setToolTip(p)
 
 
 def _pick_file(parent, le, caption, ext="All (*)", start=None):
@@ -56,6 +57,7 @@ def _pick_file(parent, le, caption, ext="All (*)", start=None):
         ext, options=_DLG)
     if p:
         le.setText(p)
+        le.setToolTip(p)
 
 
 def _pick_save(parent, le):
@@ -226,6 +228,7 @@ class TrainWidget(QWidget):
 
         self.lora_rank = QSpinBox()
         self.lora_rank.setRange(1, 64); self.lora_rank.setValue(4)
+        self.lora_rank.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.lora_rank.valueChanged.connect(self._update_eff)
         L.addLayout(_param_row("LoRA rank", self.lora_rank,
             "Adapter size. Higher = more parameters = better accuracy, more memory."))
@@ -244,15 +247,18 @@ class TrainWidget(QWidget):
 
         self.epochs = QSpinBox()
         self.epochs.setRange(1, 5000); self.epochs.setValue(300)
+        self.epochs.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         L.addLayout(_param_row("Epochs", self.epochs))
 
         self.batch_size = QSpinBox()
         self.batch_size.setRange(1, 16); self.batch_size.setValue(1)
+        self.batch_size.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.batch_size.valueChanged.connect(self._update_eff)
         L.addLayout(_param_row("Batch size", self.batch_size))
 
         self.grad_accum = QSpinBox()
         self.grad_accum.setRange(1, 128); self.grad_accum.setValue(32)
+        self.grad_accum.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.grad_accum.valueChanged.connect(self._update_eff)
         L.addLayout(_param_row("Grad accum", self.grad_accum,
             "Effective batch = batch × accum. For 18 GB MPS: 1×32 = 32."))
@@ -260,6 +266,7 @@ class TrainWidget(QWidget):
         self.lr = QDoubleSpinBox()
         self.lr.setDecimals(5); self.lr.setRange(1e-6, 1.0)
         self.lr.setSingleStep(1e-4); self.lr.setValue(3e-3)
+        self.lr.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         L.addLayout(_param_row("Learning rate", self.lr))
 
         self.device = QComboBox(); self._populate_devices()

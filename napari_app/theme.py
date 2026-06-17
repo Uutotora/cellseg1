@@ -13,7 +13,7 @@ WIDGET_SS = f"""
 QWidget {{
     background: {BG};
     color: {TEXT};
-    font-family: -apple-system, "SF Pro Text", Arial, sans-serif;
+    font-family: "Helvetica Neue", Arial, sans-serif;
     font-size: 13px;
 }}
 QScrollArea, QScrollArea > QWidget > QWidget {{
@@ -69,7 +69,7 @@ QSpinBox, QDoubleSpinBox {{
 QSpinBox:focus, QDoubleSpinBox:focus {{ border-color: {ACCENT}; }}
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
-    background: {BORDER}; border: none; width: 16px; border-radius: 2px;
+    width: 0px; border: none;
 }}
 
 QProgressBar {{

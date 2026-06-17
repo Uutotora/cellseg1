@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QDoubleSpinBox, QSpinBox,
     QFileDialog, QScrollArea, QProgressBar, QFrame,
+    QAbstractSpinBox,
 )
 from napari_app.widgets.log_window import get_log_window
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -50,6 +51,7 @@ def _pick_file(parent, line_edit, caption, ext="All (*)"):
     p, _ = QFileDialog.getOpenFileName(parent, caption, start, ext, options=_DLG)
     if p:
         line_edit.setText(p)
+        line_edit.setToolTip(p)
 
 
 def _file_row(parent, line_edit, caption, ext="All (*)"):
@@ -65,6 +67,7 @@ def _dir_row(parent, line_edit, caption):
             parent, caption, line_edit.text() or str(Path.home()), _DLG)
         if p:
             line_edit.setText(p)
+            line_edit.setToolTip(p)
     row = QHBoxLayout(); row.setSpacing(6)
     row.addWidget(line_edit)
     row.addWidget(_browse_btn(parent, pick))
@@ -314,6 +317,7 @@ class PredictWidget(QWidget):
 
         self.lora_rank = QSpinBox()
         self.lora_rank.setRange(1, 64); self.lora_rank.setValue(4)
+        self.lora_rank.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         L.addLayout(_param_row("LoRA rank", self.lora_rank,
             "Must match the rank used during training (default 4)"))
 
@@ -349,6 +353,7 @@ class PredictWidget(QWidget):
                 w = QSpinBox(); w.setRange(int(lo), int(hi)); w.setValue(int(val)); w.setSingleStep(int(step))
             else:
                 w = QDoubleSpinBox(); w.setDecimals(dec); w.setRange(lo, hi); w.setValue(val); w.setSingleStep(step)
+            w.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
             setattr(self, attr, w)
             L.addLayout(_param_row(label, w, tip))
 
