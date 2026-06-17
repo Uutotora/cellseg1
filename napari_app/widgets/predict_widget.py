@@ -6,7 +6,7 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QDoubleSpinBox, QSpinBox,
-    QFileDialog, QScrollArea, QProgressBar,
+    QFileDialog, QScrollArea, QProgressBar, QFrame,
 )
 from napari_app.widgets.log_window import get_log_window
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -17,29 +17,29 @@ from napari_app.theme import (
     WIDGET_SS, BTN_SUCCESS, BTN_SECONDARY, BTN_BROWSE,
     BG, FG, BORDER, TEXT, ACCENT, DIM, CONSOLE,
 )
-from napari_app.widgets.common import CollapsibleSection, divider as _divider, param_row as _param_row
+from napari_app.widgets.common import section_header, divider as _divider, param_row as _param_row
 
-LORA_DIR        = STORAGE_DIR / "loras"
+LORA_DIR         = STORAGE_DIR / "loras"
 BUILTIN_LORA_DIR = Path(__file__).parents[2] / "checkpoints"
-TEST_IMAGE_DIR  = STORAGE_DIR / "test_images"
+TEST_IMAGE_DIR   = STORAGE_DIR / "test_images"
 
 LORA_META = {
-    "cellpose_specialized_12.pth":      ("General cells",         0.917),
-    "cellseg_blood_117.pth":            ("Blood cells",           0.941),
+    "cellpose_specialized_12.pth":      ("General cells",        0.917),
+    "cellseg_blood_117.pth":            ("Blood cells",          0.941),
     "deepbacs_rod_brightfield_9.pth":   ("E. coli brightfield",  0.860),
-    "deepbacs_rod_fluorescence_75.pth": ("B. subtilis fluor.",    0.821),
-    "dsb2018_stardist_435.pth":         ("Cell nuclei",           0.872),
+    "deepbacs_rod_fluorescence_75.pth": ("B. subtilis fluor.",   0.821),
+    "dsb2018_stardist_435.pth":         ("Cell nuclei",          0.872),
 }
 
 STATE_MANAGER = PredictionStateManager(str(STORAGE_DIR))
 _DLG = QFileDialog.Option.DontUseNativeDialog
 
 
-# ── Reusable UI helpers ───────────────────────────────────────────────────────
+# ── Reusable UI helpers ────────────────────────────────────────────────────────
 
 def _browse_btn(parent, callback):
     b = QPushButton("⋯")
-    b.setFixedSize(28, 28)
+    b.setFixedSize(30, 30)
     b.setStyleSheet(BTN_BROWSE)
     b.clicked.connect(callback)
     return b
@@ -53,8 +53,7 @@ def _pick_file(parent, line_edit, caption, ext="All (*)"):
 
 
 def _file_row(parent, line_edit, caption, ext="All (*)"):
-    row = QHBoxLayout()
-    row.setSpacing(4)
+    row = QHBoxLayout(); row.setSpacing(6)
     row.addWidget(line_edit)
     row.addWidget(_browse_btn(parent, lambda: _pick_file(parent, line_edit, caption, ext)))
     return row
@@ -66,36 +65,41 @@ def _dir_row(parent, line_edit, caption):
             parent, caption, line_edit.text() or str(Path.home()), _DLG)
         if p:
             line_edit.setText(p)
-    row = QHBoxLayout(); row.setSpacing(4)
+    row = QHBoxLayout(); row.setSpacing(6)
     row.addWidget(line_edit)
     row.addWidget(_browse_btn(parent, pick))
     return row
 
 
+def _field_label(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setStyleSheet(f"color: {DIM}; font-size: 12px; padding: 2px 0;")
+    return lbl
 
+
+# ── Main widget ────────────────────────────────────────────────────────────────
 
 class PredictWidget(QWidget):
     _log_signal            = pyqtSignal(str)
     _done_signal           = pyqtSignal(object, object)
     _finish_signal         = pyqtSignal()
-    _batch_progress_signal = pyqtSignal(int, int)   # (done, total)
+    _batch_progress_signal = pyqtSignal(int, int)
     _batch_finish_signal   = pyqtSignal()
-    _refine_finish_signal  = pyqtSignal(str)        # refined .pth path
+    _refine_finish_signal  = pyqtSignal(str)
 
     def __init__(self, viewer):
         super().__init__()
         self.viewer = viewer
-        self._pred_thread    = None
-        self._last_mask      = None
-        self._last_img_path  = None
-        self._lora_paths     = {}
-        self._batch_stop     = threading.Event()
-        self._refine_timer   = QTimer()
+        self._pred_thread   = None
+        self._last_mask     = None
+        self._last_img_path = None
+        self._lora_paths    = {}
+        self._batch_stop    = threading.Event()
+        self._refine_timer  = QTimer()
         self._refine_timer.setInterval(3000)
         self._refine_lh: list = []
 
         self.setAcceptDrops(True)
-
         self.setStyleSheet(WIDGET_SS)
 
         outer = QVBoxLayout()
@@ -107,206 +111,237 @@ class PredictWidget(QWidget):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         inner = QWidget()
         L = QVBoxLayout()
-        L.setSpacing(8)
-        L.setContentsMargins(12, 12, 12, 12)
+        L.setSpacing(0)
+        L.setContentsMargins(16, 4, 16, 12)
 
-        # ── Quick run ─────────────────────────────────────────────────────────
-        qr = CollapsibleSection("Quick run")
+        # ── Checkpoint ────────────────────────────────────────────────────────
+        L.addWidget(section_header("Checkpoint"))
 
-        qr.addWidget(QLabel("Checkpoint"))
         self.lora_combo = QComboBox()
         self._populate_lora_combo()
         self.lora_combo.currentIndexChanged.connect(self._on_checkpoint_changed)
-        qr.addWidget(self.lora_combo)
+        L.addWidget(self.lora_combo)
 
         self._meta_lbl = QLabel("")
-        self._meta_lbl.setStyleSheet(f"color:{DIM}; font-size:11px; padding:0 2px 2px;")
+        self._meta_lbl.setStyleSheet(
+            f"color: {DIM}; font-size: 11px; padding: 3px 1px 0 1px;")
         self._meta_lbl.setWordWrap(True)
-        qr.addWidget(self._meta_lbl)
+        L.addWidget(self._meta_lbl)
 
-        qr.addWidget(QLabel("Image"))
+        L.addWidget(_divider())
+
+        # ── Image ─────────────────────────────────────────────────────────────
+        L.addWidget(section_header("Image"))
+
         self.image_path = QLineEdit()
-        self.image_path.setPlaceholderText("Select microscopy image…")
+        self.image_path.setPlaceholderText("Path to microscopy image  (or drop here)")
         img = _find_test_image()
         if img:
             self.image_path.setText(str(img))
-        qr.addLayout(_file_row(self, self.image_path, "Select image",
+        L.addLayout(_file_row(self, self.image_path, "Select image",
             "Images (*.png *.tif *.tiff *.jpg *.bmp *.npy)"))
 
-        self.run_btn = QPushButton("▶   Run Prediction")
-        self.run_btn.setFixedHeight(38)
-        self.run_btn.setStyleSheet(BTN_SUCCESS)
-        self.run_btn.clicked.connect(self._run_prediction)
-        qr.addWidget(self.run_btn)
+        L.addWidget(_divider())
 
-        self.active_btn = QPushButton("▶   Predict on active layer")
+        # ── Run ───────────────────────────────────────────────────────────────
+        L.addWidget(section_header("Run"))
+
+        self.run_btn = QPushButton("▶   Run Prediction")
+        self.run_btn.setFixedHeight(42)
+        self.run_btn.setStyleSheet(BTN_SUCCESS)
+        self.run_btn.setToolTip("Ctrl+R")
+        self.run_btn.clicked.connect(self._run_prediction)
+        L.addWidget(self.run_btn)
+
+        _sp = QWidget(); _sp.setFixedHeight(5)
+        L.addWidget(_sp)
+
+        self.active_btn = QPushButton("▶   Predict on active napari layer")
+        self.active_btn.setFixedHeight(32)
         self.active_btn.setStyleSheet(BTN_SECONDARY)
-        self.active_btn.setToolTip(
-            "Run prediction on whatever Image layer is currently\n"
-            "selected in the napari viewer — no file picker needed."
-        )
+        self.active_btn.setToolTip("Ctrl+Shift+R — runs on the Image layer selected in viewer")
         self.active_btn.clicked.connect(self._predict_active_layer)
-        qr.addWidget(self.active_btn)
+        L.addWidget(self.active_btn)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setVisible(False)
-        self.progress_bar.setFixedHeight(4)
-        qr.addWidget(self.progress_bar)
+        self.progress_bar.setFixedHeight(3)
+        self.progress_bar.setContentsMargins(0, 4, 0, 0)
+        L.addWidget(self.progress_bar)
 
-        L.addWidget(qr)
         L.addWidget(_divider())
 
-        # ── Results ───────────────────────────────────────────────────────────
-        self.results_section = CollapsibleSection("Results")
-        self.results_section.setVisible(False)
+        # ── Results (hidden until first prediction) ────────────────────────────
+        self._results_header = section_header("Results")
+        self._results_header.setVisible(False)
+        L.addWidget(self._results_header)
 
-        # Pixel size (µm/px) — shown at top of results so areas can be in µm²
+        self._stats_frame = QFrame()
+        self._stats_frame.setVisible(False)
+        self._stats_frame.setStyleSheet(
+            f"QFrame {{ background: {FG}; border: 1px solid {BORDER}; border-radius: 5px; }}")
+        sf = QVBoxLayout(); sf.setContentsMargins(12, 10, 12, 10); sf.setSpacing(4)
+
+        self._cell_count_lbl = QLabel()
+        self._cell_count_lbl.setStyleSheet(
+            f"color: {TEXT}; font-size: 20px; font-weight: 700;")
+        sf.addWidget(self._cell_count_lbl)
+
+        self._stats_lbl = QLabel()
+        self._stats_lbl.setStyleSheet(f"color: {DIM}; font-size: 12px;")
+        self._stats_lbl.setWordWrap(True)
+        sf.addWidget(self._stats_lbl)
+
+        px_row = QHBoxLayout(); px_row.setSpacing(8)
+        px_row.addWidget(_field_label("Pixel size"))
+        px_row.addStretch()
         self.pixel_size = QDoubleSpinBox()
         self.pixel_size.setDecimals(4)
         self.pixel_size.setRange(0.0, 1000.0)
         self.pixel_size.setValue(0.0)
-        self.pixel_size.setSpecialValueText("— px")
-        self.pixel_size.setToolTip("Set µm per pixel to display areas in µm². Leave 0 to use pixels.")
-        self.results_section.addLayout(_param_row("Pixel size µm/px", self.pixel_size))
+        self.pixel_size.setSpecialValueText("— (pixels)")
+        self.pixel_size.setFixedWidth(120)
+        self.pixel_size.setToolTip("µm per pixel — set to show areas in µm². Leave 0 for px².")
+        px_row.addWidget(self.pixel_size)
+        px_row.addWidget(_field_label("µm/px"))
+        sf.addLayout(px_row)
 
-        self._stats_lbl = QLabel()
-        self._stats_lbl.setStyleSheet(
-            f"color:{TEXT}; background:{FG}; border-radius:5px; padding:8px;"
-            f"font-size:12px; line-height:160%;")
-        self._stats_lbl.setWordWrap(True)
-        self.results_section.addWidget(self._stats_lbl)
+        _line = QFrame(); _line.setFrameShape(QFrame.Shape.HLine)
+        _line.setStyleSheet(f"background: {BORDER}; border: none;"); _line.setFixedHeight(1)
+        sf.addWidget(_line)
 
-        save_btn = QPushButton("Save masks as PNG/TIFF")
-        save_btn.setStyleSheet(BTN_SECONDARY)
-        save_btn.clicked.connect(self._save_masks)
-        self.results_section.addWidget(save_btn)
+        res_btns = QHBoxLayout(); res_btns.setSpacing(6)
+        self._save_btn = QPushButton("Save masks")
+        self._save_btn.setStyleSheet(BTN_SECONDARY)
+        self._save_btn.clicked.connect(self._save_masks)
+        self._csv_btn = QPushButton("Export CSV")
+        self._csv_btn.setStyleSheet(BTN_SECONDARY)
+        self._csv_btn.setToolTip("Saves cell_id, area, centroid for each detected cell")
+        self._csv_btn.clicked.connect(self._export_csv)
+        self._refine_btn = QPushButton("Refine…")
+        self._refine_btn.setStyleSheet(BTN_SECONDARY)
+        self._refine_btn.setToolTip(
+            "Edit the Labels layer in napari to correct cells,\n"
+            "then click to run a 50-epoch fine-tune from the current checkpoint.")
+        self._refine_btn.clicked.connect(self._run_refine)
+        res_btns.addWidget(self._save_btn)
+        res_btns.addWidget(self._csv_btn)
+        res_btns.addWidget(self._refine_btn)
+        sf.addLayout(res_btns)
 
-        csv_btn = QPushButton("Export measurements CSV")
-        csv_btn.setStyleSheet(BTN_SECONDARY)
-        csv_btn.setToolTip("Saves cell_id, area_px, centroid_y, centroid_x for each detected cell")
-        csv_btn.clicked.connect(self._export_csv)
-        self.results_section.addWidget(csv_btn)
+        self._stats_frame.setLayout(sf)
+        L.addWidget(self._stats_frame)
 
-        refine_btn = QPushButton("Refine with edited Labels layer")
-        refine_btn.setStyleSheet(BTN_SECONDARY)
-        refine_btn.setToolTip(
-            "Edit the prediction Labels layer in napari (add/remove/fix cells),\n"
-            "then click to run 50-epoch fine-tune from the current checkpoint.\n"
-            "Saves a new _refined.pth next to the original."
-        )
-        refine_btn.clicked.connect(self._run_refine)
-        self.results_section.addWidget(refine_btn)
+        self._results_divider = _divider()
+        self._results_divider.setVisible(False)
+        L.addWidget(self._results_divider)
 
-        L.addWidget(self.results_section)
-        L.addWidget(_divider())
+        # ── Ground truth overlay ──────────────────────────────────────────────
+        L.addWidget(section_header("Ground truth overlay"))
 
-        # ── Ground truth ──────────────────────────────────────────────────────
-        gt_sec = CollapsibleSection("Ground truth overlay")
-        gt_sec._on_toggle(False)  # collapsed by default
-
-        gt_sec.addWidget(QLabel("GT mask file"))
+        L.addWidget(_field_label("GT mask file"))
         self.gt_path = QLineEdit()
-        self.gt_path.setPlaceholderText("Optional: compare with ground truth")
-        gt_sec.addLayout(_file_row(self, self.gt_path, "Select ground truth",
+        self.gt_path.setPlaceholderText("Optional — compare prediction with ground truth")
+        L.addLayout(_file_row(self, self.gt_path, "Select ground truth mask",
             "Images (*.png *.tif *.tiff *.npy)"))
+
         gt_btn = QPushButton("Show GT layer")
+        gt_btn.setFixedHeight(32)
         gt_btn.setStyleSheet(BTN_SECONDARY)
         gt_btn.clicked.connect(self._show_ground_truth)
-        gt_sec.addWidget(gt_btn)
+        L.addWidget(gt_btn)
 
-        L.addWidget(gt_sec)
         L.addWidget(_divider())
 
         # ── Batch prediction ──────────────────────────────────────────────────
-        batch_sec = CollapsibleSection("Batch prediction")
-        batch_sec._on_toggle(False)
+        L.addWidget(section_header("Batch prediction"))
 
-        batch_sec.addWidget(QLabel("Input folder", styleSheet=f"color:{DIM};font-size:12px;"))
+        L.addWidget(_field_label("Input folder"))
         self.batch_in = QLineEdit()
         self.batch_in.setPlaceholderText("Folder with images to process")
-        batch_sec.addLayout(_dir_row(self, self.batch_in, "Select input folder"))
+        L.addLayout(_dir_row(self, self.batch_in, "Select input folder"))
 
-        batch_sec.addWidget(QLabel("Output folder", styleSheet=f"color:{DIM};font-size:12px;"))
+        L.addWidget(_field_label("Output folder"))
         self.batch_out = QLineEdit(str(STORAGE_DIR / "predict_masks"))
-        batch_sec.addLayout(_dir_row(self, self.batch_out, "Select output folder"))
+        L.addLayout(_dir_row(self, self.batch_out, "Select output folder"))
 
-        _br = QHBoxLayout(); _br.setSpacing(6)
+        _br = QHBoxLayout(); _br.setSpacing(8)
         self.batch_btn = QPushButton("Run Batch")
+        self.batch_btn.setFixedHeight(36)
         self.batch_btn.setStyleSheet(BTN_SUCCESS)
         self.batch_btn.clicked.connect(self._run_batch)
         _br.addWidget(self.batch_btn)
         self.batch_stop_btn = QPushButton("Stop")
+        self.batch_stop_btn.setFixedHeight(36)
         self.batch_stop_btn.setFixedWidth(70)
         self.batch_stop_btn.setEnabled(False)
         self.batch_stop_btn.setStyleSheet(BTN_SECONDARY)
         self.batch_stop_btn.clicked.connect(self._stop_batch)
         _br.addWidget(self.batch_stop_btn)
-        batch_sec.addLayout(_br)
+        L.addLayout(_br)
 
         self.batch_progress = QProgressBar()
         self.batch_progress.setRange(0, 100)
-        self.batch_progress.setFixedHeight(4)
+        self.batch_progress.setFixedHeight(3)
         self.batch_progress.setVisible(False)
-        batch_sec.addWidget(self.batch_progress)
+        L.addWidget(self.batch_progress)
 
         self.batch_lbl = QLabel("")
-        self.batch_lbl.setStyleSheet(f"color:{DIM}; font-size:11px;")
-        batch_sec.addWidget(self.batch_lbl)
+        self.batch_lbl.setStyleSheet(f"color: {DIM}; font-size: 11px; padding-top: 2px;")
+        L.addWidget(self.batch_lbl)
 
-        L.addWidget(batch_sec)
         L.addWidget(_divider())
 
         # ── Model settings ────────────────────────────────────────────────────
-        mdl_sec = CollapsibleSection("Model settings")
-        mdl_sec._on_toggle(False)
+        L.addWidget(section_header("Model settings"))
 
-        mdl_sec.addLayout(_param_row("Custom .pth", _make_custom_lora_row(self)))
+        L.addWidget(_field_label("Custom checkpoint (.pth)"))
+        L.addLayout(_make_custom_lora_row(self))
 
-        row_vit = QHBoxLayout(); row_vit.setSpacing(8)
-        row_vit.addWidget(QLabel("SAM type", styleSheet=f"color:{DIM}; min-width:115px;"))
+        _sp2 = QWidget(); _sp2.setFixedHeight(4); L.addWidget(_sp2)
+
         self.vit_name = QComboBox()
         self.vit_name.addItems(["vit_h", "vit_l", "vit_b"])
         self.vit_name.currentTextChanged.connect(self._on_vit_changed)
-        row_vit.addWidget(self.vit_name)
-        mdl_sec.addLayout(row_vit)
+        L.addLayout(_param_row("SAM type", self.vit_name,
+            "vit_h = highest quality, vit_b = fastest"))
 
         self.sam_path = QLineEdit()
-        self.sam_path.setPlaceholderText("auto-detected")
+        self.sam_path.setPlaceholderText("auto-detected from SAM type above")
         self._on_vit_changed("vit_h")
-        mdl_sec.addLayout(_file_row(self, self.sam_path, "Select SAM backbone", "PyTorch (*.pth)"))
+        L.addLayout(_file_row(self, self.sam_path, "Select SAM backbone", "PyTorch (*.pth)"))
 
-        self.lora_rank = QSpinBox(); self.lora_rank.setRange(1, 64); self.lora_rank.setValue(4)
-        mdl_sec.addLayout(_param_row("LoRA rank", self.lora_rank,
+        self.lora_rank = QSpinBox()
+        self.lora_rank.setRange(1, 64); self.lora_rank.setValue(4)
+        L.addLayout(_param_row("LoRA rank", self.lora_rank,
             "Must match the rank used during training (default 4)"))
 
         self.device = QComboBox(); self._populate_devices()
-        mdl_sec.addLayout(_param_row("Device", self.device))
+        L.addLayout(_param_row("Device", self.device))
 
-        L.addWidget(mdl_sec)
         L.addWidget(_divider())
 
         # ── Inference parameters ──────────────────────────────────────────────
-        inf_sec = CollapsibleSection("Inference parameters")
-        inf_sec._on_toggle(False)
+        L.addWidget(section_header("Inference parameters"))
 
         self.resize_size = QComboBox()
         for v in ["256", "512", "768", "1024"]:
             self.resize_size.addItem(v)
         self.resize_size.setCurrentText("512")
-        inf_sec.addLayout(_param_row("Resize size", self.resize_size,
-            "SAM inference resolution. Higher = better accuracy, slower. Try 1024 for small particles."))
+        L.addLayout(_param_row("Resize", self.resize_size,
+            "SAM inference resolution. Higher = better accuracy, slower. Try 1024 for small cells."))
 
         params = [
-            ("Points/side",     "points_per_side",        4,   128,  32,  0, 4,
-             "Grid density for mask proposals. Higher = more candidates (slower)."),
-            ("IoU threshold",   "pred_iou_thresh",         0.0, 1.0, 0.8,  2, 0.05,
-             "Min predicted IoU to keep a mask. Raise to reduce false positives."),
-            ("Stability score", "stability_score_thresh",  0.0, 1.0, 0.6,  2, 0.05,
+            ("Points/side",     "points_per_side",       4,   128, 32,  0, 4,
+             "Grid density for mask proposals. Higher = more candidates, slower."),
+            ("IoU threshold",   "pred_iou_thresh",       0.0, 1.0, 0.80, 2, 0.05,
+             "Minimum predicted IoU to keep a mask. Raise to reduce false positives."),
+            ("Stability score", "stability_score_thresh", 0.0, 1.0, 0.60, 2, 0.05,
              "Mask stability threshold. Raise to keep only confident masks."),
-            ("Box NMS thresh",  "box_nms_thresh",          0.0, 1.0, 0.05, 3, 0.01,
-             "Non-max suppression overlap. Lower = separates touching objects better."),
-            ("Min mask area",   "min_mask_area",           0,   10000, 20, 0, 10,
+            ("Box NMS thresh",  "box_nms_thresh",        0.0, 1.0, 0.05, 3, 0.01,
+             "Non-max suppression overlap. Lower separates touching cells better."),
+            ("Min mask area",   "min_mask_area",         0, 10000, 20,  0, 10,
              "Discard masks smaller than this (pixels)."),
         ]
         for label, attr, lo, hi, val, dec, step, tip in params:
@@ -315,23 +350,20 @@ class PredictWidget(QWidget):
             else:
                 w = QDoubleSpinBox(); w.setDecimals(dec); w.setRange(lo, hi); w.setValue(val); w.setSingleStep(step)
             setattr(self, attr, w)
-            inf_sec.addLayout(_param_row(label, w, tip))
-
-        L.addWidget(inf_sec)
-        L.addWidget(_divider())
+            L.addLayout(_param_row(label, w, tip))
 
         L.addStretch()
         inner.setLayout(L)
         scroll.setWidget(inner)
         outer.addWidget(scroll)
 
-        # ── Log button footer ─────────────────────────────────────────────────
+        # ── Log footer ────────────────────────────────────────────────────────
         outer.addWidget(_divider())
         _footer = QHBoxLayout()
-        _footer.setContentsMargins(8, 4, 8, 4)
+        _footer.setContentsMargins(16, 4, 16, 6)
         _log_btn = QPushButton("Log ↗")
         _log_btn.setStyleSheet(
-            f"color:{DIM}; background:transparent; border:none; font-size:11px;")
+            f"color: {DIM}; background: transparent; border: none; font-size: 11px;")
         _log_btn.setToolTip("Open the floating log window")
         _log_btn.clicked.connect(lambda: get_log_window().show_and_raise())
         _footer.addStretch()
@@ -348,11 +380,20 @@ class PredictWidget(QWidget):
         self._batch_finish_signal.connect(self._on_batch_done)
         self._refine_finish_signal.connect(self._on_refine_done)
 
-        # Keyboard shortcuts (napari viewer-level)
-        viewer.bind_key('Control-r', lambda v: self._run_prediction())
+        viewer.bind_key('Control-r',       lambda v: self._run_prediction())
         viewer.bind_key('Control-Shift-r', lambda v: self._predict_active_layer())
 
-    # ── Helpers ──────────────────────────────────────────────────────────────
+        self._autofill_from_sidecar()
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _append_log(self, text: str):
+        lw = get_log_window()
+        lw.append(text)
+        if "[ERROR]" in text:
+            lw.show_and_raise()
+        elif not lw.isVisible():
+            lw.show()
 
     def _on_checkpoint_changed(self, _index: int):
         from napari_app.inference_cache import invalidate_model
@@ -360,7 +401,6 @@ class PredictWidget(QWidget):
         self._autofill_from_sidecar()
 
     def _autofill_from_sidecar(self):
-        """Read .json sidecar next to checkpoint and populate SAM type / resize / rank."""
         lora_path = self._resolve_lora()
         if not lora_path:
             return
@@ -386,18 +426,17 @@ class PredictWidget(QWidget):
         if rank and isinstance(rank, int):
             self.lora_rank.setValue(rank)
 
-        fl = meta.get("final_loss")
+        fl     = meta.get("final_loss")
         epochs = meta.get("epochs_run", "?")
-        epoch_max = meta.get("epoch_max", "?")
-        saved_at = (meta.get("saved_at", "") or "")[:16].replace("T", " ")
-        parts = []
-        if saved_at:
-            parts.append(saved_at)
+        emax   = meta.get("epoch_max", "?")
+        saved  = (meta.get("saved_at", "") or "")[:16].replace("T", " ")
+        parts  = []
+        if saved:
+            parts.append(saved)
         if fl is not None:
             parts.append(f"loss {fl:.5f}")
-        parts.append(f"{epochs}/{epoch_max} ep")
+        parts.append(f"{epochs}/{emax} ep")
         self._meta_lbl.setText("  ·  ".join(parts))
-        self._append_log("checkpoint: " + "  ·  ".join(parts))
 
     def _populate_lora_combo(self):
         self.lora_combo.clear()
@@ -430,7 +469,8 @@ class PredictWidget(QWidget):
         if c.exists():
             self.sam_path.setText(str(c))
         else:
-            self.sam_path.clear(); self.sam_path.setPlaceholderText(f"Not found: {c.name}")
+            self.sam_path.clear()
+            self.sam_path.setPlaceholderText(f"Not found: {c.name}")
 
     def _resolve_lora(self):
         if hasattr(self, 'lora_custom') and self.lora_custom.text().strip():
@@ -448,7 +488,7 @@ class PredictWidget(QWidget):
         c = STORAGE_DIR / "sam_backbone" / names[vit]
         if c.exists():
             return str(c)
-        raise ValueError(f"SAM backbone not found. Place {names[vit]} in {STORAGE_DIR/'sam_backbone'}/")
+        raise ValueError(f"SAM backbone not found. Place {names[vit]} in {STORAGE_DIR / 'sam_backbone'}/")
 
     def _build_config(self):
         lora = self._resolve_lora()
@@ -470,48 +510,42 @@ class PredictWidget(QWidget):
             "freeze_mask_decoder_mask_tokens": True, "freeze_mask_decoder_iou": True,
             "lora_dropout": 0.1,
             "sam_image_size": rs, "resize_size": [rs, rs],
-            "points_per_side": self.points_per_side.value(),
-            "points_per_batch": 64,
-            "pred_iou_thresh": self.pred_iou_thresh.value(),
-            "stability_score_thresh": self.stability_score_thresh.value(),
-            "stability_score_offset": 0.8,
-            "box_nms_thresh": self.box_nms_thresh.value(),
+            "points_per_side":          self.points_per_side.value(),
+            "points_per_batch":         64,
+            "pred_iou_thresh":          self.pred_iou_thresh.value(),
+            "stability_score_thresh":   self.stability_score_thresh.value(),
+            "stability_score_offset":   0.8,
+            "box_nms_thresh":           self.box_nms_thresh.value(),
             "crop_nms_thresh": 0.05, "crop_n_layers": 1,
             "crop_n_points_downscale_factor": 1,
-            "min_mask_region_area": self.min_mask_area.value(),
+            "min_mask_region_area":     self.min_mask_area.value(),
             "max_mask_region_area_ratio": 0.1,
             "selected_device": self.device.currentText(),
             "deterministic": True, "seed": 0,
             "allow_tf32_on_cudnn": True, "allow_tf32_on_matmul": True,
         }
 
-    # ── Actions ──────────────────────────────────────────────────────────────
+    # ── Actions ───────────────────────────────────────────────────────────────
 
     def _predict_active_layer(self):
-        """Run prediction on the active Image layer in the napari viewer."""
         import napari.layers as nl
-        import tempfile, cv2, numpy as np
+        import tempfile, cv2
 
         image_layer = None
         for layer in self.viewer.layers:
             if isinstance(layer, nl.Image):
-                image_layer = layer
-                break
-
+                image_layer = layer; break
         if image_layer is None:
             self._append_log("[ERROR] No Image layer found in viewer"); return
 
         img = np.asarray(image_layer.data, dtype=np.float32)
-        if img.max() > 1.0:
-            img = (img / img.max() * 255).clip(0, 255).astype(np.uint8)
-        else:
-            img = (img * 255).clip(0, 255).astype(np.uint8)
+        img = (img / img.max() * 255).clip(0, 255).astype(np.uint8) if img.max() > 1.0 \
+              else (img * 255).clip(0, 255).astype(np.uint8)
         if img.ndim == 2:
             img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
         elif img.ndim == 3 and img.shape[2] == 4:
             img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
 
-        # Write to a temp PNG so the rest of the pipeline can read image_path
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         cv2.imwrite(tmp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         self.image_path.setText(tmp.name)
@@ -526,7 +560,6 @@ class PredictWidget(QWidget):
         self.run_btn.setEnabled(False)
         self.active_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
-        self.results_section.setVisible(False)
 
         from napari_app.inference_cache import cache_status
         self._append_log(f"▶ {Path(config['image_path']).name}  [{cache_status()}]")
@@ -553,7 +586,7 @@ class PredictWidget(QWidget):
 
     def _show_results(self, img_arr, mask):
         name = Path(self.image_path.text()).stem
-        self._last_mask = mask
+        self._last_mask     = mask
         self._last_img_path = self.image_path.text()
 
         for lyr in list(self.viewer.layers):
@@ -568,28 +601,24 @@ class PredictWidget(QWidget):
         self.viewer.reset_view()
 
     def _show_stats(self, mask, shape):
-        n = int(mask.max())
-        counts = np.bincount(mask.ravel())       # O(N) single pass
-        areas = counts[1:n + 1].tolist() if n > 0 else []
-        avg_a = int(np.mean(areas)) if areas else 0
-        med_a = int(np.median(areas)) if areas else 0
-        cov   = counts[1:].sum() / (shape[0] * shape[1]) * 100
-        px = self.pixel_size.value()
+        n      = int(mask.max())
+        counts = np.bincount(mask.ravel())
+        areas  = counts[1:n + 1].tolist() if n > 0 else []
+        avg_a  = int(np.mean(areas))   if areas else 0
+        med_a  = int(np.median(areas)) if areas else 0
+        cov    = counts[1:].sum() / (shape[0] * shape[1]) * 100
+        px     = self.pixel_size.value()
         if px > 0:
-            unit = "µm²"
-            avg_s = f"{avg_a * px * px:.1f}"
-            med_s = f"{med_a * px * px:.1f}"
+            unit, avg_s, med_s = "µm²", f"{avg_a * px * px:.1f}", f"{med_a * px * px:.1f}"
         else:
-            unit = "px²"
-            avg_s = str(avg_a)
-            med_s = str(med_a)
+            unit, avg_s, med_s = "px²", str(avg_a), str(med_a)
+
+        self._cell_count_lbl.setText(f"{n}  cells detected")
         self._stats_lbl.setText(
-            f"<b style='font-size:18px;color:{TEXT};'>{n}</b>"
-            f"<span style='color:{DIM};'> cells detected</span><br>"
-            f"<span style='color:{DIM};'>Avg {avg_s} {unit}  ·  Median {med_s} {unit}"
-            f"  ·  {cov:.1f}% coverage</span>"
-        )
-        self.results_section.setVisible(True)
+            f"Avg area {avg_s} {unit}  ·  Median {med_s} {unit}  ·  {cov:.1f}% coverage")
+        self._results_header.setVisible(True)
+        self._stats_frame.setVisible(True)
+        self._results_divider.setVisible(True)
 
     def _show_ground_truth(self):
         p = self.gt_path.text().strip()
@@ -600,7 +629,7 @@ class PredictWidget(QWidget):
             gt = cv2.imread(p, cv2.IMREAD_UNCHANGED)
             if gt is None:
                 gt = np.load(p)
-            name = Path(self.image_path.text()).stem
+            name  = Path(self.image_path.text()).stem
             lname = f"{name}_gt"
             for lyr in list(self.viewer.layers):
                 if lyr.name == lname:
@@ -612,14 +641,12 @@ class PredictWidget(QWidget):
             self._append_log(f"[ERROR] {e}")
 
     def _save_masks(self):
-        if self._last_mask is None:
-            return
-        stem = Path(self._last_img_path).stem if self._last_img_path else "mask"
+        if self._last_mask is None: return
+        stem    = Path(self._last_img_path).stem if self._last_img_path else "mask"
         default = str(STORAGE_DIR / "predict_masks" / f"{stem}_mask.png")
         p, _ = QFileDialog.getSaveFileName(
             self, "Save mask", default, "PNG (*.png);;TIFF (*.tif)", options=_DLG)
-        if not p:
-            return
+        if not p: return
         import cv2
         cv2.imwrite(p, self._last_mask.astype(np.uint16))
         self._append_log(f"✓ Saved {Path(p).name}")
@@ -629,7 +656,7 @@ class PredictWidget(QWidget):
         out_dir = Path(self.batch_out.text().strip())
         if not in_dir.is_dir():
             self._append_log("[ERROR] Input folder not found"); return
-        exts = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".npy"}
+        exts   = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".npy"}
         images = sorted(f for f in in_dir.iterdir() if f.suffix.lower() in exts)
         if not images:
             self._append_log("[ERROR] No images found in input folder"); return
@@ -654,16 +681,14 @@ class PredictWidget(QWidget):
             done = 0
             for img_path in images:
                 if self._batch_stop.is_set():
-                    self._log_signal.emit(f"■ Stopped at {done}/{n}")
-                    break
+                    self._log_signal.emit(f"■ Stopped at {done}/{n}"); break
                 self._log_signal.emit(f"[{done + 1}/{n}] {img_path.name}")
                 try:
                     cfg = {**config, "image_path": str(img_path)}
                     _, mask = _predict_cached(cfg)
-                    out_path = out_dir / f"{img_path.stem}_mask.png"
-                    _cv2.imwrite(str(out_path), mask.astype(np.uint16))
+                    _cv2.imwrite(str(out_dir / f"{img_path.stem}_mask.png"),
+                                 mask.astype(np.uint16))
                 except Exception as e:
-                    import traceback
                     self._log_signal.emit(f"  [ERROR] {e}")
                 done += 1
                 self._batch_progress_signal.emit(done, n)
@@ -705,7 +730,7 @@ class PredictWidget(QWidget):
         self.image_path.setText(path)
         self._append_log(f"Dropped: {Path(path).name}")
 
-    # ── Refine with corrected mask ────────────────────────────────────────────
+    # ── Refine ────────────────────────────────────────────────────────────────
 
     def _run_refine(self):
         import napari.layers as nl, tempfile, shutil, cv2
@@ -713,7 +738,7 @@ class PredictWidget(QWidget):
 
         labels_layer = next((l for l in self.viewer.layers if isinstance(l, nl.Labels)), None)
         if labels_layer is None:
-            self._append_log("[ERROR] No Labels layer — edit prediction first"); return
+            self._append_log("[ERROR] No Labels layer — edit the prediction in napari first"); return
         if self._last_img_path is None:
             self._append_log("[ERROR] Run prediction first"); return
 
@@ -725,10 +750,10 @@ class PredictWidget(QWidget):
         except ValueError as e:
             self._append_log(f"[ERROR] {e}"); return
 
-        # Write image + edited mask to temp folder
-        tmp      = tempfile.mkdtemp(prefix="cellseg_refine_")
-        tmp_img  = Path(tmp) / "images"; tmp_img.mkdir()
-        tmp_msk  = Path(tmp) / "masks";  tmp_msk.mkdir()
+        tmp     = tempfile.mkdtemp(prefix="cellseg_refine_")
+        tmp_img = Path(tmp) / "images"; tmp_img.mkdir()
+        tmp_msk = Path(tmp) / "masks";  tmp_msk.mkdir()
+
         img = cv2.imread(self._last_img_path, cv2.IMREAD_UNCHANGED)
         if img is None:
             self._append_log(f"[ERROR] Cannot read {self._last_img_path}"); return
@@ -769,8 +794,7 @@ class PredictWidget(QWidget):
         self._refine_timer.start()
 
         n_cells = int(mask.max())
-        self._append_log(
-            f"▶ Refine: 50 ep, {n_cells} cells, from {Path(lora_path).name}")
+        self._append_log(f"▶ Refine: 50 ep, {n_cells} cells, from {Path(lora_path).name}")
 
         def run():
             from gui.pages.utils.train_model import train_model
@@ -795,20 +819,19 @@ class PredictWidget(QWidget):
                 self.lora_combo.setCurrentIndex(i); break
 
     def _export_csv(self):
-        if self._last_mask is None:
-            return
+        if self._last_mask is None: return
         import csv
         mask = self._last_mask
-        n = int(mask.max())
+        n    = int(mask.max())
         if n == 0:
             self._append_log("[WARN] No cells to export"); return
-        stem = Path(self._last_img_path).stem if self._last_img_path else "mask"
+        stem    = Path(self._last_img_path).stem if self._last_img_path else "mask"
         (STORAGE_DIR / "predict_masks").mkdir(parents=True, exist_ok=True)
         default = str(STORAGE_DIR / "predict_masks" / f"{stem}_measurements.csv")
         p, _ = QFileDialog.getSaveFileName(
             self, "Export CSV", default, "CSV (*.csv)", options=_DLG)
-        if not p:
-            return
+        if not p: return
+
         flat  = mask.ravel()
         ys, xs = np.indices(mask.shape)
         areas = np.bincount(flat, minlength=n + 1)[1:].astype(np.int64)
@@ -824,8 +847,7 @@ class PredictWidget(QWidget):
             wr.writerow(header)
             for i in range(n):
                 a = int(areas[i])
-                if a == 0:
-                    continue
+                if a == 0: continue
                 row = [i + 1, a]
                 if px > 0:
                     row.append(f"{a * px * px:.3f}")
@@ -833,30 +855,22 @@ class PredictWidget(QWidget):
                 wr.writerow(row)
         self._append_log(f"✓ Exported {n} cells → {Path(p).name}")
 
-    def _append_log(self, text):
-        lw = get_log_window()
-        lw.append(text)
-        if not lw.isVisible():
-            lw.show()
 
+# ── Custom LoRA path ──────────────────────────────────────────────────────────
 
-def _make_custom_lora_row(parent):
-    """Returns a widget containing the custom lora path field — assigned to parent."""
+def _make_custom_lora_row(parent) -> QHBoxLayout:
     parent.lora_custom = QLineEdit()
     parent.lora_custom.setPlaceholderText("Leave blank to use dropdown above")
-    container = QWidget()
-    row = QHBoxLayout(); row.setContentsMargins(0,0,0,0); row.setSpacing(4)
+    row = QHBoxLayout(); row.setSpacing(6)
     row.addWidget(parent.lora_custom)
     row.addWidget(_browse_btn(parent,
         lambda: _pick_file(parent, parent.lora_custom, "Select LoRA checkpoint", "PyTorch (*.pth)")))
-    container.setLayout(row)
-    return container
+    return row
 
 
-# ── Prediction core (with model + embedding cache) ────────────────────────────
+# ── Prediction core ───────────────────────────────────────────────────────────
 
 def _predict_cached(config):
-    """Load image, run prediction via inference_cache, scale mask back."""
     import cv2
     from data.utils import resize_image
     from napari_app.inference_cache import predict_cached
@@ -873,7 +887,7 @@ def _predict_cached(config):
 
     orig_h, orig_w = img.shape[:2]
     resized = resize_image(img, config["resize_size"])
-    small = predict_cached(config, resized)
+    small   = predict_cached(config, resized)
 
     if small.shape != (orig_h, orig_w):
         mask = cv2.resize(small.astype(np.float32), (orig_w, orig_h),
