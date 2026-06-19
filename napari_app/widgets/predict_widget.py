@@ -16,9 +16,12 @@ from gui.pages.utils.predict_state_manager import PredictionStateManager
 from project_root import STORAGE_DIR
 from napari_app.theme import (
     WIDGET_SS, BTN_PRIMARY, BTN_SUCCESS, BTN_SECONDARY, BTN_BROWSE,
-    BG, FG, BORDER, TEXT, ACCENT, DIM, CONSOLE,
+    BG, FG, BORDER, TEXT, ACCENT, DIM, LABEL, CONSOLE,
 )
-from napari_app.widgets.common import section_header, divider as _divider, param_row as _param_row
+from napari_app.widgets.common import (
+    section_header, divider as _divider, param_row as _param_row,
+    CollapsibleSection, SectionCard, CollapsibleCard,
+)
 
 LORA_DIR         = STORAGE_DIR / "loras"
 BUILTIN_LORA_DIR = Path(__file__).parents[2] / "checkpoints"
@@ -76,7 +79,7 @@ def _dir_row(parent, line_edit, caption):
 
 def _field_label(text: str) -> QLabel:
     lbl = QLabel(text)
-    lbl.setStyleSheet(f"color: {DIM}; font-size: 12px; padding: 2px 0;")
+    lbl.setStyleSheet(f"color: {LABEL}; font-size: 11px; font-weight: 500; padding: 3px 0 1px 0;")
     return lbl
 
 
@@ -115,49 +118,43 @@ class PredictWidget(QWidget):
         inner = QWidget()
         L = QVBoxLayout()
         L.setSpacing(0)
-        L.setContentsMargins(16, 4, 16, 12)
+        L.setContentsMargins(14, 8, 14, 16)
 
         # ── Checkpoint ────────────────────────────────────────────────────────
-        L.addWidget(section_header("Checkpoint"))
-
+        ckpt_card = SectionCard("Checkpoint")
         self.lora_combo = QComboBox()
         self._populate_lora_combo()
         self.lora_combo.currentIndexChanged.connect(self._on_checkpoint_changed)
-        L.addWidget(self.lora_combo)
-
+        ckpt_card.addWidget(self.lora_combo)
         self._meta_lbl = QLabel("")
         self._meta_lbl.setStyleSheet(
-            f"color: {DIM}; font-size: 11px; padding: 3px 1px 0 1px;")
+            f"color: {LABEL}; font-size: 11px; padding: 3px 1px 0 1px;")
         self._meta_lbl.setWordWrap(True)
-        L.addWidget(self._meta_lbl)
-
-        L.addWidget(_divider())
+        ckpt_card.addWidget(self._meta_lbl)
+        L.addWidget(ckpt_card)
 
         # ── Image ─────────────────────────────────────────────────────────────
-        L.addWidget(section_header("Image"))
-
+        img_card = SectionCard("Image")
         self.image_path = QLineEdit()
         self.image_path.setPlaceholderText("Path to microscopy image  (or drop here)")
         img = _find_test_image()
         if img:
             self.image_path.setText(str(img))
-        L.addLayout(_file_row(self, self.image_path, "Select image",
+        img_card.addLayout(_file_row(self, self.image_path, "Select image",
             "Images (*.png *.tif *.tiff *.jpg *.bmp *.npy)"))
+        L.addWidget(img_card)
 
-        L.addWidget(_divider())
-
-        # ── Run ───────────────────────────────────────────────────────────────
-        L.addWidget(section_header("Run"))
+        # ── Run (prominent, outside cards — the main action) ──────────────────
+        L.addSpacing(20)
 
         self.run_btn = QPushButton("▶   Run Prediction")
-        self.run_btn.setFixedHeight(42)
+        self.run_btn.setFixedHeight(44)
         self.run_btn.setStyleSheet(BTN_PRIMARY)
         self.run_btn.setToolTip("Ctrl+R")
         self.run_btn.clicked.connect(self._run_prediction)
         L.addWidget(self.run_btn)
 
-        _sp = QWidget(); _sp.setFixedHeight(5)
-        L.addWidget(_sp)
+        L.addSpacing(6)
 
         self.active_btn = QPushButton("▶   Predict on active napari layer")
         self.active_btn.setFixedHeight(32)
@@ -173,30 +170,22 @@ class PredictWidget(QWidget):
         self.progress_bar.setContentsMargins(0, 4, 0, 0)
         L.addWidget(self.progress_bar)
 
-        L.addWidget(_divider())
-
         # ── Results (hidden until first prediction) ────────────────────────────
-        self._results_header = section_header("Results")
-        self._results_header.setVisible(False)
-        L.addWidget(self._results_header)
-
-        self._stats_frame = QFrame()
-        self._stats_frame.setVisible(False)
-        self._stats_frame.setStyleSheet(
-            f"QFrame {{ background: {FG}; border: 1px solid {BORDER}; border-left: 2px solid {ACCENT}; border-radius: 5px; }}")
-        sf = QVBoxLayout(); sf.setContentsMargins(12, 10, 12, 10); sf.setSpacing(4)
+        from napari_app.theme import SUCCESS
+        self._results_card = SectionCard("Results", accent_color=SUCCESS)
+        self._results_card.setVisible(False)
 
         self._cell_count_lbl = QLabel()
         self._cell_count_lbl.setStyleSheet(
-            f"color: {TEXT}; font-size: 21px; font-weight: 700;"
-            f"font-family: 'Menlo', 'SF Mono', monospace;")
-        sf.addWidget(self._cell_count_lbl)
+            f"color: {TEXT}; font-size: 24px; font-weight: 700;"
+            f"font-family: 'Menlo', 'SF Mono', monospace; letter-spacing: -0.5px;")
+        self._results_card.addWidget(self._cell_count_lbl)
 
         self._stats_lbl = QLabel()
         self._stats_lbl.setStyleSheet(
-            f"color: {DIM}; font-size: 11px; font-family: 'Menlo', 'SF Mono', monospace;")
+            f"color: {LABEL}; font-size: 11px; font-family: 'Menlo', 'SF Mono', monospace;")
         self._stats_lbl.setWordWrap(True)
-        sf.addWidget(self._stats_lbl)
+        self._results_card.addWidget(self._stats_lbl)
 
         px_row = QHBoxLayout(); px_row.setSpacing(8)
         px_row.addWidget(_field_label("Pixel size"))
@@ -210,11 +199,11 @@ class PredictWidget(QWidget):
         self.pixel_size.setToolTip("µm per pixel — set to show areas in µm². Leave 0 for px².")
         px_row.addWidget(self.pixel_size)
         px_row.addWidget(_field_label("µm/px"))
-        sf.addLayout(px_row)
+        self._results_card.addLayout(px_row)
 
         _line = QFrame(); _line.setFrameShape(QFrame.Shape.HLine)
         _line.setStyleSheet(f"background: {BORDER}; border: none;"); _line.setFixedHeight(1)
-        sf.addWidget(_line)
+        self._results_card.addWidget(_line)
 
         res_btns = QHBoxLayout(); res_btns.setSpacing(6)
         self._save_btn = QPushButton("Save masks")
@@ -233,44 +222,32 @@ class PredictWidget(QWidget):
         res_btns.addWidget(self._save_btn)
         res_btns.addWidget(self._csv_btn)
         res_btns.addWidget(self._refine_btn)
-        sf.addLayout(res_btns)
+        self._results_card.addLayout(res_btns)
+        L.addWidget(self._results_card)
 
-        self._stats_frame.setLayout(sf)
-        L.addWidget(self._stats_frame)
-
-        self._results_divider = _divider()
-        self._results_divider.setVisible(False)
-        L.addWidget(self._results_divider)
-
-        # ── Ground truth overlay ──────────────────────────────────────────────
-        L.addWidget(section_header("Ground truth overlay"))
-
-        L.addWidget(_field_label("GT mask file"))
+        # ── Ground truth overlay (collapsed — optional comparison tool) ────────
+        _gt_card = CollapsibleCard("Ground truth overlay", collapsed=True)
+        _gt_card.addWidget(_field_label("GT mask file"))
         self.gt_path = QLineEdit()
         self.gt_path.setPlaceholderText("Optional — compare prediction with ground truth")
-        L.addLayout(_file_row(self, self.gt_path, "Select ground truth mask",
+        _gt_card.addLayout(_file_row(self, self.gt_path, "Select ground truth mask",
             "Images (*.png *.tif *.tiff *.npy)"))
-
         gt_btn = QPushButton("Show GT layer")
         gt_btn.setFixedHeight(32)
         gt_btn.setStyleSheet(BTN_SECONDARY)
         gt_btn.clicked.connect(self._show_ground_truth)
-        L.addWidget(gt_btn)
+        _gt_card.addWidget(gt_btn)
+        L.addWidget(_gt_card)
 
-        L.addWidget(_divider())
-
-        # ── Batch prediction ──────────────────────────────────────────────────
-        L.addWidget(section_header("Batch prediction"))
-
-        L.addWidget(_field_label("Input folder"))
+        # ── Batch prediction (collapsed — for processing multiple images) ──────
+        _batch_card = CollapsibleCard("Batch prediction", collapsed=True)
+        _batch_card.addWidget(_field_label("Input folder"))
         self.batch_in = QLineEdit()
         self.batch_in.setPlaceholderText("Folder with images to process")
-        L.addLayout(_dir_row(self, self.batch_in, "Select input folder"))
-
-        L.addWidget(_field_label("Output folder"))
+        _batch_card.addLayout(_dir_row(self, self.batch_in, "Select input folder"))
+        _batch_card.addWidget(_field_label("Output folder"))
         self.batch_out = QLineEdit(str(STORAGE_DIR / "predict_masks"))
-        L.addLayout(_dir_row(self, self.batch_out, "Select output folder"))
-
+        _batch_card.addLayout(_dir_row(self, self.batch_out, "Select output folder"))
         _br = QHBoxLayout(); _br.setSpacing(8)
         self.batch_btn = QPushButton("Run Batch")
         self.batch_btn.setFixedHeight(36)
@@ -284,60 +261,47 @@ class PredictWidget(QWidget):
         self.batch_stop_btn.setStyleSheet(BTN_SECONDARY)
         self.batch_stop_btn.clicked.connect(self._stop_batch)
         _br.addWidget(self.batch_stop_btn)
-        L.addLayout(_br)
-
+        _batch_card.addLayout(_br)
         self.batch_progress = QProgressBar()
         self.batch_progress.setRange(0, 100)
         self.batch_progress.setFixedHeight(3)
         self.batch_progress.setVisible(False)
-        L.addWidget(self.batch_progress)
-
+        _batch_card.addWidget(self.batch_progress)
         self.batch_lbl = QLabel("")
-        self.batch_lbl.setStyleSheet(f"color: {DIM}; font-size: 11px; padding-top: 2px;")
-        L.addWidget(self.batch_lbl)
+        self.batch_lbl.setStyleSheet(f"color: {LABEL}; font-size: 11px; padding-top: 2px;")
+        _batch_card.addWidget(self.batch_lbl)
+        L.addWidget(_batch_card)
 
-        L.addWidget(_divider())
-
-        # ── Model settings ────────────────────────────────────────────────────
-        L.addWidget(section_header("Model settings"))
-
-        L.addWidget(_field_label("Custom checkpoint (.pth)"))
-        L.addLayout(_make_custom_lora_row(self))
-
-        _sp2 = QWidget(); _sp2.setFixedHeight(4); L.addWidget(_sp2)
-
+        # ── Model settings (collapsed — set once, rarely changed) ──────────────
+        _model_card = CollapsibleCard("Model settings", collapsed=True)
+        _model_card.addWidget(_field_label("Custom checkpoint (.pth)"))
+        _model_card.addLayout(_make_custom_lora_row(self))
         self.vit_name = QComboBox()
         self.vit_name.addItems(["vit_h", "vit_l", "vit_b"])
         self.vit_name.currentTextChanged.connect(self._on_vit_changed)
-        L.addLayout(_param_row("SAM type", self.vit_name,
+        _model_card.addLayout(_param_row("SAM type", self.vit_name,
             "vit_h = highest quality, vit_b = fastest"))
-
         self.sam_path = QLineEdit()
         self.sam_path.setPlaceholderText("auto-detected from SAM type above")
         self._on_vit_changed("vit_h")
-        L.addLayout(_file_row(self, self.sam_path, "Select SAM backbone", "PyTorch (*.pth)"))
-
+        _model_card.addLayout(_file_row(self, self.sam_path, "Select SAM backbone", "PyTorch (*.pth)"))
         self.lora_rank = QSpinBox()
         self.lora_rank.setRange(1, 64); self.lora_rank.setValue(4)
         self.lora_rank.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        L.addLayout(_param_row("LoRA rank", self.lora_rank,
+        _model_card.addLayout(_param_row("LoRA rank", self.lora_rank,
             "Must match the rank used during training (default 4)"))
-
         self.device = QComboBox(); self._populate_devices()
-        L.addLayout(_param_row("Device", self.device))
+        _model_card.addLayout(_param_row("Device", self.device))
+        L.addWidget(_model_card)
 
-        L.addWidget(_divider())
-
-        # ── Inference parameters ──────────────────────────────────────────────
-        L.addWidget(section_header("Inference parameters"))
-
+        # ── Inference parameters (collapsed — tune when needed) ────────────────
+        _inf_card = CollapsibleCard("Inference parameters", collapsed=True)
         self.resize_size = QComboBox()
         for v in ["256", "512", "768", "1024"]:
             self.resize_size.addItem(v)
         self.resize_size.setCurrentText("512")
-        L.addLayout(_param_row("Resize", self.resize_size,
+        _inf_card.addLayout(_param_row("Resize", self.resize_size,
             "SAM inference resolution. Higher = better accuracy, slower. Try 1024 for small cells."))
-
         params = [
             ("Points/side",     "points_per_side",       4,   128, 32,  0, 4,
              "Grid density for mask proposals. Higher = more candidates, slower."),
@@ -357,7 +321,8 @@ class PredictWidget(QWidget):
                 w = QDoubleSpinBox(); w.setDecimals(dec); w.setRange(lo, hi); w.setValue(val); w.setSingleStep(step)
             w.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
             setattr(self, attr, w)
-            L.addLayout(_param_row(label, w, tip))
+            _inf_card.addLayout(_param_row(label, w, tip))
+        L.addWidget(_inf_card)
 
         L.addStretch()
         inner.setLayout(L)
@@ -623,9 +588,7 @@ class PredictWidget(QWidget):
         self._cell_count_lbl.setText(f"{n}  cells detected")
         self._stats_lbl.setText(
             f"Avg area {avg_s} {unit}  ·  Median {med_s} {unit}  ·  {cov:.1f}% coverage")
-        self._results_header.setVisible(True)
-        self._stats_frame.setVisible(True)
-        self._results_divider.setVisible(True)
+        self._results_card.setVisible(True)
 
     def _show_ground_truth(self):
         p = self.gt_path.text().strip()

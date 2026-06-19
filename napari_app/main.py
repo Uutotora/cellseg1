@@ -14,11 +14,11 @@ from napari_app.widgets.predict_widget import PredictWidget
 TAB_SS = """
 QTabWidget::pane {
     border: none;
-    background: #262930;
+    background: #14192a;
 }
 QTabBar::tab {
-    background: #1e2128;
-    color: #868e93;
+    background: #0e1220;
+    color: #5e6d88;
     padding: 8px 24px;
     border: none;
     border-bottom: 2px solid transparent;
@@ -26,13 +26,13 @@ QTabBar::tab {
     font-weight: 500;
 }
 QTabBar::tab:selected {
-    color: #f0f1f2;
-    border-bottom: 2px solid #007acc;
-    background: #262930;
+    color: #dce4f0;
+    border-bottom: 2px solid #4d8fff;
+    background: #14192a;
 }
 QTabBar::tab:hover:!selected {
-    color: #c0c4cc;
-    background: #2a2f38;
+    color: #8a9bbe;
+    background: #181f30;
 }
 """
 

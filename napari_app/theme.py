@@ -1,13 +1,18 @@
-# napari dark theme palette
-BG      = "#262930"
-FG      = "#2e333c"
-BORDER  = "#3a3f48"
-TEXT    = "#d0d4da"
-DIM     = "#6b7280"
-ACCENT  = "#007acc"
-SUCCESS = "#2d6a2d"
-DANGER  = "#7a2020"
-CONSOLE = "#1a1d23"
+# CellSeg1 — precision dark theme
+# Cool blue-tinted grays evoke a dark microscopy room; accent blue reserved
+# strictly for interactive elements so it always reads as "action available".
+
+BG          = "#14192a"   # very dark panel background
+FG          = "#1e2c44"   # card surfaces (clearly above BG)
+CARD_HEADER = "#2d3f5e"   # card title bands (distinctly lighter than FG)
+BORDER      = "#3a5070"   # visible borders
+TEXT        = "#dce4f0"   # primary text
+DIM         = "#5e6d88"   # subdued text (timestamps, hints)
+LABEL       = "#8a9bbe"   # field labels and section headers
+ACCENT      = "#4d8fff"   # interactive blue — buttons, focus, links ONLY
+SUCCESS     = "#1d9e6e"   # vibrant biogreen (GFP-inspired)
+DANGER      = "#c94f4f"   # destructive red
+CONSOLE     = "#0e1220"   # console / log background
 
 WIDGET_SS = f"""
 QWidget {{
@@ -21,10 +26,10 @@ QScrollArea, QScrollArea > QWidget > QWidget {{
     border: none;
 }}
 QScrollBar:vertical {{
-    background: transparent; width: 6px; margin: 0;
+    background: transparent; width: 7px; margin: 0;
 }}
 QScrollBar::handle:vertical {{
-    background: {BORDER}; border-radius: 3px; min-height: 24px;
+    background: {BORDER}; border-radius: 3px; min-height: 28px;
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 
@@ -33,20 +38,21 @@ QLabel {{ background: transparent; color: {TEXT}; }}
 QLineEdit {{
     background: {FG};
     border: 1px solid {BORDER};
-    border-radius: 4px;
-    padding: 5px 8px;
+    border-radius: 5px;
+    padding: 5px 9px;
     color: {TEXT};
-    min-height: 26px;
+    min-height: 28px;
 }}
 QLineEdit:focus {{ border-color: {ACCENT}; }}
+QLineEdit[readOnly="true"] {{ color: {LABEL}; }}
 
 QComboBox {{
     background: {FG};
     border: 1px solid {BORDER};
-    border-radius: 4px;
-    padding: 5px 8px;
+    border-radius: 5px;
+    padding: 5px 9px;
     color: {TEXT};
-    min-height: 26px;
+    min-height: 28px;
 }}
 QComboBox:focus {{ border-color: {ACCENT}; }}
 QComboBox::drop-down {{ border: none; width: 20px; }}
@@ -61,10 +67,10 @@ QComboBox QAbstractItemView {{
 QSpinBox, QDoubleSpinBox {{
     background: {FG};
     border: 1px solid {BORDER};
-    border-radius: 4px;
-    padding: 5px 8px;
+    border-radius: 5px;
+    padding: 5px 9px;
     color: {TEXT};
-    min-height: 26px;
+    min-height: 28px;
     font-family: "Menlo", "SF Mono", monospace;
     font-size: 12px;
 }}
@@ -83,29 +89,29 @@ QProgressBar::chunk {{ background: {ACCENT}; border-radius: 2px; }}
 QTextEdit {{
     background: {CONSOLE};
     border: 1px solid {BORDER};
-    border-radius: 4px;
-    color: {DIM};
+    border-radius: 5px;
+    color: {LABEL};
     font-family: "Menlo", "SF Mono", "Courier New", monospace;
     font-size: 11px;
 }}
 
 QGroupBox {{
     border: 1px solid {BORDER};
-    border-radius: 4px;
+    border-radius: 5px;
     margin-top: 6px;
     padding-top: 6px;
-    color: {DIM};
+    color: {LABEL};
     font-size: 11px;
 }}
 QGroupBox::title {{
     subcontrol-origin: margin; left: 8px;
-    padding: 0 4px; color: {DIM};
+    padding: 0 4px; color: {LABEL};
 }}
 
 QToolButton {{
     background: transparent;
     border: none;
-    color: {DIM};
+    color: {LABEL};
     text-align: left;
     padding: 2px 0;
     font-size: 11px;
@@ -120,56 +126,58 @@ QPushButton {{
     background: {ACCENT};
     color: #ffffff;
     border: none;
-    border-radius: 5px;
+    border-radius: 6px;
     font-size: 13px;
     font-weight: 600;
-    padding: 8px 14px;
+    padding: 9px 16px;
+    letter-spacing: 0.3px;
 }}
-QPushButton:hover {{ background: #1a8fd8; }}
-QPushButton:pressed {{ background: #005fa3; }}
+QPushButton:hover {{ background: #6099ff; }}
+QPushButton:pressed {{ background: #3a78e0; }}
 QPushButton:disabled {{ background: {FG}; color: {DIM}; }}
 """
 
 BTN_SUCCESS = f"""
 QPushButton {{
     background: {SUCCESS};
-    color: #d4ead4;
+    color: #ffffff;
     border: none;
-    border-radius: 5px;
+    border-radius: 6px;
     font-size: 13px;
     font-weight: 600;
     padding: 8px 14px;
 }}
-QPushButton:hover {{ background: #357a35; }}
-QPushButton:pressed {{ background: #1e4d1e; }}
+QPushButton:hover {{ background: #23b87e; }}
+QPushButton:pressed {{ background: #167a55; }}
 QPushButton:disabled {{ background: {FG}; color: {DIM}; }}
 """
 
 BTN_DANGER = f"""
 QPushButton {{
     background: {DANGER};
-    color: #e8c0c0;
+    color: #ffffff;
     border: none;
     border-radius: 5px;
     font-size: 13px;
     font-weight: 600;
     padding: 8px 14px;
 }}
-QPushButton:hover {{ background: #9e2828; }}
+QPushButton:hover {{ background: #d96060; }}
 QPushButton:disabled {{ background: {FG}; color: {DIM}; }}
 """
 
 BTN_SECONDARY = f"""
 QPushButton {{
-    background: {FG};
-    color: {TEXT};
+    background: transparent;
+    color: {LABEL};
     border: 1px solid {BORDER};
-    border-radius: 4px;
+    border-radius: 5px;
     padding: 6px 12px;
     font-size: 12px;
 }}
-QPushButton:hover {{ border-color: {ACCENT}; color: #ffffff; }}
-QPushButton:disabled {{ color: {DIM}; }}
+QPushButton:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
+QPushButton:pressed {{ background: rgba(77, 143, 255, 0.1); }}
+QPushButton:disabled {{ color: {DIM}; border-color: {BORDER}; }}
 """
 
 BTN_PRESET = f"""
@@ -177,14 +185,14 @@ QPushButton {{
     background: transparent;
     color: {DIM};
     border: 1px solid {BORDER};
-    border-radius: 4px;
+    border-radius: 5px;
     padding: 6px 4px;
     font-size: 11px;
     text-align: center;
 }}
-QPushButton:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
+QPushButton:hover {{ border-color: {ACCENT}; color: {LABEL}; }}
 QPushButton:checked {{
-    background: rgba(0, 122, 204, 0.14);
+    background: rgba(77, 143, 255, 0.12);
     border-color: {ACCENT};
     color: {TEXT};
 }}
@@ -194,10 +202,10 @@ QPushButton:pressed {{ background: {ACCENT}; color: #fff; border-color: {ACCENT}
 BTN_BROWSE = f"""
 QPushButton {{
     background: {FG};
-    color: {DIM};
+    color: {LABEL};
     border: 1px solid {BORDER};
-    border-radius: 4px;
-    font-size: 13px;
+    border-radius: 5px;
+    font-size: 14px;
     padding: 0;
     min-height: 28px;
     min-width:  28px;

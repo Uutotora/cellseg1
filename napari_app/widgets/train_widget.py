@@ -18,9 +18,12 @@ from gui.pages.utils.train_state_manager import TrainingStateManager
 from project_root import STORAGE_DIR
 from napari_app.theme import (
     WIDGET_SS, BTN_PRIMARY, BTN_DANGER, BTN_SECONDARY, BTN_PRESET, BTN_BROWSE,
-    BG, FG, BORDER, TEXT, ACCENT, DIM, CONSOLE,
+    BG, FG, BORDER, TEXT, ACCENT, DIM, LABEL, CONSOLE,
 )
-from napari_app.widgets.common import section_header, divider as _divider, param_row as _param_row
+from napari_app.widgets.common import (
+    section_header, divider as _divider, param_row as _param_row,
+    CollapsibleSection, SectionCard, CollapsibleCard,
+)
 
 TRAIN_IMAGE_DIR  = STORAGE_DIR / "train_images"
 TRAIN_MASK_DIR   = STORAGE_DIR / "train_masks"
@@ -39,7 +42,7 @@ PRESETS = {
 
 def _field_label(text: str) -> QLabel:
     lbl = QLabel(text)
-    lbl.setStyleSheet(f"color: {DIM}; font-size: 12px; padding: 2px 0;")
+    lbl.setStyleSheet(f"color: {LABEL}; font-size: 11px; font-weight: 500; padding: 3px 0 1px 0;")
     return lbl
 
 
@@ -172,10 +175,10 @@ class TrainWidget(QWidget):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         inner = QWidget()
-        L = QVBoxLayout(); L.setSpacing(0); L.setContentsMargins(16, 4, 16, 12)
+        L = QVBoxLayout(); L.setSpacing(0); L.setContentsMargins(12, 8, 12, 16)
 
-        # ── Presets ───────────────────────────────────────────────────────────
-        L.addWidget(section_header("Presets"))
+        # ── Presets card ──────────────────────────────────────────────────────
+        presets_card = SectionCard("Presets")
 
         row_pre = QHBoxLayout(); row_pre.setSpacing(6)
         self._preset_group = QButtonGroup(self); self._preset_group.setExclusive(True)
@@ -183,71 +186,72 @@ class TrainWidget(QWidget):
         for name, vals in PRESETS.items():
             b = QPushButton(f"{name}\n{vals.get('_sub', '')}")
             b.setStyleSheet(BTN_PRESET)
-            b.setFixedHeight(44)
+            b.setFixedHeight(46)
             b.setCheckable(True)
             b.clicked.connect(lambda _, v=vals: self._apply_preset(v))
             self._preset_group.addButton(b)
             self._preset_btns[name] = b
             row_pre.addWidget(b)
         self._preset_btns["Balanced"].setChecked(True)
-        L.addLayout(row_pre)
+        presets_card.addLayout(row_pre)
 
         self._eff_lbl = QLabel()
-        self._eff_lbl.setStyleSheet(f"color: {DIM}; font-size: 11px; padding: 4px 0 2px 0;")
-        L.addWidget(self._eff_lbl)
+        self._eff_lbl.setStyleSheet(
+            f"color: {DIM}; font-size: 10px; font-family: 'Menlo','SF Mono',monospace; padding: 2px 0;")
+        presets_card.addWidget(self._eff_lbl)
+        L.addWidget(presets_card)
 
-        L.addWidget(_divider())
-
-        # ── Training data ─────────────────────────────────────────────────────
-        L.addWidget(section_header("Training data"))
-
+        # ── Training data card ────────────────────────────────────────────────
         TRAIN_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
         TRAIN_MASK_DIR.mkdir(parents=True, exist_ok=True)
         LORA_OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        L.addWidget(_field_label("Images folder"))
-        self.image_dir = QLineEdit(str(TRAIN_IMAGE_DIR))
-        L.addLayout(_folder_row(self, self.image_dir, str(TRAIN_IMAGE_DIR)))
+        data_card = SectionCard("Training data")
 
-        L.addWidget(_field_label("Masks folder"))
+        data_card.addWidget(_field_label("Images folder"))
+        self.image_dir = QLineEdit(str(TRAIN_IMAGE_DIR))
+        data_card.addLayout(_folder_row(self, self.image_dir, str(TRAIN_IMAGE_DIR)))
+
+        data_card.addWidget(_field_label("Masks folder"))
         self.mask_dir = QLineEdit(str(TRAIN_MASK_DIR))
-        L.addLayout(_folder_row(self, self.mask_dir, str(TRAIN_MASK_DIR)))
+        data_card.addLayout(_folder_row(self, self.mask_dir, str(TRAIN_MASK_DIR)))
 
         use_layers_btn = QPushButton("⬇  Use active napari layers as training data")
-        use_layers_btn.setFixedHeight(32)
+        use_layers_btn.setFixedHeight(30)
         use_layers_btn.setStyleSheet(BTN_SECONDARY)
         use_layers_btn.setToolTip(
             "Exports the Image + Labels layers currently open in napari\n"
             "into the training folders above. Use napari's label brush\n"
             "to annotate cells first, then click this button.")
         use_layers_btn.clicked.connect(self._use_napari_layers)
-        L.addWidget(use_layers_btn)
-        self._layer_status_lbl = QLabel("")
-        self._layer_status_lbl.setStyleSheet(f"color: {DIM}; font-size: 11px; padding: 2px 0;")
-        L.addWidget(self._layer_status_lbl)
+        data_card.addWidget(use_layers_btn)
 
-        L.addWidget(_field_label("Output checkpoint"))
+        self._layer_status_lbl = QLabel("")
+        self._layer_status_lbl.setStyleSheet(
+            f"color: {LABEL}; font-size: 10px; padding: 1px 0;")
+        data_card.addWidget(self._layer_status_lbl)
+
+        data_card.addWidget(_field_label("Output checkpoint"))
         self.output_path = QLineEdit()
         self.output_path.setPlaceholderText("auto-named  lora_vit_h_r4_s512_<timestamp>.pth")
         r_out = QHBoxLayout(); r_out.setSpacing(6)
         r_out.addWidget(self.output_path)
         r_out.addWidget(_browse(self, lambda: _pick_save(self, self.output_path)))
-        L.addLayout(r_out)
+        data_card.addLayout(r_out)
+        L.addWidget(data_card)
 
-        L.addWidget(_divider())
-
-        # ── Model settings ────────────────────────────────────────────────────
-        L.addWidget(section_header("Model settings"))
+        # ── Model settings (collapsible card) ─────────────────────────────────
+        _model_card = CollapsibleCard("Model settings", collapsed=True)
 
         self.vit_name = QComboBox()
         self.vit_name.addItems(["vit_h", "vit_l", "vit_b"])
         self.vit_name.currentTextChanged.connect(self._on_vit_changed)
-        L.addLayout(_param_row("SAM type", self.vit_name,
+        _model_card.addLayout(_param_row("SAM type", self.vit_name,
             "vit_h = best quality (~2.5 GB), vit_b = fastest (~375 MB)"))
 
         self.sam_path = QLineEdit()
         self.sam_path.setPlaceholderText("auto-detected")
-        L.addLayout(_file_row(self, self.sam_path, "SAM backbone", "PyTorch (*.pth)",
+        _model_card.addLayout(_file_row(self, self.sam_path, "SAM backbone", "PyTorch (*.pth)",
             str(SAM_BACKBONE_DIR)))
         self._on_vit_changed("vit_h")
 
@@ -255,19 +259,18 @@ class TrainWidget(QWidget):
         self.lora_rank.setRange(1, 64); self.lora_rank.setValue(4)
         self.lora_rank.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.lora_rank.valueChanged.connect(self._update_eff)
-        L.addLayout(_param_row("LoRA rank", self.lora_rank,
+        _model_card.addLayout(_param_row("LoRA rank", self.lora_rank,
             "Adapter size. Higher = more parameters = better accuracy, more memory."))
+        L.addWidget(_model_card)
 
-        L.addWidget(_divider())
-
-        # ── Training parameters ───────────────────────────────────────────────
-        L.addWidget(section_header("Training parameters"))
+        # ── Training parameters card ──────────────────────────────────────────
+        params_card = SectionCard("Training parameters")
 
         self.resize_size = QComboBox()
         for v in ["256", "512", "768", "1024"]:
             self.resize_size.addItem(v)
         self.resize_size.setCurrentText("512")
-        L.addLayout(_param_row("Resize", self.resize_size,
+        params_card.addLayout(_param_row("Resize", self.resize_size,
             "Match prediction resize for best results."))
 
         self.epochs = QSpinBox()
@@ -280,11 +283,11 @@ class TrainWidget(QWidget):
         self.lr.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
 
         ep_lr_row = QHBoxLayout(); ep_lr_row.setSpacing(8)
-        _l1 = QLabel("Epochs"); _l1.setStyleSheet(f"color: {DIM}; font-size: 12px;"); _l1.setFixedWidth(52)
-        _l2 = QLabel("LR");     _l2.setStyleSheet(f"color: {DIM}; font-size: 12px;"); _l2.setFixedWidth(20)
+        _l1 = QLabel("Epochs"); _l1.setStyleSheet(f"color: {LABEL}; font-size: 11px; font-weight: 500;"); _l1.setFixedWidth(50)
+        _l2 = QLabel("LR");     _l2.setStyleSheet(f"color: {LABEL}; font-size: 11px; font-weight: 500;"); _l2.setFixedWidth(18)
         ep_lr_row.addWidget(_l1); ep_lr_row.addWidget(self.epochs)
         ep_lr_row.addWidget(_l2); ep_lr_row.addWidget(self.lr)
-        L.addLayout(ep_lr_row)
+        params_card.addLayout(ep_lr_row)
 
         self.batch_size = QSpinBox()
         self.batch_size.setRange(1, 16); self.batch_size.setValue(1)
@@ -297,39 +300,38 @@ class TrainWidget(QWidget):
         self.grad_accum.valueChanged.connect(self._update_eff)
 
         ba_acc_row = QHBoxLayout(); ba_acc_row.setSpacing(8)
-        _l3 = QLabel("Batch");  _l3.setStyleSheet(f"color: {DIM}; font-size: 12px;"); _l3.setFixedWidth(52)
-        _l4 = QLabel("Accum");  _l4.setStyleSheet(f"color: {DIM}; font-size: 12px;"); _l4.setFixedWidth(46)
+        _l3 = QLabel("Batch");  _l3.setStyleSheet(f"color: {LABEL}; font-size: 11px; font-weight: 500;"); _l3.setFixedWidth(50)
+        _l4 = QLabel("Accum");  _l4.setStyleSheet(f"color: {LABEL}; font-size: 11px; font-weight: 500;"); _l4.setFixedWidth(44)
         ba_acc_row.addWidget(_l3); ba_acc_row.addWidget(self.batch_size)
         ba_acc_row.addWidget(_l4); ba_acc_row.addWidget(self.grad_accum)
-        L.addLayout(ba_acc_row)
+        params_card.addLayout(ba_acc_row)
 
         self.device = QComboBox(); self._populate_devices()
-        L.addLayout(_param_row("Device", self.device))
+        params_card.addLayout(_param_row("Device", self.device))
+        L.addWidget(params_card)
 
-        L.addWidget(_divider())
-
-        # ── Start / Stop ──────────────────────────────────────────────────────
-        L.addWidget(section_header("Run"))
+        # ── Run — no card, button is the visual anchor ─────────────────────────
+        L.addSpacing(14)
 
         btn_row = QHBoxLayout(); btn_row.setSpacing(8)
         self.start_btn = QPushButton("▶   Start Training")
-        self.start_btn.setFixedHeight(42)
+        self.start_btn.setFixedHeight(44)
         self.start_btn.setStyleSheet(BTN_PRIMARY)
         self.start_btn.setToolTip("Ctrl+T")
         self.start_btn.clicked.connect(self._start_training)
         btn_row.addWidget(self.start_btn)
 
-        self.stop_btn = QPushButton("■  Stop")
-        self.stop_btn.setFixedHeight(42)
-        self.stop_btn.setFixedWidth(80)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setFixedHeight(44)
+        self.stop_btn.setFixedWidth(72)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet(BTN_DANGER)
+        self.stop_btn.setStyleSheet(BTN_SECONDARY)
         self.stop_btn.setToolTip("Esc")
         self.stop_btn.clicked.connect(self._stop_training)
         btn_row.addWidget(self.stop_btn)
         L.addLayout(btn_row)
 
-        _sp = QWidget(); _sp.setFixedHeight(6); L.addWidget(_sp)
+        L.addSpacing(6)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(3); self.progress_bar.setRange(0, 100)
@@ -337,9 +339,11 @@ class TrainWidget(QWidget):
 
         status_row = QHBoxLayout(); status_row.setContentsMargins(0, 4, 0, 0)
         self.epoch_lbl = QLabel("—")
-        self.epoch_lbl.setStyleSheet(f"color: {DIM}; font-size: 12px;")
+        self.epoch_lbl.setStyleSheet(
+            f"color: {LABEL}; font-size: 11px; font-family: 'Menlo','SF Mono',monospace;")
         self.loss_lbl = QLabel("—")
-        self.loss_lbl.setStyleSheet(f"color: {DIM}; font-size: 12px;")
+        self.loss_lbl.setStyleSheet(
+            f"color: {LABEL}; font-size: 11px; font-family: 'Menlo','SF Mono',monospace;")
         status_row.addWidget(self.epoch_lbl)
         status_row.addStretch()
         status_row.addWidget(self.loss_lbl)
@@ -348,15 +352,13 @@ class TrainWidget(QWidget):
         self.loss_chart = LossChart()
         L.addWidget(self.loss_chart)
 
-        L.addWidget(_divider())
-
-        # ── Training history ──────────────────────────────────────────────────
-        L.addWidget(section_header("Training history"))
-
+        # ── Training history card ─────────────────────────────────────────────
+        hist_card = SectionCard("Training history")
         self.history_box = QTextEdit()
         self.history_box.setReadOnly(True)
-        self.history_box.setFixedHeight(100)
-        L.addWidget(self.history_box)
+        self.history_box.setFixedHeight(96)
+        hist_card.addWidget(self.history_box)
+        L.addWidget(hist_card)
 
         L.addStretch()
         inner.setLayout(L)
