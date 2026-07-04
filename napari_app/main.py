@@ -11,6 +11,7 @@ from PyQt6.QtCore import QLocale
 from napari_app.widgets.train_widget import TrainWidget
 from napari_app.widgets.predict_widget import PredictWidget
 from napari_app.widgets.assistant_widget import AssistantWidget
+from napari_app.widgets.annotate_widget import AnnotateWidget
 
 TAB_SS = """
 QTabWidget::pane {
@@ -50,8 +51,10 @@ def main():
     predict_widget   = PredictWidget(viewer)
     train_widget     = TrainWidget(viewer)
     assistant_widget = AssistantWidget(viewer, predict_widget)
+    annotate_widget  = AnnotateWidget(viewer, predict_widget)
 
     tabs.addTab(predict_widget,   "Predict")
+    tabs.addTab(annotate_widget,  "Annotate")
     tabs.addTab(assistant_widget, "Assistant")
     tabs.addTab(train_widget,     "Train")
 

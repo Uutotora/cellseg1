@@ -163,6 +163,23 @@ def predict_cached(config: dict, image_rgb: np.ndarray) -> np.ndarray:
     return sam_output_to_mask(output)
 
 
+def get_model(config: dict):
+    """Return the cached LoRA_Sam for ``config``, loading it if needed.
+
+    Shares the singleton used by predict_cached so the interactive segmenter
+    and the automatic generator never hold two copies of the weights.
+    """
+    global _model, _model_key, _embed_cache, _embed_model_key, _embed_img_key
+    mkey = _mk_model_key(config)
+    if _model is None or _model_key != mkey:
+        _model = _load_model(config)
+        _model_key = mkey
+        _embed_cache.clear()
+        _embed_model_key = mkey
+        _embed_img_key = None
+    return _model
+
+
 def _load_model(config: dict):
     import os
     dev = config.get("selected_device", "cpu")
