@@ -98,6 +98,8 @@ class PredictWidget(QWidget):
         self.viewer = viewer
         self._pred_thread   = None
         self._last_mask     = None
+        self._last_img_rgb  = None
+        self._last_measure  = None
         self._last_img_path = None
         self._lora_paths    = {}
         self._batch_stop    = threading.Event()
@@ -197,6 +199,7 @@ class PredictWidget(QWidget):
         self.pixel_size.setSpecialValueText("— (pixels)")
         self.pixel_size.setFixedWidth(120)
         self.pixel_size.setToolTip("µm per pixel — set to show areas in µm². Leave 0 for px².")
+        self.pixel_size.valueChanged.connect(self._on_pixel_size_changed)
         px_row.addWidget(self.pixel_size)
         px_row.addWidget(_field_label("µm/px"))
         self._results_card.addLayout(px_row)
@@ -223,6 +226,15 @@ class PredictWidget(QWidget):
         res_btns.addWidget(self._csv_btn)
         res_btns.addWidget(self._refine_btn)
         self._results_card.addLayout(res_btns)
+
+        self._measure_btn = QPushButton("📊  Open measurements table")
+        self._measure_btn.setFixedHeight(32)
+        self._measure_btn.setStyleSheet(BTN_SECONDARY)
+        self._measure_btn.setToolTip(
+            "Per-cell morphometry: area, diameter, circularity, elongation,\n"
+            "convexity and intensity — with distribution histograms.")
+        self._measure_btn.clicked.connect(self._open_measurements)
+        self._results_card.addWidget(self._measure_btn)
         L.addWidget(self._results_card)
 
         # ── Ground truth overlay (collapsed — optional comparison tool) ────────
@@ -559,6 +571,7 @@ class PredictWidget(QWidget):
     def _show_results(self, img_arr, mask):
         name = Path(self.image_path.text()).stem
         self._last_mask     = mask
+        self._last_img_rgb  = img_arr
         self._last_img_path = self.image_path.text()
 
         for lyr in list(self.viewer.layers):
@@ -569,26 +582,53 @@ class PredictWidget(QWidget):
         if mask is not None and mask.max() > 0:
             lyr = self.viewer.add_labels(mask.astype(np.int32), name=f"{name}_masks", opacity=0.7)
             lyr.contour = 2
-            self._show_stats(mask, img_arr.shape[:2])
+        self._recompute_measurements()
         self.viewer.reset_view()
 
-    def _show_stats(self, mask, shape):
-        n      = int(mask.max())
-        counts = np.bincount(mask.ravel())
-        areas  = counts[1:n + 1].tolist() if n > 0 else []
-        avg_a  = int(np.mean(areas))   if areas else 0
-        med_a  = int(np.median(areas)) if areas else 0
-        cov    = counts[1:].sum() / (shape[0] * shape[1]) * 100
-        px     = self.pixel_size.value()
-        if px > 0:
-            unit, avg_s, med_s = "µm²", f"{avg_a * px * px:.1f}", f"{med_a * px * px:.1f}"
-        else:
-            unit, avg_s, med_s = "px²", str(avg_a), str(med_a)
+    def _on_pixel_size_changed(self, _value=None):
+        if self._last_mask is not None:
+            self._recompute_measurements()
 
+    def _recompute_measurements(self):
+        """Measure the current mask and refresh the results panel + window."""
+        mask = self._last_mask
+        if mask is None or int(mask.max()) == 0:
+            self._results_card.setVisible(mask is not None)
+            if mask is not None:
+                self._cell_count_lbl.setText("0  cells detected")
+                self._stats_lbl.setText("No cells found — try the Assistant tab for tips.")
+                self._last_measure = None
+            return
+        from napari_app import analysis
+        try:
+            result = analysis.compute_measurements(
+                mask, intensity_image=self._last_img_rgb,
+                pixel_size_um=self.pixel_size.value())
+        except Exception as e:
+            self._append_log(f"[WARN] measurement failed: {e}")
+            result = None
+        self._last_measure = result
+
+        n = int(mask.max())
         self._cell_count_lbl.setText(f"{n}  cells detected")
-        self._stats_lbl.setText(
-            f"Avg area {avg_s} {unit}  ·  Median {med_s} {unit}  ·  {cov:.1f}% coverage")
+        if result:
+            cov = float((mask > 0).sum()) / mask.size * 100.0
+            self._stats_lbl.setText(f"{analysis.summary_line(result)}  ·  {cov:.1f}% coverage")
         self._results_card.setVisible(True)
+
+        from napari_app.widgets.measurements_window import get_measurements_window
+        mw = get_measurements_window()
+        if mw.isVisible() and result:
+            mw.set_result(result, Path(self._last_img_path).name if self._last_img_path else "")
+
+    def _open_measurements(self):
+        if self._last_measure is None:
+            self._append_log("[WARN] Run a prediction with detected cells first"); return
+        from napari_app.widgets.measurements_window import get_measurements_window
+        mw = get_measurements_window()
+        mw.set_result(self._last_measure,
+                      Path(self._last_img_path).name if self._last_img_path else "")
+        mw.show_and_raise()
 
     def _show_ground_truth(self):
         p = self.gt_path.text().strip()
@@ -789,41 +829,26 @@ class PredictWidget(QWidget):
                 self.lora_combo.setCurrentIndex(i); break
 
     def _export_csv(self):
-        if self._last_mask is None: return
-        import csv
-        mask = self._last_mask
-        n    = int(mask.max())
-        if n == 0:
+        if self._last_mask is None:
+            return
+        if self._last_measure is None:
+            self._recompute_measurements()
+        result = self._last_measure
+        if not result or result["n_cells"] == 0:
             self._append_log("[WARN] No cells to export"); return
+
+        from napari_app import analysis
         stem    = Path(self._last_img_path).stem if self._last_img_path else "mask"
         (STORAGE_DIR / "predict_masks").mkdir(parents=True, exist_ok=True)
         default = str(STORAGE_DIR / "predict_masks" / f"{stem}_measurements.csv")
         p, _ = QFileDialog.getSaveFileName(
-            self, "Export CSV", default, "CSV (*.csv)", options=_DLG)
-        if not p: return
-
-        flat  = mask.ravel()
-        ys, xs = np.indices(mask.shape)
-        areas = np.bincount(flat, minlength=n + 1)[1:].astype(np.int64)
-        sum_y = np.bincount(flat, weights=ys.ravel().astype(np.float64), minlength=n + 1)[1:]
-        sum_x = np.bincount(flat, weights=xs.ravel().astype(np.float64), minlength=n + 1)[1:]
-        px = self.pixel_size.value()
+            self, "Export measurements CSV", default, "CSV (*.csv)", options=_DLG)
+        if not p:
+            return
         with open(p, "w", newline="") as f:
-            wr = csv.writer(f)
-            header = ["cell_id", "area_px"]
-            if px > 0:
-                header.append("area_um2")
-            header += ["centroid_y", "centroid_x"]
-            wr.writerow(header)
-            for i in range(n):
-                a = int(areas[i])
-                if a == 0: continue
-                row = [i + 1, a]
-                if px > 0:
-                    row.append(f"{a * px * px:.3f}")
-                row += [f"{sum_y[i] / a:.1f}", f"{sum_x[i] / a:.1f}"]
-                wr.writerow(row)
-        self._append_log(f"✓ Exported {n} cells → {Path(p).name}")
+            f.write(analysis.rows_as_csv(result))
+        self._append_log(f"✓ Exported {result['n_cells']} cells × "
+                         f"{len(result['columns'])} features → {Path(p).name}")
 
 
 # ── Custom LoRA path ──────────────────────────────────────────────────────────
