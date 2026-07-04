@@ -79,8 +79,27 @@ class LogWindow(QWidget):
             else QTextEdit.LineWrapMode.NoWrap
         )
 
+    _placed = False
+
+    def _place(self):
+        if self._placed:
+            return
+        self._placed = True
+        try:
+            from PyQt6.QtGui import QGuiApplication
+            geo = QGuiApplication.primaryScreen().availableGeometry()
+            # Dock to the bottom-left of the screen, clear of the napari panel.
+            self.move(geo.left() + 24, geo.bottom() - self.height() - 40)
+        except Exception:
+            pass
+
+    def show(self):
+        self._place()
+        super().show()
+
     def show_and_raise(self):
-        self.show()
+        self._place()
+        super().show()
         self.raise_()
         self.activateWindow()
 

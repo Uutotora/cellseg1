@@ -210,8 +210,36 @@ def ollama_models(timeout: float = 1.0) -> list[str]:
         return []
 
 
-def build_context_prompt(diag: dict[str, Any], params: dict[str, Any]) -> str:
-    """System prompt grounding the LLM in CellSeg1 and the live result."""
+# Static persona/instructions — used both for live chat and for baking a
+# task-specialised Ollama model via a Modelfile (see ollama_create_agent).
+AGENT_SYSTEM = (
+    "You are CellSeg1 Assistant, the built-in expert for CellSeg1 — a napari "
+    "application that segments cells in microscopy images with a Segment Anything "
+    "(SAM) backbone fine-tuned via LoRA, then reports per-cell morphometry.\n\n"
+    "Your users are microscopists and cell biologists, not ML engineers. Give "
+    "concise, concrete, actionable answers. When a parameter should change, name "
+    "it, give the new value, and say why in one clause.\n\n"
+    "Tunable inference parameters and their effects:\n"
+    "• points_per_side (4-96): sampling grid density. Higher finds more/denser "
+    "cells but is slower.\n"
+    "• pred_iou_thresh (0-1): mask-quality gate. Lower to recover missed cells, "
+    "raise to drop false positives.\n"
+    "• stability_score_thresh (0-1): confidence gate. Same direction as IoU.\n"
+    "• box_nms_thresh (0-1): overlap suppression. Lower separates touching cells, "
+    "higher merges duplicates.\n"
+    "• min_mask_area (px): discards objects smaller than this — use to remove debris.\n"
+    "• resize_size (256/512/768/1024): inference resolution. 1024 recovers small "
+    "cells at the cost of speed.\n"
+    "Training levers: lora_rank (adapter capacity), epochs, learning rate.\n\n"
+    "ACTION PROTOCOL: whenever you recommend a concrete parameter value, append a "
+    "line of the exact form `SUGGEST: <param>=<value>` (one per line, machine-"
+    "readable, in addition to your prose). The app turns these into one-click "
+    "Apply buttons. Only suggest parameters from the list above. Never invent "
+    "values you cannot justify from the current diagnosis."
+)
+
+
+def _context_block(diag: dict[str, Any], params: dict[str, Any]) -> str:
     im, ms = diag.get("image", {}), diag.get("mask", {})
     im_txt = (f"image {im.get('w',0):.0f}×{im.get('h',0):.0f} px, "
               f"mean {im.get('mean',0):.0f}, contrast {im.get('contrast',0):.0f}/255"
@@ -222,13 +250,6 @@ def build_context_prompt(diag: dict[str, Any], params: dict[str, Any]) -> str:
               if ms.get("n_cells") else "no cells detected yet")
     par_txt = ", ".join(f"{k}={v}" for k, v in params.items())
     return (
-        "You are the built-in assistant for CellSeg1, a napari app that segments "
-        "cells with a SAM (Segment Anything) backbone fine-tuned via LoRA. You help "
-        "microscopists tune segmentation and interpret morphometry. Be concise, "
-        "practical, and specific about which parameter to change and in which "
-        "direction. Parameters you can advise on: points_per_side, pred_iou_thresh, "
-        "stability_score_thresh, box_nms_thresh, min_mask_area, resize_size, "
-        "lora_rank, and training epochs/learning-rate.\n\n"
         f"Current image: {im_txt}.\n"
         f"Current result: {ms_txt}.\n"
         f"Current parameters: {par_txt}.\n"
@@ -236,14 +257,144 @@ def build_context_prompt(diag: dict[str, Any], params: dict[str, Any]) -> str:
     )
 
 
+def build_context_prompt(diag: dict[str, Any], params: dict[str, Any]) -> str:
+    """Full system prompt = persona + live context (for a generic base model)."""
+    return f"{AGENT_SYSTEM}\n\n---\nLIVE CONTEXT\n{_context_block(diag, params)}"
+
+
+def build_live_message(diag: dict[str, Any], params: dict[str, Any]) -> str:
+    """Just the live context, to prepend when using a pre-baked agent model."""
+    return f"[live context]\n{_context_block(diag, params)}"
+
+
+_SUGGEST_RE = None
+
+
+def parse_suggestions(text: str) -> dict[str, Any]:
+    """Extract `SUGGEST: key=value` lines from an LLM reply into a changes dict."""
+    global _SUGGEST_RE
+    if _SUGGEST_RE is None:
+        import re
+        _SUGGEST_RE = re.compile(r"SUGGEST:\s*([a-z_]+)\s*=\s*([0-9.]+)", re.IGNORECASE)
+    allowed = {
+        "points_per_side", "pred_iou_thresh", "stability_score_thresh",
+        "box_nms_thresh", "min_mask_area", "resize_size", "lora_rank",
+    }
+    ints = {"points_per_side", "min_mask_area", "resize_size", "lora_rank"}
+    out: dict[str, Any] = {}
+    for key, val in _SUGGEST_RE.findall(text):
+        key = key.lower()
+        if key not in allowed:
+            continue
+        try:
+            out[key] = int(float(val)) if key in ints else float(val)
+        except ValueError:
+            continue
+    return out
+
+
+# Curated local models that run well on a scientist's laptop and are strong at
+# following the action protocol. Sizes are approximate download footprints.
+RECOMMENDED_MODELS = [
+    {"name": "llama3.2:3b",  "size": "2.0 GB", "note": "Fast, great default on 8–16 GB RAM"},
+    {"name": "qwen2.5:7b",   "size": "4.7 GB", "note": "Sharper reasoning, needs ~16 GB RAM"},
+    {"name": "phi3.5",       "size": "2.2 GB", "note": "Tiny and quick, good on low-RAM machines"},
+    {"name": "mistral:7b",   "size": "4.1 GB", "note": "Balanced general-purpose model"},
+]
+
+AGENT_MODEL_NAME = "cellseg1-assistant"
+
+
+def ollama_pull(model: str, on_progress: Callable[[str, float], None],
+                stop: Callable[[], bool] | None = None) -> bool:
+    """Download a model via Ollama, reporting (status, fraction) as it streams."""
+    payload = json.dumps({"name": model, "stream": True}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{OLLAMA_HOST}/api/pull", data=payload,
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3600) as resp:
+            for raw in resp:
+                if stop and stop():
+                    return False
+                line = raw.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                status = obj.get("status", "")
+                total = obj.get("total") or 0
+                done = obj.get("completed") or 0
+                frac = (done / total) if total else 0.0
+                on_progress(status, frac)
+                if obj.get("error"):
+                    return False
+        return True
+    except Exception as e:
+        on_progress(f"error: {e}", 0.0)
+        return False
+
+
+def ollama_create_agent(base_model: str,
+                        on_progress: Callable[[str], None] | None = None) -> bool:
+    """Bake a task-specialised model on top of ``base_model``.
+
+    This is the idiomatic way to configure a local agent for a specific job:
+    a Modelfile that pins the persona (SYSTEM) and sampling parameters so the
+    assistant is deterministic and domain-focused rather than a generic chatbot.
+    Produces the model ``cellseg1-assistant``.
+    """
+    modelfile = (
+        f"FROM {base_model}\n"
+        f"SYSTEM \"\"\"{AGENT_SYSTEM}\"\"\"\n"
+        "PARAMETER temperature 0.2\n"
+        "PARAMETER top_p 0.9\n"
+        "PARAMETER repeat_penalty 1.1\n"
+    )
+    payload = json.dumps(
+        {"name": AGENT_MODEL_NAME, "modelfile": modelfile, "stream": True}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{OLLAMA_HOST}/api/create", data=payload,
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if on_progress and obj.get("status"):
+                    on_progress(obj["status"])
+                if obj.get("error"):
+                    if on_progress:
+                        on_progress(f"error: {obj['error']}")
+                    return False
+        return True
+    except Exception as e:
+        if on_progress:
+            on_progress(f"error: {e}")
+        return False
+
+
 def ollama_chat(model: str, messages: list[dict[str, str]],
-                on_token: Callable[[str], None], stop: Callable[[], bool] | None = None) -> str:
+                on_token: Callable[[str], None], stop: Callable[[], bool] | None = None,
+                temperature: float = 0.2) -> str:
     """Stream a chat completion from Ollama. Returns the full text.
 
     messages: list of {"role": "system"|"user"|"assistant", "content": str}
     on_token: called with each text chunk as it arrives.
+    temperature: low by default so tuning advice is precise and repeatable.
     """
-    payload = json.dumps({"model": model, "messages": messages, "stream": True}).encode("utf-8")
+    payload = json.dumps({
+        "model": model, "messages": messages, "stream": True,
+        "options": {"temperature": temperature},
+    }).encode("utf-8")
     req = urllib.request.Request(
         f"{OLLAMA_HOST}/api/chat", data=payload,
         headers={"Content-Type": "application/json"})

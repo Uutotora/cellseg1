@@ -215,7 +215,18 @@ class MeasurementsWindow(QWidget):
         self._feature_combo.blockSignals(False)
         self._redraw_hist()
 
+    _placed = False
+
     def show_and_raise(self):
+        if not self._placed:
+            self._placed = True
+            try:
+                from PyQt6.QtGui import QGuiApplication
+                geo = QGuiApplication.primaryScreen().availableGeometry()
+                self.move(geo.center().x() - self.width() // 2,
+                          geo.center().y() - self.height() // 2)
+            except Exception:
+                pass
         self.show(); self.raise_(); self.activateWindow()
 
     # ── Internal ───────────────────────────────────────────────────────────────

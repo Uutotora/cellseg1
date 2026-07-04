@@ -113,15 +113,15 @@ def compute_measurements(
     rows: list[list[float]] = []
     for p in props:
         area = float(p.area)
-        perim = float(_safe(p, "perimeter", 0.0))
-        major = float(_safe(p, "major_axis_length", 0.0))
-        minor = float(_safe(p, "minor_axis_length", 0.0))
+        perim = float(_safe(p, ("perimeter",), 0.0))
+        major = float(_safe(p, ("axis_major_length", "major_axis_length"), 0.0))
+        minor = float(_safe(p, ("axis_minor_length", "minor_axis_length"), 0.0))
         eq_diam = math.sqrt(4.0 * area / math.pi) if area > 0 else 0.0
         circ = (4.0 * math.pi * area / (perim * perim)) if perim > 0 else 0.0
         circ = min(circ, 1.0)
         aspect = (major / minor) if minor > 0 else 0.0
         cy, cx = p.centroid  # (row, col) = (y, x)
-        orient_deg = math.degrees(float(_safe(p, "orientation", 0.0)))
+        orient_deg = math.degrees(float(_safe(p, ("orientation",), 0.0)))
 
         row = [
             int(p.label),
@@ -132,17 +132,17 @@ def compute_measurements(
             _scale(minor, "length", px),
             round(circ, 4),
             round(aspect, 3),
-            round(float(_safe(p, "eccentricity", 0.0)), 4),
-            round(float(_safe(p, "solidity", 0.0)), 4),
-            round(float(_safe(p, "extent", 0.0)), 4),
+            round(float(_safe(p, ("eccentricity",), 0.0)), 4),
+            round(float(_safe(p, ("solidity",), 0.0)), 4),
+            round(float(_safe(p, ("extent",), 0.0)), 4),
             round(orient_deg, 1),
             round(float(cx), 1),
             round(float(cy), 1),
         ]
         if has_intens:
-            mean_i = float(_safe(p, "mean_intensity", 0.0))
-            max_i = float(_safe(p, "max_intensity", 0.0))
-            min_i = float(_safe(p, "min_intensity", 0.0))
+            mean_i = float(_safe(p, ("intensity_mean", "mean_intensity"), 0.0))
+            max_i = float(_safe(p, ("intensity_max", "max_intensity"), 0.0))
+            min_i = float(_safe(p, ("intensity_min", "min_intensity"), 0.0))
             row += [
                 round(mean_i, 2),
                 round(max_i, 2),
@@ -162,17 +162,28 @@ def compute_measurements(
     }
 
 
-def _safe(prop, name: str, default: float) -> float:
-    """Read a regionprops attribute, tolerating version differences/NaN."""
-    try:
-        val = getattr(prop, name)
-    except Exception:
-        return default
-    try:
-        f = float(val)
-    except (TypeError, ValueError):
-        return default
-    return default if math.isnan(f) or math.isinf(f) else f
+def _safe(prop, names, default: float) -> float:
+    """Read the first available regionprops attribute among ``names``.
+
+    ``names`` is a tuple of candidate attribute names, newest first, so we
+    prefer the current scikit-image spelling (``axis_major_length``) and fall
+    back to the legacy one (``major_axis_length``) without triggering
+    deprecation warnings on modern versions.
+    """
+    import warnings
+    for name in names:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                val = getattr(prop, name)
+        except Exception:
+            continue
+        try:
+            f = float(val)
+        except (TypeError, ValueError):
+            return default
+        return default if math.isnan(f) or math.isinf(f) else f
+    return default
 
 
 def _scale(value: float, kind: str, px: float) -> float:

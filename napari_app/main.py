@@ -12,6 +12,7 @@ from napari_app.widgets.train_widget import TrainWidget
 from napari_app.widgets.predict_widget import PredictWidget
 from napari_app.widgets.assistant_widget import AssistantWidget
 from napari_app.widgets.annotate_widget import AnnotateWidget
+from napari_app.widgets.guide_widget import GuideWidget
 
 TAB_SS = """
 QTabWidget::pane {
@@ -57,6 +58,7 @@ def main():
     tabs.addTab(annotate_widget,  "Annotate")
     tabs.addTab(assistant_widget, "Assistant")
     tabs.addTab(train_widget,     "Train")
+    tabs.addTab(GuideWidget(viewer), "Guide")
 
     dock = viewer.window.add_dock_widget(tabs, name="CellSeg1", area="right")
     dock.setMinimumWidth(340)
