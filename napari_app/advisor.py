@@ -126,8 +126,8 @@ def diagnose(image: np.ndarray | None, mask: np.ndarray | None,
             findings.append(Finding(
                 "info", "Low image contrast",
                 f"Dynamic range is only ~{im['contrast']:.0f}/255. Faint cells "
-                "segment poorly — consider contrast-enhancing the image before "
-                "prediction (e.g. CLAHE/normalisation)."))
+                "segment poorly — enhance contrast before prediction.",
+                {"clahe": True}, "Enable CLAHE, re-run"))
         return {"findings": findings, "image": im, "mask": ms}
 
     # ── Over-segmentation / fragments ─────────────────────────────────────────

@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QDoubleSpinBox, QSpinBox,
     QFileDialog, QScrollArea, QProgressBar, QFrame,
-    QAbstractSpinBox,
+    QAbstractSpinBox, QCheckBox,
 )
 from napari_app.widgets.log_window import get_log_window
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -92,6 +92,7 @@ class PredictWidget(QWidget):
     _batch_progress_signal = pyqtSignal(int, int)
     _batch_finish_signal   = pyqtSignal()
     _refine_finish_signal  = pyqtSignal(str)
+    _sample_finish_signal  = pyqtSignal()
 
     def __init__(self, viewer):
         super().__init__()
@@ -144,6 +145,14 @@ class PredictWidget(QWidget):
             self.image_path.setText(str(img))
         img_card.addLayout(_file_row(self, self.image_path, "Select image",
             "Images (*.png *.tif *.tiff *.jpg *.bmp *.npy)"))
+        self._sample_btn = QPushButton("⬇  Load sample microscopy images")
+        self._sample_btn.setFixedHeight(30)
+        self._sample_btn.setStyleSheet(BTN_SECONDARY)
+        self._sample_btn.setToolTip(
+            "Fetch a few real microscopy samples (bundled with scikit-image) into "
+            "your test-images folder — a one-click way to try the app.")
+        self._sample_btn.clicked.connect(self._load_samples)
+        img_card.addWidget(self._sample_btn)
         L.addWidget(img_card)
 
         # ── Run (prominent, outside cards — the main action) ──────────────────
@@ -164,6 +173,19 @@ class PredictWidget(QWidget):
         self.active_btn.setToolTip("Ctrl+Shift+R — runs on the Image layer selected in viewer")
         self.active_btn.clicked.connect(self._predict_active_layer)
         L.addWidget(self.active_btn)
+
+        # Quality selector — a friendly front-end over resize + sampling density.
+        q_row = QHBoxLayout(); q_row.setSpacing(8)
+        q_lbl = QLabel("Quality")
+        q_lbl.setStyleSheet(f"color: {LABEL}; font-size: 11px; font-weight: 500;")
+        q_lbl.setFixedWidth(70)
+        q_row.addWidget(q_lbl)
+        self.quality = QComboBox()
+        self.quality.setToolTip(
+            "Fast = low resolution & sparse sampling; Accurate = 1024px & dense "
+            "sampling (slower). Sets resize and inference parameters for you.")
+        q_row.addWidget(self.quality)
+        L.addLayout(q_row)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
@@ -334,6 +356,13 @@ class PredictWidget(QWidget):
             w.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
             setattr(self, attr, w)
             _inf_card.addLayout(_param_row(label, w, tip))
+
+        self.clahe = QCheckBox("Enhance contrast (CLAHE) before segmenting")
+        self.clahe.setToolTip(
+            "Adaptive histogram equalisation. Helps recover faint or low-contrast "
+            "cells; leave off for already well-exposed images.")
+        self.clahe.setStyleSheet(f"color: {LABEL}; font-size: 11px;")
+        _inf_card.addWidget(self.clahe)
         L.addWidget(_inf_card)
 
         L.addStretch()
@@ -363,11 +392,70 @@ class PredictWidget(QWidget):
         self._batch_progress_signal.connect(self._on_batch_progress)
         self._batch_finish_signal.connect(self._on_batch_done)
         self._refine_finish_signal.connect(self._on_refine_done)
+        self._sample_finish_signal.connect(self._on_samples_done)
 
         viewer.bind_key('Control-r',       lambda v: self._run_prediction())
         viewer.bind_key('Control-Shift-r', lambda v: self._predict_active_layer())
 
+        # Populate the quality selector now that every parameter widget exists.
+        self.quality.addItems(["Fast", "Balanced", "Accurate", "Custom"])
+        self.quality.setCurrentText("Balanced")
+        self.quality.currentTextChanged.connect(self._apply_quality)
+
         self._autofill_from_sidecar()
+
+    # ── Quality presets & samples ─────────────────────────────────────────────
+
+    _QUALITY = {
+        "Fast":     {"resize": "512",  "points_per_side": 16, "pred_iou_thresh": 0.80,
+                     "stability_score_thresh": 0.62, "box_nms_thresh": 0.07},
+        "Balanced": {"resize": "512",  "points_per_side": 32, "pred_iou_thresh": 0.80,
+                     "stability_score_thresh": 0.60, "box_nms_thresh": 0.05},
+        "Accurate": {"resize": "1024", "points_per_side": 48, "pred_iou_thresh": 0.78,
+                     "stability_score_thresh": 0.58, "box_nms_thresh": 0.04},
+    }
+
+    def _apply_quality(self, name: str):
+        preset = self._QUALITY.get(name)
+        if not preset:
+            return
+        self.resize_size.setCurrentText(preset["resize"])
+        self.points_per_side.setValue(preset["points_per_side"])
+        self.pred_iou_thresh.setValue(preset["pred_iou_thresh"])
+        self.stability_score_thresh.setValue(preset["stability_score_thresh"])
+        self.box_nms_thresh.setValue(preset["box_nms_thresh"])
+
+    def _load_samples(self):
+        self._sample_btn.setEnabled(False)
+        self._sample_btn.setText("Fetching samples…")
+
+        def run():
+            try:
+                from napari_app.sample_data import fetch_samples
+                paths = fetch_samples(TEST_IMAGE_DIR)
+                self._done_signal_sample(paths)
+            except Exception as e:
+                self._log_signal.emit(f"[ERROR] sample data: {e}")
+                self._done_signal_sample([])
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _done_signal_sample(self, paths):
+        # Marshal back to the UI thread via a queued signal.
+        self._sample_paths = paths
+        self._sample_finish_signal.emit()
+
+    def _on_samples_done(self):
+        self._sample_btn.setEnabled(True)
+        self._sample_btn.setText("⬇  Load sample microscopy images")
+        paths = getattr(self, "_sample_paths", [])
+        if not paths:
+            self._append_log("[WARN] No samples were written")
+            return
+        self.image_path.setText(paths[0])
+        self.image_path.setToolTip(paths[0])
+        names = ", ".join(Path(p).name for p in paths)
+        self._append_log(f"✓ Saved {len(paths)} sample(s): {names}")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -507,6 +595,7 @@ class PredictWidget(QWidget):
             "selected_device": self.device.currentText(),
             "deterministic": True, "seed": 0,
             "allow_tf32_on_cudnn": True, "allow_tf32_on_matmul": True,
+            "clahe": self.clahe.isChecked(),
         }
 
     # ── Parameter access for the Assistant agent ──────────────────────────────
@@ -529,9 +618,11 @@ class PredictWidget(QWidget):
         for key, val in changes.items():
             if key == "resize_size":
                 self.resize_size.setCurrentText(str(int(val)))
+            elif key == "clahe":
+                self.clahe.setChecked(bool(val))
             elif key in ("points_per_side", "min_mask_area", "lora_rank"):
                 getattr(self, key).setValue(int(val))
-            elif hasattr(self, key):
+            elif hasattr(self, key) and hasattr(getattr(self, key), "setValue"):
                 getattr(self, key).setValue(float(val))
             else:
                 continue
@@ -919,6 +1010,8 @@ def _predict_cached(config):
 
     orig_h, orig_w = img.shape[:2]
     resized = resize_image(img, config["resize_size"])
+    if config.get("clahe"):
+        resized = _apply_clahe(resized)
     small   = predict_cached(config, resized)
 
     if small.shape != (orig_h, orig_w):
@@ -927,6 +1020,16 @@ def _predict_cached(config):
     else:
         mask = small
     return img, mask
+
+
+def _apply_clahe(rgb: np.ndarray) -> np.ndarray:
+    """Adaptive histogram equalisation on the luminance channel (uint8 RGB)."""
+    import cv2
+    lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2RGB)
 
 
 def _find_test_image():
