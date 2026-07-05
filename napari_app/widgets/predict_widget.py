@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QDoubleSpinBox, QSpinBox,
     QFileDialog, QScrollArea, QProgressBar, QFrame,
     QAbstractSpinBox, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -18,8 +18,10 @@ from napari_app.core.predict_state_manager import PredictionStateManager
 from project_root import STORAGE_DIR
 from napari_app.theme import (
     WIDGET_SS, BTN_PRIMARY, BTN_SUCCESS, BTN_SECONDARY, BTN_BROWSE,
-    BG, FG, BORDER, TEXT, ACCENT, DIM, LABEL, CONSOLE,
+    BG, FG, BORDER, BORDER_STRONG, TEXT, ACCENT, ACCENT_SOFT, DIM, LABEL,
+    CONSOLE, INPUT, MONO, SUCCESS, CARD_HEADER,
 )
+from napari_app import icons, motion
 from napari_app.widgets.common import (
     section_header, divider as _divider, param_row as _param_row,
     CollapsibleSection, SectionCard, CollapsibleCard,
@@ -134,7 +136,7 @@ class PredictWidget(QWidget):
         L.setContentsMargins(14, 8, 14, 16)
 
         # ── Engine ────────────────────────────────────────────────────────────
-        engine_card = SectionCard("Engine")
+        engine_card = SectionCard("Engine", icon="target")
         self.engine = QComboBox()
         self.engine.addItem("CellSeg1 · LoRA (one-shot, fine-tuned)", "cellseg1")
         self.engine.addItem("Cellpose-SAM (zero-shot, generalist)",   "cellpose")
@@ -150,7 +152,7 @@ class PredictWidget(QWidget):
         L.addWidget(engine_card)
 
         # ── Checkpoint ────────────────────────────────────────────────────────
-        self._ckpt_card = SectionCard("Checkpoint")
+        self._ckpt_card = SectionCard("Checkpoint", icon="layers")
         ckpt_card = self._ckpt_card
         self.lora_combo = QComboBox()
         self._populate_lora_combo()
@@ -164,7 +166,7 @@ class PredictWidget(QWidget):
         L.addWidget(ckpt_card)
 
         # ── Image ─────────────────────────────────────────────────────────────
-        img_card = SectionCard("Image")
+        img_card = SectionCard("Image", icon="image")
         self.image_path = QLineEdit()
         self.image_path.setPlaceholderText("Path to microscopy image  (or drop here)")
         img = _find_test_image()
@@ -186,9 +188,10 @@ class PredictWidget(QWidget):
 
         # A single "Get images" menu button — download once, then use the switcher.
         from PyQt6.QtWidgets import QMenu
-        self._sample_btn = QPushButton("⬇  Get images  ▾")
+        self._sample_btn = QPushButton("  Get images")
         self._sample_btn.setFixedHeight(30)
         self._sample_btn.setStyleSheet(BTN_SECONDARY)
+        self._sample_btn.setIcon(icons.icon("download", LABEL, 14))
         _menu = QMenu(self._sample_btn)
         _menu.setStyleSheet(
             f"QMenu {{ background:{FG}; color:{TEXT}; border:1px solid {BORDER}; }}"
@@ -231,18 +234,20 @@ class PredictWidget(QWidget):
         # ── Run (prominent, outside cards — the main action) ──────────────────
         L.addSpacing(20)
 
-        self.run_btn = QPushButton("▶   Run Prediction")
+        self.run_btn = QPushButton("  Run Prediction")
         self.run_btn.setFixedHeight(44)
         self.run_btn.setStyleSheet(BTN_PRIMARY)
+        self.run_btn.setIcon(icons.icon("run", "#ffffff", 16))
         self.run_btn.setToolTip("Ctrl+R")
         self.run_btn.clicked.connect(self._run_prediction)
         L.addWidget(self.run_btn)
 
         L.addSpacing(6)
 
-        self.active_btn = QPushButton("▶   Predict on active napari layer")
+        self.active_btn = QPushButton("  Predict on active napari layer")
         self.active_btn.setFixedHeight(32)
         self.active_btn.setStyleSheet(BTN_SECONDARY)
+        self.active_btn.setIcon(icons.icon("run", LABEL, 14))
         self.active_btn.setToolTip("Ctrl+Shift+R — runs on the Image layer selected in viewer")
         self.active_btn.clicked.connect(self._predict_active_layer)
         L.addWidget(self.active_btn)
@@ -269,14 +274,14 @@ class PredictWidget(QWidget):
 
         # ── Results (hidden until first prediction) ────────────────────────────
         from napari_app.theme import SUCCESS
-        self._results_card = SectionCard("Results", accent_color=SUCCESS)
+        self._results_card = SectionCard("Results", accent_color=SUCCESS, icon="check")
         self._results_card.setVisible(False)
 
         count_row = QHBoxLayout(); count_row.setSpacing(8); count_row.setContentsMargins(0, 2, 0, 4)
         self._cell_count_lbl = QLabel("—")
         self._cell_count_lbl.setStyleSheet(
-            f"color: {SUCCESS}; font-size: 34px; font-weight: 800;"
-            f"letter-spacing: -1px; background: transparent;")
+            f"color: {SUCCESS}; font-size: 42px; font-weight: 800;"
+            f"letter-spacing: -1.5px; background: transparent;")
         _count_cap = QLabel("cells\ndetected")
         _count_cap.setStyleSheet(
             f"color: {DIM}; font-size: 11px; font-weight: 600;"
@@ -327,37 +332,42 @@ class PredictWidget(QWidget):
         _line.setStyleSheet(f"background: {BORDER}; border: none;"); _line.setFixedHeight(1)
         self._results_card.addWidget(_line)
 
-        res_btns = QHBoxLayout(); res_btns.setSpacing(6)
+        # Four result actions on a 2×2 grid (Measurements now sits inline).
+        res_btns = QGridLayout(); res_btns.setSpacing(7); res_btns.setContentsMargins(0, 2, 0, 0)
         self._save_btn = QPushButton("Save masks")
         self._save_btn.setStyleSheet(BTN_SECONDARY)
+        self._save_btn.setIcon(icons.icon("save", LABEL))
         self._save_btn.clicked.connect(self._save_masks)
         self._csv_btn = QPushButton("Export CSV")
         self._csv_btn.setStyleSheet(BTN_SECONDARY)
+        self._csv_btn.setIcon(icons.icon("csv", LABEL))
         self._csv_btn.setToolTip("Saves cell_id, area, centroid for each detected cell")
         self._csv_btn.clicked.connect(self._export_csv)
         self._refine_btn = QPushButton("Refine…")
         self._refine_btn.setStyleSheet(BTN_SECONDARY)
+        self._refine_btn.setIcon(icons.icon("refine", LABEL))
         self._refine_btn.setToolTip(
             "Edit the Labels layer in napari to correct cells,\n"
             "then click to run a 50-epoch fine-tune from the current checkpoint.")
         self._refine_btn.clicked.connect(self._run_refine)
-        res_btns.addWidget(self._save_btn)
-        res_btns.addWidget(self._csv_btn)
-        res_btns.addWidget(self._refine_btn)
-        self._results_card.addLayout(res_btns)
-
-        self._measure_btn = QPushButton("📊  Open measurements table")
-        self._measure_btn.setFixedHeight(32)
+        self._measure_btn = QPushButton("Measurements")
         self._measure_btn.setStyleSheet(BTN_SECONDARY)
+        self._measure_btn.setIcon(icons.icon("measure", LABEL))
         self._measure_btn.setToolTip(
             "Per-cell morphometry: area, diameter, circularity, elongation,\n"
             "convexity and intensity — with distribution histograms.")
         self._measure_btn.clicked.connect(self._open_measurements)
-        self._results_card.addWidget(self._measure_btn)
+        for _b in (self._save_btn, self._csv_btn, self._refine_btn, self._measure_btn):
+            _b.setFixedHeight(32)
+        res_btns.addWidget(self._save_btn,    0, 0)
+        res_btns.addWidget(self._csv_btn,     0, 1)
+        res_btns.addWidget(self._refine_btn,  1, 0)
+        res_btns.addWidget(self._measure_btn, 1, 1)
+        self._results_card.addLayout(res_btns)
         L.addWidget(self._results_card)
 
         # ── Ground truth & evaluation (collapsed — validation tool) ────────────
-        _gt_card = CollapsibleCard("Ground truth & evaluation", collapsed=True)
+        _gt_card = CollapsibleCard("Ground truth & evaluation", collapsed=True, icon="check")
         _gt_card.addWidget(_field_label("GT mask file"))
         self.gt_path = QLineEdit()
         self.gt_path.setPlaceholderText("Auto-detected from a *_gt / masks sidecar, or pick one")
@@ -413,7 +423,7 @@ class PredictWidget(QWidget):
         L.addWidget(_gt_card)
 
         # ── Batch prediction (collapsed — for processing multiple images) ──────
-        _batch_card = CollapsibleCard("Batch prediction", collapsed=True)
+        _batch_card = CollapsibleCard("Batch prediction", collapsed=True, icon="batch")
         _batch_card.addWidget(_field_label("Input folder"))
         self.batch_in = QLineEdit()
         self.batch_in.setPlaceholderText("Folder with images to process")
@@ -446,7 +456,7 @@ class PredictWidget(QWidget):
         L.addWidget(_batch_card)
 
         # ── Benchmark engines vs GT (collapsed — validation over a folder) ─────
-        _bench_card = CollapsibleCard("Benchmark engines vs GT", collapsed=True)
+        _bench_card = CollapsibleCard("Benchmark engines vs GT", collapsed=True, icon="chart")
         _bench_card.addWidget(_field_label("Images folder"))
         self.bench_img = QLineEdit()
         self.bench_img.setPlaceholderText("Folder of images with ground-truth masks")
@@ -487,7 +497,7 @@ class PredictWidget(QWidget):
         L.addWidget(_bench_card)
 
         # ── Model settings (collapsed — set once, rarely changed) ──────────────
-        _model_card = CollapsibleCard("Model settings", collapsed=True)
+        _model_card = CollapsibleCard("Model settings", collapsed=True, icon="settings")
         _model_card.addWidget(_field_label("Custom checkpoint (.pth)"))
         _model_card.addLayout(_make_custom_lora_row(self))
         self.vit_name = QComboBox()
@@ -510,7 +520,7 @@ class PredictWidget(QWidget):
         L.addWidget(_model_card)
 
         # ── Inference parameters (collapsed — tune when needed) ────────────────
-        _inf_card = CollapsibleCard("Inference parameters", collapsed=True)
+        _inf_card = CollapsibleCard("Inference parameters", collapsed=True, icon="settings")
         self.resize_size = QComboBox()
         for v in ["256", "512", "768", "1024"]:
             self.resize_size.addItem(v)
@@ -558,7 +568,7 @@ class PredictWidget(QWidget):
         L.addWidget(_inf_card)
 
         # ── Cellpose-SAM settings (shown only for the Cellpose engine) ─────────
-        self._cp_card = SectionCard("Cellpose-SAM settings")
+        self._cp_card = SectionCard("Cellpose-SAM settings", icon="settings")
         self.cp_diameter = QSpinBox()
         self.cp_diameter.setRange(0, 500); self.cp_diameter.setValue(0)
         self.cp_diameter.setSpecialValueText("auto")
@@ -589,7 +599,8 @@ class PredictWidget(QWidget):
         outer.addWidget(_divider())
         _footer = QHBoxLayout()
         _footer.setContentsMargins(16, 4, 16, 6)
-        _log_btn = QPushButton("Log ↗")
+        _log_btn = QPushButton("  Log")
+        _log_btn.setIcon(icons.icon("log", DIM, 13))
         _log_btn.setStyleSheet(
             f"color: {DIM}; background: transparent; border: none; font-size: 11px;")
         _log_btn.setToolTip("Open the floating log window")
@@ -1129,6 +1140,9 @@ class PredictWidget(QWidget):
             lyr = self.viewer.add_labels(mask.astype(np.int32), name=f"{name}_masks", opacity=0.7)
             lyr.contour = 1
         self._recompute_measurements()
+        # Count the headline number up for a live, product feel.
+        if mask is not None and int(mask.max()) > 0:
+            motion.count_up(self._cell_count_lbl, int(mask.max()))
         self.viewer.reset_view()
 
     def _on_pixel_size_changed(self, _value=None):
@@ -1742,15 +1756,17 @@ _EVAL_TABLE_SS = f"""
 QTableWidget {{
     background: {CONSOLE}; color: {TEXT};
     gridline-color: {BORDER};
-    border: 1px solid {BORDER}; border-radius: 6px;
-    font-family: 'Menlo','SF Mono',monospace; font-size: 11px;
+    border: 1px solid {BORDER}; border-radius: 8px;
+    font-family: {MONO}; font-size: 11px;
+    selection-background-color: {ACCENT_SOFT}; selection-color: {TEXT};
 }}
 QHeaderView::section {{
-    background: {FG}; color: {LABEL};
-    padding: 4px 8px; border: none; border-bottom: 1px solid {BORDER};
-    font-weight: 600; font-size: 10px;
+    background: {CARD_HEADER}; color: {LABEL};
+    padding: 5px 9px; border: none; border-bottom: 1px solid {BORDER};
+    font-weight: 700; font-size: 10px; letter-spacing: 0.5px;
 }}
-QTableWidget::item {{ padding: 3px 8px; }}
+QTableWidget::item {{ padding: 3px 9px; }}
+QTableCornerButton::section {{ background: {CARD_HEADER}; border: none; }}
 """
 
 
@@ -1779,17 +1795,17 @@ def _make_stat_chip(caption: str):
     frame = QFrame()
     frame.setObjectName("StatChip")
     frame.setStyleSheet(
-        f"QFrame#StatChip {{ background: {CONSOLE}; border: 1px solid {BORDER};"
+        f"QFrame#StatChip {{ background: {INPUT}; border: 1px solid {BORDER};"
         f" border-radius: 8px; }}")
     v = QVBoxLayout(frame)
-    v.setContentsMargins(11, 8, 11, 8); v.setSpacing(1)
+    v.setContentsMargins(11, 9, 11, 9); v.setSpacing(3)
     val = QLabel("—")
     val.setStyleSheet(
-        f"color: {TEXT}; font-size: 15px; font-weight: 700;"
-        f"font-family: 'Menlo','SF Mono',monospace; background: transparent;")
+        f"color: {TEXT}; font-size: 16px; font-weight: 700;"
+        f"font-family: {MONO}; background: transparent;")
     cap = QLabel(caption)
     cap.setStyleSheet(
-        f"color: {DIM}; font-size: 9px; font-weight: 600; letter-spacing: 0.8px;"
+        f"color: {DIM}; font-size: 9px; font-weight: 700; letter-spacing: 1px;"
         f"background: transparent;")
     v.addWidget(val)
     v.addWidget(cap)

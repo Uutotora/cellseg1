@@ -62,6 +62,7 @@ def count_up(label, to: int, duration: int = 650, fmt="{:d}"):
         label.setText(fmt.format(max(to, 0)))
         return None
     try:
+        label.setText(fmt.format(0))
         anim = QVariantAnimation(label)
         anim.setDuration(duration)
         anim.setStartValue(0)
