@@ -43,6 +43,11 @@ SUCCESS_SOFT = "rgba(34, 180, 127, 0.13)"
 WARNING_SOFT = "rgba(224, 166, 59, 0.13)"
 DANGER_SOFT  = "rgba(224, 82, 77, 0.13)"
 
+# ── Selection / "lit" state (turquoise — nav rail active icon) ──────────────
+TEAL      = "#2bd4c0"
+TEAL_SOFT = "rgba(43, 212, 192, 0.15)"
+TEAL_LINE = "rgba(43, 212, 192, 0.55)"
+
 # ── Data-viz categorical palette (validated CVD-safe on the dark surface) ────
 # worst adjacent ΔE 18.2 (tritan), all ≥ 3:1 contrast. Assign in fixed order.
 VIZ = ["#4d8fff", "#199e70", "#c98500", "#e66767", "#9085e9"]

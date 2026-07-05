@@ -50,6 +50,7 @@ PATHS: dict[str, str] = {
     "send":      '<path d="M4 12l16-8-6 16-3-6-7-2z"/>',
     "spark":     '<path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>',
     "undo":      '<path d="M9 7L4 12l5 5M4 12h11a5 5 0 0 1 0 10"/>',
+    "ring":      '<circle cx="12" cy="12" r="8.5"/>',
 }
 
 

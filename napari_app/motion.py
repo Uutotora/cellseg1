@@ -98,6 +98,26 @@ def animate_width(widget, start: int, end: int, duration: int = 240):
         return None
 
 
+def glow(widget, color: str = "#2bd4c0", blur: int = 18):
+    """A soft coloured glow (0-offset drop shadow) — the 'lit' active state."""
+    try:
+        eff = QGraphicsDropShadowEffect(widget)
+        eff.setBlurRadius(blur)
+        eff.setOffset(0, 0)
+        eff.setColor(QColor(color))
+        widget.setGraphicsEffect(eff)
+        return eff
+    except Exception:
+        return None
+
+
+def clear_effect(widget):
+    try:
+        widget.setGraphicsEffect(None)
+    except Exception:
+        pass
+
+
 def pulse(widget, duration: int = 1700, lo: float = 0.4, hi: float = 1.0):
     """Gently pulse a widget's opacity forever — an ambient 'live' indicator."""
     try:
