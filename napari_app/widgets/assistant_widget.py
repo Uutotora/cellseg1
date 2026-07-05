@@ -27,6 +27,7 @@ from napari_app.theme import (
 )
 from napari_app.widgets.common import SectionCard, CollapsibleCard
 from napari_app.widgets.controls import Combo
+from napari_app.widgets.chat import ChatView
 from napari_app import icons
 
 WARN = WARNING   # amber, reserved for actionable warnings
@@ -200,12 +201,9 @@ class AssistantWidget(QWidget):
         chat_intro.setStyleSheet(f"color:{DIM}; font-size:10.5px; background:transparent;")
         chat_intro.setWordWrap(True)
         chat_card.addWidget(chat_intro)
-        self._chat_view = QTextEdit()
-        self._chat_view.setReadOnly(True); self._chat_view.setMinimumHeight(280)
-        self._chat_view.setStyleSheet(
-            f"background:{CONSOLE}; color:{TEXT}; border:1px solid {BORDER};"
-            f"border-radius:8px; font-size:12px; padding:10px;")
-        chat_card.addWidget(self._chat_view)
+        self._chat = ChatView()
+        self._chat.setMinimumHeight(300)
+        chat_card.addWidget(self._chat)
 
         in_row = QHBoxLayout(); in_row.setSpacing(7)
         self._input = QLineEdit()
@@ -362,15 +360,11 @@ class AssistantWidget(QWidget):
     # ── Chat ───────────────────────────────────────────────────────────────────
 
     def _system_note(self, text: str):
-        self._chat_view.append(f"<span style='color:{DIM};'>— {text}</span>")
+        self._chat.system_note(text)
 
     def _append_token(self, text: str):
         self._reply_buf.append(text)
-        cursor = self._chat_view.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(text)
-        self._chat_view.setTextCursor(cursor)
-        sb = self._chat_view.verticalScrollBar(); sb.setValue(sb.maximum())
+        self._chat.append_token(text)
 
     def _clear_chat_actions(self):
         while self._chat_actions.count():
@@ -384,7 +378,7 @@ class AssistantWidget(QWidget):
             return
         self._input.clear()
         self._clear_chat_actions()
-        self._chat_view.append(f"<b style='color:{ACCENT};'>You:</b> {text}")
+        self._chat.add_user(text)
 
         from napari_app import advisor
         img, mask = self.predict.last_context()
@@ -392,10 +386,7 @@ class AssistantWidget(QWidget):
         diag = advisor.diagnose(img, mask, params)
 
         if not self._model_combo.isEnabled():
-            self._chat_view.append(f"<b style='color:{SUCCESS};'>Assistant (offline):</b>")
-            cur = self._chat_view.textCursor(); cur.movePosition(cur.MoveOperation.End)
-            cur.insertText("\n" + advisor.findings_to_text(diag) + "\n")
-            self._chat_view.setTextCursor(cur)
+            self._chat.add_assistant_full(advisor.findings_to_text(diag))
             self._offer_suggestions(_merge_changes(diag))
             return
 
@@ -412,7 +403,7 @@ class AssistantWidget(QWidget):
             self._history.append({"role": "user", "content": text})
             messages = [{"role": "system", "content": system}] + self._history[-8:]
 
-        self._chat_view.append(f"<b style='color:{SUCCESS};'>Assistant:</b> ")
+        self._chat.add_assistant_start()
         self._reply_buf = []
         self._send_btn.setEnabled(False)
 
@@ -430,7 +421,7 @@ class AssistantWidget(QWidget):
 
     def _on_chat_done(self):
         self._send_btn.setEnabled(True)
-        self._chat_view.append("")
+        self._chat.assistant_done()
         from napari_app import advisor
         changes = advisor.parse_suggestions("".join(self._reply_buf))
         self._offer_suggestions(changes)
