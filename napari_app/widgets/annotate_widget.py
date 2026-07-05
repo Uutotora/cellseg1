@@ -22,11 +22,66 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from napari_app.theme import (
-    BG, FG, BORDER, TEXT, DIM, LABEL, ACCENT, SUCCESS,
+    BG, FG, BORDER, BORDER_STRONG, TEXT, DIM, LABEL, ACCENT, ACCENT_SOFT,
+    ACCENT_LINE, SUCCESS, DANGER, CARD_HEADER, MONO,
     WIDGET_SS, BTN_PRIMARY, BTN_SECONDARY, BTN_DANGER,
 )
 from napari_app.widgets.common import SectionCard
 from napari_app.widgets.log_window import get_log_window
+from napari_app import icons
+from PyQt6.QtWidgets import QSizePolicy
+
+
+def _kbd(text: str) -> QLabel:
+    k = QLabel(text)
+    k.setStyleSheet(
+        f"background:{CARD_HEADER}; border:1px solid {BORDER_STRONG};"
+        f"border-bottom-width:2px; border-radius:5px; padding:1px 7px;"
+        f"color:{TEXT}; font-family:{MONO}; font-size:11px;")
+    k.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+    return k
+
+
+def _legend_row(dot_color: str, keys: list[str], desc: str) -> QWidget:
+    w = QWidget()
+    row = QHBoxLayout(w)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(7)
+    dot = QLabel()
+    dot.setFixedSize(9, 9)
+    dot.setStyleSheet(f"background:{dot_color}; border-radius:4px;")
+    row.addWidget(dot)
+    for i, k in enumerate(keys):
+        row.addWidget(_kbd(k))
+        if i < len(keys) - 1:
+            plus = QLabel("+")
+            plus.setStyleSheet(f"color:{DIM}; font-size:11px; background:transparent;")
+            row.addWidget(plus)
+    d = QLabel(desc)
+    d.setStyleSheet(f"color:{LABEL}; font-size:12px; background:transparent;")
+    row.addWidget(d)
+    row.addStretch()
+    return w
+
+
+def _step(n: int, html: str) -> QWidget:
+    w = QWidget()
+    row = QHBoxLayout(w)
+    row.setContentsMargins(0, 3, 0, 3)
+    row.setSpacing(11)
+    badge = QLabel(str(n))
+    badge.setFixedSize(22, 22)
+    badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    badge.setStyleSheet(
+        f"background:{ACCENT_SOFT}; color:{ACCENT}; border:1px solid {ACCENT_LINE};"
+        f"border-radius:11px; font-size:12px; font-weight:700;")
+    txt = QLabel(html)
+    txt.setTextFormat(Qt.TextFormat.RichText)
+    txt.setStyleSheet(f"color:{LABEL}; font-size:12px; background:transparent;")
+    txt.setWordWrap(True)
+    row.addWidget(badge, alignment=Qt.AlignmentFlag.AlignTop)
+    row.addWidget(txt, stretch=1)
+    return w
 
 
 class AnnotateWidget(QWidget):
@@ -55,66 +110,67 @@ class AnnotateWidget(QWidget):
         self._prompt_face: list = []
 
         self.setStyleSheet(WIDGET_SS)
-        outer = QVBoxLayout(); outer.setSpacing(0); outer.setContentsMargins(0, 0, 0, 0)
+        outer = QVBoxLayout(self); outer.setSpacing(0); outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         inner = QWidget()
-        L = QVBoxLayout(); L.setSpacing(0); L.setContentsMargins(14, 8, 14, 16)
+        L = QVBoxLayout(inner); L.setSpacing(0); L.setContentsMargins(14, 8, 14, 16)
 
         # ── Session card ───────────────────────────────────────────────────────
-        sess_card = SectionCard("Interactive session")
+        sess_card = SectionCard("Interactive session", icon="annotate")
         intro = QLabel(
-            "AI-assisted labelling. You click one point on a cell and SAM outlines "
-            "the whole cell for you — you do not draw the outline by hand. Each "
-            "click adds one cell. Start a session, then click cells in the viewer. "
+            "Click one point on a cell and SAM outlines the whole cell for you — "
+            "you never draw the outline by hand. Each click adds one cell. "
             "(Uses the checkpoint + image from the Predict tab.)")
-        intro.setStyleSheet(f"color:{LABEL}; font-size:11px; background:transparent;")
+        intro.setStyleSheet(f"color:{LABEL}; font-size:12px; background:transparent;")
         intro.setWordWrap(True)
         sess_card.addWidget(intro)
 
-        self._start_btn = QPushButton("▶   Start interactive session")
-        self._start_btn.setFixedHeight(38)
+        self._start_btn = QPushButton("  Start interactive session")
+        self._start_btn.setFixedHeight(40)
         self._start_btn.setStyleSheet(BTN_PRIMARY)
+        self._start_btn.setIcon(icons.icon("run", "#ffffff", 15))
         self._start_btn.clicked.connect(self._start)
         sess_card.addWidget(self._start_btn)
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
         self._progress.setVisible(False)
-        self._progress.setFixedHeight(3)
+        self._progress.setFixedHeight(4)
         sess_card.addWidget(self._progress)
 
         self._status = QLabel("Not started.")
         self._status.setStyleSheet(
-            f"color:{DIM}; font-size:11px; background:transparent;"
-            f"font-family:'Menlo','SF Mono',monospace;")
+            f"color:{DIM}; font-size:11px; background:transparent; font-family:{MONO};")
         self._status.setWordWrap(True)
         sess_card.addWidget(self._status)
         L.addWidget(sess_card)
 
+        # ── How it works ───────────────────────────────────────────────────────
+        how_card = SectionCard("How it works", icon="guide")
+        how_card.addWidget(_step(1, "<b>Left-click</b> a cell → segments it as a new label."))
+        how_card.addWidget(_step(2, "<b>Shift-click</b> → grows the last cell."))
+        how_card.addWidget(_step(3, "<b>Ctrl / ⌘-click</b> → carves the last cell."))
+        L.addWidget(how_card)
+
         # ── Controls card ──────────────────────────────────────────────────────
-        ctl_card = SectionCard("Controls")
-        legend = QLabel(
-            "Click        →  segment a new cell (green dot)\n"
-            "Shift+click  →  add to the last cell\n"
-            "Ctrl/⌘+click →  remove from the last cell (red dot)\n"
-            "Drag         →  pan (never segments)")
-        legend.setStyleSheet(
-            f"color:{LABEL}; font-size:11px; background:transparent;"
-            f"font-family:'Menlo','SF Mono',monospace;")
-        legend.setWordWrap(True)
-        ctl_card.addWidget(legend)
+        ctl_card = SectionCard("Controls", icon="settings")
+        ctl_card.addWidget(_legend_row(SUCCESS, ["click"], "segment a new cell"))
+        ctl_card.addWidget(_legend_row(SUCCESS, ["⇧", "click"], "add to the last cell"))
+        ctl_card.addWidget(_legend_row(DANGER,  ["⌘", "click"], "remove from the last cell"))
+        ctl_card.addWidget(_legend_row(DIM,     ["drag"], "pan (never segments)"))
         manual = QLabel(
             "Prefer to draw by hand? Select the *_annotate_masks layer and use "
             "napari's paintbrush (top-left tools).")
-        manual.setStyleSheet(f"color:{DIM}; font-size:10px; background:transparent;")
+        manual.setStyleSheet(f"color:{DIM}; font-size:10.5px; background:transparent; padding-top:4px;")
         manual.setWordWrap(True)
         ctl_card.addWidget(manual)
 
-        row = QHBoxLayout(); row.setSpacing(6)
-        self._undo_btn = QPushButton("Undo last")
+        row = QHBoxLayout(); row.setSpacing(7)
+        self._undo_btn = QPushButton("  Undo last")
         self._undo_btn.setFixedHeight(30)
         self._undo_btn.setStyleSheet(BTN_SECONDARY)
+        self._undo_btn.setIcon(icons.icon("undo", LABEL, 14))
         self._undo_btn.setEnabled(False)
         self._undo_btn.clicked.connect(self._undo_last)
         row.addWidget(self._undo_btn)
@@ -136,15 +192,18 @@ class AnnotateWidget(QWidget):
 
         self._count_lbl = QLabel("")
         self._count_lbl.setStyleSheet(
-            f"color:{TEXT}; font-size:13px; font-weight:600; background:transparent;")
+            f"color:{TEXT}; font-size:13px; font-weight:600; background:transparent; padding-top:2px;")
         ctl_card.addWidget(self._count_lbl)
         L.addWidget(ctl_card)
 
         L.addStretch()
-        inner.setLayout(L)
+        foot = QLabel("CellSeg1 · one-shot cell segmentation")
+        foot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        foot.setStyleSheet(f"color:{DIM}; font-size:10.5px; background:transparent; padding-top:18px;")
+        L.addWidget(foot)
+
         scroll.setWidget(inner)
         outer.addWidget(scroll)
-        self.setLayout(outer)
         self.setMinimumWidth(360)
 
         self._ready_signal.connect(self._on_ready)

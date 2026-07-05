@@ -21,12 +21,14 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from napari_app.theme import (
-    BG, FG, BORDER, TEXT, DIM, LABEL, ACCENT, SUCCESS, CONSOLE,
+    BG, FG, BORDER, BORDER_STRONG, TEXT, DIM, LABEL, ACCENT, ACCENT_SOFT,
+    SUCCESS, CONSOLE, INPUT, MONO, WARNING,
     WIDGET_SS, BTN_PRIMARY, BTN_SECONDARY,
 )
 from napari_app.widgets.common import SectionCard, CollapsibleCard
+from napari_app import icons
 
-WARN = "#d6a54a"   # amber, reserved for actionable warnings
+WARN = WARNING   # amber, reserved for actionable warnings
 
 _SEV_COLOR = {"good": SUCCESS, "info": ACCENT, "warn": WARN}
 _SEV_ICON = {"good": "✓", "info": "•", "warn": "⚠"}
@@ -39,9 +41,9 @@ class ChangeCard(QFrame):
         super().__init__()
         self.setObjectName("Finding")
         self.setStyleSheet(
-            f"QFrame#Finding {{ background:{FG}; border:1px solid {BORDER};"
-            f" border-left:5px solid {color}; border-radius:7px; }}")
-        L = QVBoxLayout(); L.setContentsMargins(12, 10, 12, 10); L.setSpacing(4)
+            f"QFrame#Finding {{ background:{INPUT}; border:1px solid {BORDER};"
+            f" border-left:4px solid {color}; border-radius:8px; }}")
+        L = QVBoxLayout(); L.setContentsMargins(13, 11, 13, 11); L.setSpacing(5)
 
         t = QLabel(title)
         t.setStyleSheet(f"color:{TEXT}; font-size:12px; font-weight:600; background:transparent;")
@@ -58,7 +60,7 @@ class ChangeCard(QFrame):
             chg = "  ·  ".join(f"{k} → {v}" for k, v in changes.items())
             c = QLabel(chg)
             c.setStyleSheet(
-                f"color:{color}; font-size:10px; font-family:'Menlo','SF Mono',monospace;"
+                f"color:{color}; font-size:10px; font-family:{MONO};"
                 f"background:transparent; padding-top:2px;")
             c.setWordWrap(True)
             L.addWidget(c)
@@ -93,23 +95,24 @@ class AssistantWidget(QWidget):
         self._worker = None
 
         self.setStyleSheet(WIDGET_SS)
-        outer = QVBoxLayout(); outer.setSpacing(0); outer.setContentsMargins(0, 0, 0, 0)
+        outer = QVBoxLayout(self); outer.setSpacing(0); outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         inner = QWidget()
-        L = QVBoxLayout(); L.setSpacing(0); L.setContentsMargins(14, 8, 14, 16)
+        L = QVBoxLayout(inner); L.setSpacing(0); L.setContentsMargins(14, 8, 14, 16)
 
         # ── Diagnostics card ───────────────────────────────────────────────────
-        diag_card = SectionCard("Diagnostics  ·  no model needed")
+        diag_card = SectionCard("Diagnostics  ·  no model needed", icon="diagnose")
         intro = QLabel(
             "Works fully offline — no AI model required. It analyses your image "
             "and mask directly and proposes concrete, one-click tuning fixes. "
             "(The chat below is separate and optional.)")
-        intro.setStyleSheet(f"color:{LABEL}; font-size:11px; background:transparent;")
+        intro.setStyleSheet(f"color:{LABEL}; font-size:12px; background:transparent;")
         intro.setWordWrap(True)
         diag_card.addWidget(intro)
-        diag_btn = QPushButton("🔍  Diagnose current result")
-        diag_btn.setFixedHeight(36); diag_btn.setStyleSheet(BTN_PRIMARY)
+        diag_btn = QPushButton("  Diagnose current result")
+        diag_btn.setFixedHeight(38); diag_btn.setStyleSheet(BTN_PRIMARY)
+        diag_btn.setIcon(icons.icon("diagnose", "#ffffff", 15))
         diag_btn.clicked.connect(self._run_diagnose)
         diag_card.addWidget(diag_btn)
         L.addWidget(diag_card)
@@ -119,7 +122,7 @@ class AssistantWidget(QWidget):
         L.addLayout(self._findings_box)
 
         # ── Local model card ───────────────────────────────────────────────────
-        model_card = SectionCard("Local model")
+        model_card = SectionCard("Local model", icon="spark")
         status_row = QHBoxLayout(); status_row.setSpacing(8)
         self._status_lbl = QLabel("checking…")
         self._status_lbl.setStyleSheet(f"color:{DIM}; font-size:11px; background:transparent;")
@@ -145,7 +148,7 @@ class AssistantWidget(QWidget):
         model_card.addLayout(mrow)
 
         # Downloadable catalogue
-        cat = CollapsibleCard("Download a model", collapsed=True)
+        cat = CollapsibleCard("Download a model", collapsed=True, icon="download")
         from napari_app import advisor
         for m in advisor.RECOMMENDED_MODELS:
             row = QHBoxLayout(); row.setSpacing(6)
@@ -179,27 +182,28 @@ class AssistantWidget(QWidget):
         L.addWidget(model_card)
 
         # ── Chat card ──────────────────────────────────────────────────────────
-        chat_card = SectionCard("Ask the assistant  ·  optional local LLM")
+        chat_card = SectionCard("Ask the assistant  ·  optional local LLM", icon="assistant")
         chat_intro = QLabel(
             "Natural-language Q&A. Needs a local model (above). Without one, "
             "questions are answered by the offline diagnostic engine.")
-        chat_intro.setStyleSheet(f"color:{DIM}; font-size:10px; background:transparent;")
+        chat_intro.setStyleSheet(f"color:{DIM}; font-size:10.5px; background:transparent;")
         chat_intro.setWordWrap(True)
         chat_card.addWidget(chat_intro)
         self._chat_view = QTextEdit()
-        self._chat_view.setReadOnly(True); self._chat_view.setFixedHeight(220)
+        self._chat_view.setReadOnly(True); self._chat_view.setMinimumHeight(280)
         self._chat_view.setStyleSheet(
             f"background:{CONSOLE}; color:{TEXT}; border:1px solid {BORDER};"
-            f"border-radius:6px; font-size:12px; padding:8px;")
+            f"border-radius:8px; font-size:12px; padding:10px;")
         chat_card.addWidget(self._chat_view)
 
-        in_row = QHBoxLayout(); in_row.setSpacing(6)
+        in_row = QHBoxLayout(); in_row.setSpacing(7)
         self._input = QLineEdit()
         self._input.setPlaceholderText("e.g. why are my cells over-merged?")
         self._input.returnPressed.connect(self._send)
         in_row.addWidget(self._input)
-        self._send_btn = QPushButton("Send")
-        self._send_btn.setFixedHeight(30); self._send_btn.setStyleSheet(BTN_PRIMARY)
+        self._send_btn = QPushButton("  Send")
+        self._send_btn.setFixedHeight(32); self._send_btn.setStyleSheet(BTN_PRIMARY)
+        self._send_btn.setIcon(icons.icon("send", "#ffffff", 14))
         self._send_btn.clicked.connect(self._send)
         in_row.addWidget(self._send_btn)
         chat_card.addLayout(in_row)
@@ -210,10 +214,13 @@ class AssistantWidget(QWidget):
         L.addWidget(chat_card)
 
         L.addStretch()
-        inner.setLayout(L)
+        foot = QLabel("CellSeg1 · everything runs locally · nothing leaves your machine")
+        foot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        foot.setStyleSheet(f"color:{DIM}; font-size:10.5px; background:transparent; padding-top:16px;")
+        L.addWidget(foot)
+
         scroll.setWidget(inner)
         outer.addWidget(scroll)
-        self.setLayout(outer)
         self.setMinimumWidth(360)
 
         self._token_signal.connect(self._append_token)
