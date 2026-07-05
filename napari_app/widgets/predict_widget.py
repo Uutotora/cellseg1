@@ -243,18 +243,20 @@ class PredictWidget(QWidget):
         self.run_btn.clicked.connect(self._run_prediction)
         L.addWidget(self.run_btn)
 
-        L.addSpacing(6)
+        L.addSpacing(8)
 
         self.active_btn = QPushButton("  Predict on active napari layer")
-        self.active_btn.setFixedHeight(32)
+        self.active_btn.setFixedHeight(34)
         self.active_btn.setStyleSheet(BTN_SECONDARY)
         self.active_btn.setIcon(icons.icon("run", LABEL, 14))
         self.active_btn.setToolTip("Ctrl+Shift+R — runs on the Image layer selected in viewer")
         self.active_btn.clicked.connect(self._predict_active_layer)
         L.addWidget(self.active_btn)
 
+        L.addSpacing(16)
+
         # Quality selector — a friendly front-end over resize + sampling density.
-        q_row = QHBoxLayout(); q_row.setSpacing(8)
+        q_row = QHBoxLayout(); q_row.setSpacing(8); q_row.setContentsMargins(0, 0, 0, 4)
         q_lbl = QLabel("Quality")
         q_lbl.setStyleSheet(f"color: {LABEL}; font-size: 11px; font-weight: 500;")
         q_lbl.setFixedWidth(70)

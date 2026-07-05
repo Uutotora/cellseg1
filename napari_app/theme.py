@@ -126,18 +126,17 @@ QComboBox::down-arrow {{ image: none; width: 0; height: 0; border: none; }}
 QComboBox QAbstractItemView {{
     background: {CARD_HEADER}; color: {TEXT};
     border: 1px solid {BORDER_STRONG};
-    border-radius: {R_MD}px;
-    padding: 5px;
-    selection-background-color: {ACCENT};
-    selection-color: #ffffff;
+    border-radius: {R_LG}px;
+    padding: 6px;
     outline: none;
     font-size: 13px;
 }}
 QComboBox QAbstractItemView::item {{
-    min-height: 27px; padding: 4px 10px; border-radius: 5px; color: {TEXT};
+    min-height: 30px; padding: 5px 12px; border-radius: 7px; color: {TEXT};
+    border: none;
 }}
-QComboBox QAbstractItemView::item:hover {{ background: {ACCENT_SOFT}; color: {TEXT}; }}
-QComboBox QAbstractItemView::item:selected {{ background: {ACCENT}; color: #ffffff; }}
+QComboBox QAbstractItemView::item:hover {{ background: rgba(255,255,255,0.06); }}
+QComboBox QAbstractItemView::item:selected {{ background: {ACCENT_SOFT}; color: {TEXT}; }}
 
 QSpinBox, QDoubleSpinBox {{
     background: {INPUT};
