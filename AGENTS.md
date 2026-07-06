@@ -17,9 +17,16 @@ cohort stats, the Assistant, export) is engine-agnostic:
   (`napari_app/engines.py`).
 
 Target users are microscopists and cell biologists, **not** ML engineers.
-The commercial goal is a world-class, enterprise-grade segmentation platform;
-see `AUDIT_2026.md` for the strategic gap analysis and `docs/BACKLOG.md` for
-the prioritised, actionable task queue.
+The commercial goal is a world-class, enterprise-grade segmentation platform.
+Three docs, three jobs — don't blur them:
+- **`docs/BACKLOG.md`** — the task queue (what's next). Start here.
+- **`docs/AUDIT_2026.md`** — the strategic gap analysis (why it matters,
+  scored). A point-in-time snapshot with dated addenda appended, not rewritten.
+- **`docs/CHANGELOG.md`** — what actually shipped, dated (including work that
+  was never a backlog item — see its intro for why that's tracked deliberately).
+
+If you're starting a session cold, `docs/AGENT_KICKOFF_PROMPT.md` has the
+prompt to paste.
 
 ## Repo map
 
@@ -56,6 +63,9 @@ tests/                 pytest suite (pure-logic, no GPU/GUI)
 .github/workflows/     CI (runs the pure-logic suite on py3.11/3.12)
 checkpoints/ streamlit_storage/   bundled weights + sample data (misnamed
                        dir — see backlog; do not delete, paths reference it)
+docs/                  BACKLOG.md, AUDIT_2026.md, CHANGELOG.md,
+                       AGENT_KICKOFF_PROMPT.md — see above, one job each
+README.md              human-facing front door (this file is the agent one)
 ```
 
 ## Environment & how to run things
@@ -114,6 +124,10 @@ python3.12 -m venv /tmp/civenv && /tmp/civenv/bin/pip install --group test . \
 - **Commit messages**: imperative subject, a short body explaining *why* and
   what was verified. End every commit with:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
+- **Log it in `docs/CHANGELOG.md` too**, one dated bullet, for *any* meaningful
+  change — planned or not. This is not optional busywork: the 2026-07-05 UI
+  redesign shipped ~17 commits with zero record anywhere that it happened,
+  and reconciling that afterwards cost far more than a bullet each would have.
 - **Default branch is `main`** — it is the product. Branch for non-trivial work.
 - **Don't break the default path.** New behaviour that can't be fully verified
   here (GUI, model) goes behind an **opt-in flag, off by default**, so existing
@@ -129,8 +143,42 @@ python3.12 -m venv /tmp/civenv && /tmp/civenv/bin/pip install --group test . \
 - Don't add heavy deps to the CI test path — the pure-logic suite must run
   without torch/napari.
 
+### Git workflow: branch → PR → merge, no manual step
+
+**The user has pre-authorized fully automatic merging for this repo.** Don't
+stop to ask before merging — that's the point of writing it here. Once you've
+pushed a branch and opened a PR:
+
+1. `gh pr create` — title + a body with a summary, test plan, and what's
+   explicitly **not** verified (GUI, real model inference, etc.).
+2. Wait for CI: `gh pr checks <N>`, or `gh run watch <run-id> --exit-status`
+   to block until it finishes rather than polling by hand.
+3. **Both `unit tests (py3.11)` and `(py3.12)` green → merge it yourself,
+   immediately:** `gh pr merge <N> --merge --delete-branch` (a regular merge
+   commit, matching existing history — not squash, not rebase).
+4. Red instead? Fix it and push a new commit to the same branch (CI reruns
+   automatically). Never merge on red, never `--admin`/force past a failing
+   or pending check.
+5. **Sync local right after merging** — this is the step that was missing
+   before and the reason local `main` kept falling behind: `git checkout main
+   && git merge --ff-only origin/main`, then `git branch -d <branch>` (refuses
+   unless fully merged — that's the safety check, not busywork).
+6. Report the merge commit, not a PR link — there should be nothing left for
+   the user to click.
+
+Scope of this authorization: your own branches, your own committed work, in
+this repo. Never another person's PR, never with `--force`, never past a
+failing check.
+
 ## Where to go next
 
-`docs/BACKLOG.md` is the task queue. Pick the **top unchecked P0**, read its
-acceptance criteria, implement, test, commit, push, check it off. Update the
-backlog and this file when reality changes.
+`docs/BACKLOG.md` is the task queue. **Before picking a task**, cross-check it
+against `git log --oneline -20` — twice now the docs have drifted from reality
+(a resumed session naming an already-finished task; a whole UI redesign that
+landed with no backlog entry at all). If something below is already done, or
+something's done that isn't tracked anywhere, fix the docs first (small,
+separate commit — update checkboxes, add a `docs/CHANGELOG.md` line, adjust
+`docs/AUDIT_2026.md` scores if a whole dimension moved) — *then* take the
+**top unchecked P0**, read its acceptance criteria, implement, test, commit,
+push, merge (see above), check it off. Update the backlog and this file when
+reality changes.
