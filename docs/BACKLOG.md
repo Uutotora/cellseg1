@@ -94,7 +94,7 @@ for a credible product · P1 differentiation · P2 later.
   a display) and a full-dependency `pip install -e .` against PyPI (heavy deps
   already present locally, so tested with `--no-deps`).
 
-### [ ] Split the `predict_widget` god-object  · M
+### [x] Split the `predict_widget` god-object  · M
 - **Goal:** separate prediction logic from the Qt view.
 - **Why:** ~1.8k lines mixing UI + threading + IO + eval + batch is untestable
   and every change is risky.
@@ -102,6 +102,32 @@ for a credible product · P1 differentiation · P2 later.
   build + predict/batch/benchmark orchestration; the widget only wires UI to
   it; behaviour unchanged; new controller tests added.
 - **Touch:** `napari_app/widgets/predict_widget.py`, new `napari_app/core/`.
+- **Done:** new `napari_app/core/predict_controller.py` holds the engine-level
+  functions that used to live at the bottom of `predict_widget.py`
+  (`_predict_cached`, `_predict_tiled`, `_read_for_predict`,
+  `_to_display_uint8`, `_apply_clahe`) plus a new `PredictController` class:
+  `build_config`/`sam_config`/`resolve_lora`/`resolve_sam` take a plain params
+  dict (no Qt) and return the engine config exactly as the old
+  `_build_config`/`_sam_config` widget methods did; `run_prediction_async`/
+  `run_batch_async`/`run_benchmark_async` reproduce the old threaded
+  `_run_prediction`/`_run_batch`/`_run_benchmark` closures 1:1 but report
+  through plain callbacks (`on_log`/`on_progress`/`on_tile`/`on_result`/
+  `on_done`/`on_finish`) instead of emitting Qt signals directly — the widget
+  now just builds a config/params snapshot, calls the controller, and wires
+  its callbacks to the same Qt signals it always had, so behaviour (including
+  the stop-mid-batch `for/else` semantics) is unchanged. The whole controller
+  module is free of PyQt6/torch/napari at import time (heavy deps are lazy
+  imports inside the functions that need them, as they always were), so 22
+  new tests in `tests/test_predict_controller.py` cover config building and
+  threaded orchestration (success, per-item error, stop-early, tiling
+  progress) with fake engines and run in the fast CI job — verified by
+  simulating that environment (PyQt6/torch/napari/cellpose import-blocked).
+  All 111 pre-existing tests plus the 22 new ones pass (133 total); the three
+  existing `predict_widget` wiring test files needed zero edits since the
+  moved functions are re-exported under their old names.
+  **Not verified here:** the real GUI (Predict tab still looks and behaves
+  the same by code inspection, but wasn't click-tested with a display) and
+  real-model inference (SAM/Cellpose weights).
 
 ### [ ] Rename `streamlit_storage/` → `data_store/` (or similar)  · S
 - **Goal:** the misleading Streamlit-era name is gone.
