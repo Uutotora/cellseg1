@@ -153,54 +153,75 @@ def _apply_clahe(rgb: np.ndarray) -> np.ndarray:
 
 def _predict_volume(config, on_slice=None, sink=None):
     """Segment a z-stack/time-lapse (``config['image_path']`` has more than
-    one Z/T plane) one plane at a time and stitch the per-plane instance
-    masks into one consistent (Z, H, W) volume.
+    one Z/T plane) into one consistent (Z, H, W) instance volume.
 
-    Engine-agnostic: dispatches each plane through the exact same
-    ``engine_registry`` entry the 2-D path uses (SAM2 is the flagship use
-    case — see ``napari_app.engines_sam2`` — but any registered engine works
-    here unchanged, since this only ever calls ``spec.predict(frame,
-    config)``). The new behaviour is entirely in how planes are read
-    (:func:`napari_app.channels.read_volume_stack`, which keeps the Z/T axis
-    instead of reducing it) and how the per-plane masks are linked afterwards
-    (:func:`napari_app.volume_stitch.stitch_slices`).
+    Reads every plane once (:func:`napari_app.channels.read_volume_stack`,
+    which keeps the Z/T axis instead of reducing it), then dispatches to one
+    of two tracking modes:
 
-    Not composed with tiling in this first cut: a whole-slide-sized z-stack
-    would need both, which is out of scope for now (``config["tiled"]`` is
-    ignored here) — documented rather than silently accepted.
+      * **Independent + stitch** (default; any engine): each plane is
+        segmented on its own through the exact same ``engine_registry``
+        entry the 2-D path uses — SAM2 is the flagship choice, but any
+        registered engine works here unchanged, since this only ever calls
+        ``spec.predict(frame, config)`` — and the per-plane masks are linked
+        afterwards by adjacent-plane overlap
+        (:func:`napari_app.volume_stitch.stitch_slices`). Composed with
+        tiling: a plane large enough that ``should_tile`` recommends it (and
+        ``config["tiled"]`` is on) is segmented tile-by-tile via
+        ``_predict_tiled`` instead of being shrunk to ``resize_size`` — the
+        same per-plane choice ``_predict_cached`` makes for a single 2-D
+        image. Per-tile progress within a plane is not separately reported
+        (``on_slice`` stays one tick per *plane*) to keep the two progress
+        dimensions from fighting over one progress bar.
+      * **Propagate** (``config["engine"] == "sam2"`` and
+        ``config["sam2_tracking_mode"] == "propagate"``): SAM2's video
+        predictor tracks objects seeded on the first plane across every
+        other plane via its memory bank
+        (:func:`napari_app.engines_sam2.predict_sam2_propagate`) — no
+        separate stitching step, and not available for any other engine.
     """
-    from data.utils import resize_image
-    import cv2
     from napari_app.channels import read_volume_stack, project_to_rgb
-    from napari_app.volume_stitch import stitch_slices
 
     vstack = read_volume_stack(config["image_path"])
     if sink is not None:
         sink["volume_stack"] = vstack
 
     channels = config.get("channels")
-    spec = get_engine(config.get("engine") or "cellseg1")
-
     n = vstack.n_planes
     frames = []
-    slice_masks = []
     for z in range(n):
         rgb = project_to_rgb(vstack.plane(z), channels,
                              low=float(config.get("channel_low", 1.0)),
                              high=float(config.get("channel_high", 99.0)))
-        rgb = _to_display_uint8(rgb)
-        frames.append(rgb)
+        frames.append(_to_display_uint8(rgb))
+    image_volume = np.stack(frames, axis=0)
 
-        orig_h, orig_w = rgb.shape[:2]
-        resized = resize_image(rgb, config["resize_size"])
-        if config.get("clahe"):
-            resized = _apply_clahe(resized)
-        small = spec.predict(resized, config)
-        if small.shape != (orig_h, orig_w):
-            mask = cv2.resize(small.astype(np.float32), (orig_w, orig_h),
-                              interpolation=cv2.INTER_NEAREST).astype(small.dtype)
+    if config.get("engine") == "sam2" and config.get("sam2_tracking_mode") == "propagate":
+        from napari_app.engines_sam2 import predict_sam2_propagate
+        volume_mask = predict_sam2_propagate(frames, config, on_slice=on_slice)
+        return image_volume, volume_mask
+
+    from data.utils import resize_image
+    import cv2
+    from napari_app.volume_stitch import stitch_slices
+    from napari_app.tiling import should_tile
+
+    spec = get_engine(config.get("engine") or "cellseg1")
+    slice_masks = []
+    for z, rgb in enumerate(frames):
+        if config.get("tiled") and should_tile(rgb.shape, tile=int(config.get("tile_size") or 1024)):
+            mask = _predict_tiled(config, rgb)
         else:
-            mask = small
+            orig_h, orig_w = rgb.shape[:2]
+            resized = resize_image(rgb, config["resize_size"])
+            if config.get("clahe"):
+                resized = _apply_clahe(resized)
+            small = spec.predict(resized, config)
+            if small.shape != (orig_h, orig_w):
+                mask = cv2.resize(small.astype(np.float32), (orig_w, orig_h),
+                                  interpolation=cv2.INTER_NEAREST).astype(small.dtype)
+            else:
+                mask = small
         slice_masks.append(np.asarray(mask))
 
         if on_slice is not None:
@@ -209,7 +230,6 @@ def _predict_volume(config, on_slice=None, sink=None):
     min_size = int(config.get("min_mask_area") or config.get("min_mask_region_area") or 0)
     volume_mask = stitch_slices(slice_masks, iou_thresh=float(config.get("stitch_iou", 0.25)),
                                 min_size=min_size)
-    image_volume = np.stack(frames, axis=0)
     return image_volume, volume_mask
 
 
@@ -362,6 +382,11 @@ class PredictController:
             "channels": params["channels"],
             "zstack": bool(params.get("zstack", False)),
             "stitch_iou": float(params.get("stitch_iou", 0.25)),
+            # Video-predictor tracking mode: only meaningful together with
+            # zstack=True, but always present so the volume orchestration
+            # layer has one place to look it up regardless of engine.
+            "sam2_tracking_mode": params.get("sam2_tracking_mode", "automatic"),
+            "sam2_max_objects": int(params.get("sam2_max_objects", 40)),
             # kept so downstream (caching keys) stays valid
             "vit_name": params.get("vit_name", "vit_h"),
             "image_encoder_lora_rank": params.get("lora_rank", 4),

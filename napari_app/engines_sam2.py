@@ -20,15 +20,20 @@ any other registered engine's ``predict(image, config)``, one plane at a
 time, and stitches the results — so nothing in this module has any notion of
 "z-stack" at all.
 
-Not implemented (documented rather than silently half-done): SAM2's other
-headline capability, the *video predictor* (memory-bank-conditioned mask
-*propagation* from a prompted first frame, tracking through occlusion far
-better than independent-per-plane detection + IoU stitching can). That is a
-strictly stronger but substantially more complex mode — a prompted object
-per video, not "segment everything on every frame" — and is left as a future
-enhancement; the automatic-mask-generator-per-plane path implemented here is
-the same trade-off Cellpose users already make for their own 3-D mode, and
-needs no interactive prompting step.
+Also implemented, as a second opt-in tracking mode: SAM2's other headline
+capability, the *video predictor* (memory-bank-conditioned mask
+*propagation* from a prompted first frame — see :func:`predict_sam2_propagate`).
+It seeds objects with the automatic mask generator on the first plane, then
+asks the video predictor to track each one through every subsequent plane,
+which is a fundamentally different, stronger (temporal/depth memory, not
+just adjacent-plane IoU) but also fundamentally *less verified* code path
+than the automatic-mask-generator-per-plane mode above: this repo has no
+real ``sam2`` install, checkpoint, or GPU to exercise it against, so the
+exact ``SAM2VideoPredictor`` API surface used here (``init_state``,
+``add_new_mask``, ``propagate_in_video``) is this module's best-effort
+understanding of the public API, not something confirmed to run. Treat it as
+experimental until confirmed against a real install — the automatic mode
+remains the default and the well-verified choice.
 
 The ``sam2`` package is never imported at module level — only lazily inside
 the functions that need it, exactly like ``napari_app.engines`` does for
@@ -64,6 +69,16 @@ _SAM2_CONFIGS = {
 
 _mask_generator = None
 _mg_key: tuple | None = None
+
+_video_predictor = None
+_video_predictor_key: tuple | None = None
+
+# A video predictor's memory bank holds every tracked object for every frame
+# it's seen — tracking hundreds of tiny automatic-mask-generator detections
+# through a long stack would be a real memory/compute cost with no way to
+# verify the blast radius here, so propagation is capped to the N largest
+# seed objects by default. Overridable via config["sam2_max_objects"].
+_DEFAULT_MAX_TRACKED_OBJECTS = 40
 
 
 def sam2_available() -> bool:
@@ -165,10 +180,113 @@ def predict_sam2(image_rgb: np.ndarray, config: dict) -> np.ndarray:
     return sam_output_to_mask(output).astype(np.int32)
 
 
+def _video_predictor_cache_key(config: dict) -> tuple:
+    return (
+        config["sam2_checkpoint"],
+        config["sam2_config_name"],
+        config.get("selected_device", "cpu"),
+    )
+
+
+def _build_video_predictor(config: dict):
+    from sam2.build_sam import build_sam2_video_predictor
+
+    device = _torch_device(config.get("selected_device", "cpu"))
+    return build_sam2_video_predictor(config["sam2_config_name"], config["sam2_checkpoint"],
+                                      device=device)
+
+
+def get_video_predictor(config: dict):
+    """Return the cached SAM2 video predictor for ``config``, building it if
+    the checkpoint/config/device changed. Separate cache from
+    :func:`get_mask_generator` — a different model wrapper class entirely,
+    built via ``build_sam2_video_predictor`` rather than ``build_sam2``."""
+    global _video_predictor, _video_predictor_key
+    key = _video_predictor_cache_key(config)
+    if _video_predictor is None or _video_predictor_key != key:
+        _video_predictor = _build_video_predictor(config)
+        _video_predictor_key = key
+    return _video_predictor
+
+
+def predict_sam2_propagate(frames: list, config: dict, on_slice=None) -> np.ndarray:
+    """Track objects across a z-stack/time-lapse with SAM2's video predictor.
+
+    Seeds objects with the automatic mask generator on the first plane, then
+    propagates each one's mask across every subsequent plane via the memory-
+    bank-conditioned video model — stronger temporal/depth consistency than
+    the default independent-per-plane + IoU-stitch mode
+    (:mod:`napari_app.volume_stitch`), at the cost of a fundamentally
+    different — and, see the module docstring, unverified — code path.
+
+    frames : list of Z ``H×W×3`` uint8 RGB planes, already read/projected
+        exactly like the default per-plane path (see
+        ``predict_controller._predict_volume``).
+    on_slice : optional ``(done, total)`` progress callback, one tick per
+        propagated frame.
+
+    Returns an ``(Z, H, W)`` int32 label volume. No separate stitching step
+    is needed afterwards — the video predictor assigns one id per tracked
+    object up front and keeps it consistent across every frame itself.
+    """
+    import shutil
+    import tempfile
+    from pathlib import Path as _Path
+
+    import cv2
+
+    n = len(frames)
+    if n == 0:
+        return np.zeros((0, 0, 0), dtype=np.int32)
+    h, w = frames[0].shape[:2]
+
+    tmp_dir = tempfile.mkdtemp(prefix="cellseg1_sam2_video_")
+    try:
+        # The video predictor's init_state historically expects a directory
+        # of consecutively-numbered JPEG frames rather than an in-memory
+        # array, so the already-read planes are written out once, up front.
+        for i, frame in enumerate(frames):
+            bgr = cv2.cvtColor(np.asarray(frame), cv2.COLOR_RGB2BGR)
+            cv2.imwrite(str(_Path(tmp_dir) / f"{i:05d}.jpg"), bgr)
+
+        predictor = get_video_predictor(config)
+        inference_state = predictor.init_state(video_path=tmp_dir)
+
+        mg = get_mask_generator(config)
+        seeds = mg.generate(frames[0])
+        max_objects = int(config.get("sam2_max_objects") or _DEFAULT_MAX_TRACKED_OBJECTS)
+        seeds = sorted(seeds, key=lambda o: -o["area"])[:max_objects]
+
+        obj_ids = []
+        for i, seed in enumerate(seeds):
+            obj_id = i + 1
+            predictor.add_new_mask(inference_state, frame_idx=0, obj_id=obj_id,
+                                   mask=np.asarray(seed["segmentation"], dtype=bool))
+            obj_ids.append(obj_id)
+
+        volume = np.zeros((n, h, w), dtype=np.int32)
+        if obj_ids:
+            for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
+                plane = volume[out_frame_idx]
+                for k, obj_id in enumerate(out_obj_ids):
+                    mask_k = np.asarray(out_mask_logits[k]) > 0.0
+                    plane[mask_k.reshape(h, w)] = int(obj_id)
+                if on_slice is not None:
+                    on_slice(int(out_frame_idx) + 1, n)
+        elif on_slice is not None:
+            for z in range(n):
+                on_slice(z + 1, n)
+        return volume
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def invalidate_sam2():
-    global _mask_generator, _mg_key
+    global _mask_generator, _mg_key, _video_predictor, _video_predictor_key
     _mask_generator = None
     _mg_key = None
+    _video_predictor = None
+    _video_predictor_key = None
 
 
 def cache_status() -> str:

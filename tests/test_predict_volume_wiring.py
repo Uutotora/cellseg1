@@ -168,3 +168,64 @@ def test_run_prediction_dispatches_to_volume_path_when_zstack_checked(widget, ap
 
     widget._run_prediction()
     assert calls == [("volume", True)]
+
+
+# ── _show_volume_results: real 3-D measurements, not a stub ─────────────────
+#
+# get_log_window() is a module-level singleton shared across every
+# PredictWidget instance in this process; repeatedly constructing and
+# closing PredictWidget (one per test, per the `widget` fixture) is a test-
+# only pattern the real app never does — one PredictWidget lives for the
+# whole napari session — and it leaves the shared LogWindow's underlying Qt
+# object in a torn-down state for a later test to inherit ("wrapped C/C++
+# object ... has been deleted"). None of these tests assert on log text, so
+# _append_log is stubbed out to sidestep that shared, test-only fragility
+# rather than working around it in production code.
+
+def test_show_volume_results_populates_last_measure(widget, monkeypatch):
+    monkeypatch.setattr(widget, "_append_log", lambda *a, **k: None)
+    img_vol = np.zeros((4, 30, 30, 3), dtype=np.uint8)
+    mask_vol = np.zeros((4, 30, 30), dtype=np.int32)
+    mask_vol[:, 5:15, 5:15] = 1
+
+    widget._show_volume_results(img_vol, mask_vol)
+
+    assert widget._last_measure is not None
+    assert widget._last_measure["n_cells"] == 1
+    assert any(k == "volume" for k, _l, _u in widget._last_measure["columns"])
+    assert widget._results_card.isVisible() is False   # hero chips stay hidden (2-D wording)
+
+
+def test_show_volume_results_no_cells_leaves_measure_none(widget, monkeypatch):
+    monkeypatch.setattr(widget, "_append_log", lambda *a, **k: None)
+    img_vol = np.zeros((3, 20, 20, 3), dtype=np.uint8)
+    mask_vol = np.zeros((3, 20, 20), dtype=np.int32)   # no instances
+
+    widget._show_volume_results(img_vol, mask_vol)
+
+    assert widget._last_measure is None
+
+
+def test_show_volume_results_enables_open_measurements(widget, monkeypatch):
+    """_open_measurements' only guard is `_last_measure is None` — confirm a
+    volume result clears that guard the same way a 2-D one does."""
+    monkeypatch.setattr(widget, "_append_log", lambda *a, **k: None)
+    img_vol = np.zeros((4, 30, 30, 3), dtype=np.uint8)
+    mask_vol = np.zeros((4, 30, 30), dtype=np.int32)
+    mask_vol[:, 5:15, 5:15] = 1
+
+    widget._show_volume_results(img_vol, mask_vol)
+    widget._open_measurements()   # must not raise / log a "run a prediction first" warning
+
+
+# ── SAM2 tracking-mode combo ─────────────────────────────────────────────────
+
+def test_tracking_mode_defaults_to_automatic(widget):
+    assert widget.sam2_tracking_mode.currentData() == "automatic"
+    assert widget._gather_params()["sam2_tracking_mode"] == "automatic"
+
+
+def test_tracking_mode_propagate_threads_through_gather_params(widget):
+    idx = widget.sam2_tracking_mode.findData("propagate")
+    widget.sam2_tracking_mode.setCurrentIndex(idx)
+    assert widget._gather_params()["sam2_tracking_mode"] == "propagate"

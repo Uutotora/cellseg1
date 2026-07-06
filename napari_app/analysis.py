@@ -53,6 +53,26 @@ _INTENSITY_SCHEMA: list[tuple[str, str, str]] = [
     ("integrated_intensity", "Integ. int.", "intens"),
 ]
 
+# 3-D counterpart of _SCHEMA. Deliberately smaller: several 2-D-only
+# scikit-image regionprops properties have no 3-D equivalent at all
+# (perimeter, eccentricity, a single orientation angle) and are dropped
+# rather than faked. "volume" replaces "area" (regionprops' own "area"
+# property is already a voxel count for an ndim=3 label image — no new
+# computation needed, just a µm³ instead of µm² unit).
+_SCHEMA_3D: list[tuple[str, str, str]] = [
+    ("cell_id",        "Cell",         "id"),
+    ("volume",         "Volume",       "volume"),
+    ("diameter",       "Eq. diameter", "length"),
+    ("major_axis",     "Major axis",   "length"),
+    ("minor_axis",     "Minor axis",   "length"),
+    ("aspect_ratio",   "Aspect ratio", "ratio"),
+    ("solidity",       "Solidity",     "ratio"),
+    ("extent",         "Extent",       "ratio"),
+    ("centroid_x",     "Centroid X",   "coord"),
+    ("centroid_y",     "Centroid Y",   "coord"),
+    ("centroid_z",     "Centroid Z",   "coord"),
+]
+
 
 def _to_gray(intensity_image: np.ndarray | None) -> np.ndarray | None:
     if intensity_image is None:
@@ -63,6 +83,22 @@ def _to_gray(intensity_image: np.ndarray | None) -> np.ndarray | None:
         arr = arr[..., :3].astype(np.float64)
         arr = arr @ np.array([0.299, 0.587, 0.114])
     return arr.astype(np.float64)
+
+
+def _to_gray_volume(intensity_image: np.ndarray | None,
+                    mask_shape: tuple) -> np.ndarray | None:
+    """3-D counterpart of :func:`_to_gray`: collapses a ``(Z,H,W,3)`` colour
+    volume (or an already-gray ``(Z,H,W)`` one) to a ``(Z,H,W)`` float64
+    volume aligned with a 3-D mask. ``None`` when absent or misaligned."""
+    if intensity_image is None:
+        return None
+    arr = np.asarray(intensity_image)
+    if arr.ndim == 4:
+        arr = arr[..., :3].astype(np.float64) @ np.array([0.299, 0.587, 0.114])
+    arr = arr.astype(np.float64)
+    if arr.shape != mask_shape:
+        return None
+    return arr
 
 
 def _channel_columns(mask, channel_intensities, channel_names):
@@ -114,8 +150,13 @@ def compute_measurements(
 
     Parameters
     ----------
-    mask : 2-D int array, 0 = background, positive ints = cell ids.
-    intensity_image : optional H×W or H×W×C image aligned to ``mask``.
+    mask : 2-D ``(H,W)`` or 3-D ``(Z,H,W)`` int array, 0 = background,
+        positive ints = cell ids. A 3-D mask (a z-stack/time-lapse result)
+        dispatches to a smaller, 3-D-specific schema — see
+        :func:`_compute_measurements_3d`; ``channel_intensities`` isn't wired
+        up for volumes yet, only ``intensity_image``.
+    intensity_image : optional H×W / H×W×C image (or, for a 3-D mask,
+        Z×H×W / Z×H×W×C) aligned to ``mask``.
     pixel_size_um : micrometres per pixel; 0 keeps everything in pixels.
     channel_intensities : optional raw ``H×W×C`` stack aligned to ``mask``.
         When given, a per-channel mean-intensity column is appended for every
@@ -132,9 +173,12 @@ def compute_measurements(
       n_cells  : int
       pixel_size_um : echo of the input
     """
+    mask = np.ascontiguousarray(mask).astype(np.int32)
+    if mask.ndim == 3:
+        return _compute_measurements_3d(mask, intensity_image, pixel_size_um)
+
     from skimage import measure
 
-    mask = np.ascontiguousarray(mask).astype(np.int32)
     gray = _to_gray(intensity_image)
     if gray is not None and gray.shape != mask.shape:
         # Misaligned intensity image → ignore rather than crash.
@@ -213,6 +257,78 @@ def compute_measurements(
     }
 
 
+def _compute_measurements_3d(
+    mask: np.ndarray,
+    intensity_image: np.ndarray | None,
+    pixel_size_um: float,
+) -> dict[str, Any]:
+    """3-D counterpart of :func:`compute_measurements` for a ``(Z,H,W)``
+    label volume (a z-stack/time-lapse prediction). Same return shape, a
+    smaller schema (see :data:`_SCHEMA_3D`)."""
+    from skimage import measure
+
+    gray = _to_gray_volume(intensity_image, mask.shape)
+
+    px = float(pixel_size_um) if pixel_size_um and pixel_size_um > 0 else 0.0
+    has_intens = gray is not None
+    schema = _SCHEMA_3D + (_INTENSITY_SCHEMA if has_intens else [])
+    columns = [(key, label, _unit_for(kind, px)) for key, label, kind in schema]
+
+    if mask.max() <= 0:
+        return {
+            "columns": columns,
+            "rows": [],
+            "summary": {},
+            "n_cells": 0,
+            "pixel_size_um": px,
+        }
+
+    props = measure.regionprops(mask, intensity_image=gray)
+    rows: list[list[float]] = []
+    for p in props:
+        volume = float(p.area)   # regionprops' "area" is a voxel count for ndim=3
+        major = float(_safe(p, ("axis_major_length", "major_axis_length"), 0.0))
+        minor = float(_safe(p, ("axis_minor_length", "minor_axis_length"), 0.0))
+        eq_diam = (6.0 * volume / math.pi) ** (1.0 / 3.0) if volume > 0 else 0.0
+        aspect = (major / minor) if minor > 0 else 0.0
+        cz, cy, cx = p.centroid  # (plane, row, col) = (z, y, x)
+
+        row = [
+            int(p.label),
+            _scale(volume, "volume", px),
+            _scale(eq_diam, "length", px),
+            _scale(major, "length", px),
+            _scale(minor, "length", px),
+            round(aspect, 3),
+            round(float(_safe(p, ("solidity",), 0.0)), 4),
+            round(float(_safe(p, ("extent",), 0.0)), 4),
+            round(float(cx), 1),
+            round(float(cy), 1),
+            round(float(cz), 1),
+        ]
+        if has_intens:
+            mean_i = float(_safe(p, ("intensity_mean", "mean_intensity"), 0.0))
+            max_i = float(_safe(p, ("intensity_max", "max_intensity"), 0.0))
+            min_i = float(_safe(p, ("intensity_min", "min_intensity"), 0.0))
+            row += [
+                round(mean_i, 2),
+                round(max_i, 2),
+                round(min_i, 2),
+                round(mean_i * volume, 1),
+            ]
+        rows.append(row)
+
+    rows.sort(key=lambda r: r[0])
+    summary = _summarize(schema, rows)
+    return {
+        "columns": columns,
+        "rows": rows,
+        "summary": summary,
+        "n_cells": len(rows),
+        "pixel_size_um": px,
+    }
+
+
 def _safe(prop, names, default: float) -> float:
     """Read the first available regionprops attribute among ``names``.
 
@@ -240,6 +356,8 @@ def _safe(prop, names, default: float) -> float:
 def _scale(value: float, kind: str, px: float) -> float:
     if px > 0 and kind == "area":
         return round(value * px * px, 3)
+    if px > 0 and kind == "volume":
+        return round(value * px * px * px, 3)
     if px > 0 and kind == "length":
         return round(value * px, 3)
     return round(value, 3)
@@ -248,6 +366,8 @@ def _scale(value: float, kind: str, px: float) -> float:
 def _unit_for(kind: str, px: float) -> str:
     if kind == "area":
         return "µm²" if px > 0 else "px²"
+    if kind == "volume":
+        return "µm³" if px > 0 else "px³"
     if kind == "length":
         return "µm" if px > 0 else "px"
     if kind == "angle":
@@ -282,11 +402,20 @@ def summary_line(result: dict[str, Any]) -> str:
     if n == 0:
         return "No cells detected"
     s = result["summary"]
-    area = s.get("area", {})
     diam = s.get("diameter", {})
+    lu = next((u for k, _l, u in result["columns"] if k == "diameter"), "px")
+    if "volume" in s:
+        # 3-D result (_compute_measurements_3d) — no area/circularity columns.
+        vol = s["volume"]
+        vu = next((u for k, _l, u in result["columns"] if k == "volume"), "px³")
+        return (
+            f"Ø {diam.get('median', 0):.1f} {lu} (median)  ·  "
+            f"volume {vol.get('mean', 0):.1f} {vu} (mean)  ·  "
+            f"{n} cells across the volume"
+        )
+    area = s.get("area", {})
     circ = s.get("circularity", {})
     au = next((u for k, _l, u in result["columns"] if k == "area"), "px²")
-    lu = next((u for k, _l, u in result["columns"] if k == "diameter"), "px")
     return (
         f"Ø {diam.get('median', 0):.1f} {lu} (median)  ·  "
         f"area {area.get('mean', 0):.1f} {au} (mean)  ·  "
