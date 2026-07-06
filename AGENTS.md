@@ -27,10 +27,15 @@ the prioritised, actionable task queue.
 napari_app/            THE PRODUCT (napari desktop app)
   main.py              entry point: builds the tabbed dock (Predict/Annotate/
                        Assistant/Train/Guide)
-  widgets/             Qt widgets, one per tab. predict_widget.py is the
-                       god-object (~1.8k lines) — see backlog item to split it
-  core/                product-side logic (training/predict state managers,
-                       training entry) — moved out of the old Streamlit GUI
+  widgets/             Qt widgets, one per tab. predict_widget.py wires the
+                       Predict tab's UI to a PredictController instance —
+                       widget-only code left: Qt construction, view-update
+                       slots, drag/drop, refine, GT/evaluate, measurements
+  core/                product-side logic, Qt-free and unit-tested:
+                       predict_controller.py (config build + predict/batch/
+                       benchmark orchestration — see below), training/predict
+                       state managers, training entry — moved out of the old
+                       Streamlit GUI
   engines.py           Cellpose-SAM engine + engine device mapping
   inference_cache.py   model + ViT-embedding cache (smart: changing only
                        thresholds skips the encoder)
@@ -100,8 +105,13 @@ You usually cannot launch the napari GUI. Verify what you can:
   here (GUI, model) goes behind an **opt-in flag, off by default**, so existing
   behaviour is byte-for-byte unchanged (see the `tiled` toggle for the pattern).
 - **The single prediction choke point** is `_predict_cached(config)` in
-  `napari_app/widgets/predict_widget.py`; all predict paths (single/batch/
-  benchmark) go through it. Wire engine-level changes there.
+  `napari_app/core/predict_controller.py` (re-exported by
+  `napari_app/widgets/predict_widget.py`, which existing wiring tests still
+  import it through). `PredictController` in the same module owns config
+  building (`build_config`/`sam_config`) and predict/batch/benchmark
+  orchestration; it takes plain dicts and plain callbacks, not Qt widgets/
+  signals, so it's unit-tested without PyQt6/torch (`tests/
+  test_predict_controller.py`). Wire engine-level changes there.
 - Don't add heavy deps to the CI test path — the pure-logic suite must run
   without torch/napari.
 

@@ -15,6 +15,10 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 
 from napari_app.core.predict_state_manager import PredictionStateManager
+from napari_app.core.predict_controller import (
+    PredictController, _to_display_uint8, _read_for_predict, _predict_cached,
+    _predict_tiled, _apply_clahe,
+)
 from project_root import STORAGE_DIR
 from napari_app.theme import (
     WIDGET_SS, BTN_PRIMARY, BTN_SUCCESS, BTN_SECONDARY, BTN_BROWSE,
@@ -116,7 +120,7 @@ class PredictWidget(QWidget):
         self._last_img_path = None
         self._was_autofilled = False
         self._lora_paths    = {}
-        self._batch_stop    = threading.Event()
+        self._controller    = PredictController()
         self._refine_timer  = QTimer()
         self._refine_timer.setInterval(3000)
         self._refine_lh: list = []
@@ -884,22 +888,13 @@ class PredictWidget(QWidget):
             self.sam_path.setPlaceholderText(f"Not found: {c.name}")
 
     def _resolve_lora(self):
-        if hasattr(self, 'lora_custom') and self.lora_custom.text().strip():
-            return self.lora_custom.text().strip()
-        return self._lora_paths.get(self.lora_combo.currentText(), "")
+        lora_custom_text = self.lora_custom.text() if hasattr(self, "lora_custom") else ""
+        return PredictController.resolve_lora(
+            lora_custom_text, self.lora_combo.currentText(), self._lora_paths)
 
     def _resolve_sam(self):
-        p = self.sam_path.text().strip()
-        if p and Path(p).exists():
-            return p
-        vit = self.vit_name.currentText()
-        names = {"vit_h": "sam_vit_h_4b8939.pth",
-                 "vit_l": "sam_vit_l_0b3195.pth",
-                 "vit_b": "sam_vit_b_01ec64.pth"}
-        c = STORAGE_DIR / "sam_backbone" / names[vit]
-        if c.exists():
-            return str(c)
-        raise ValueError(f"SAM backbone not found. Place {names[vit]} in {STORAGE_DIR / 'sam_backbone'}/")
+        return PredictController.resolve_sam(
+            self.sam_path.text(), self.vit_name.currentText(), STORAGE_DIR)
 
     def _refresh_channel_picker(self):
         """Show/populate the channel picker when a multi-channel stack is loaded.
@@ -946,78 +941,43 @@ class PredictWidget(QWidget):
                   if self.channel_list.item(i).checkState() == Qt.CheckState.Checked]
         return picked or [0]
 
+    def _gather_params(self) -> dict:
+        """Snapshot every control PredictController.build_config/sam_config
+        need, as plain values — the only bridge between Qt state and the
+        Qt-free controller."""
+        return {
+            "engine": self._current_engine(),
+            "image_path": self.image_path.text().strip(),
+            "resize_size": int(self.resize_size.currentText()),
+            "vit_name": self.vit_name.currentText(),
+            "sam_path_text": self.sam_path.text(),
+            "storage_dir": STORAGE_DIR,
+            "lora_custom_text": self.lora_custom.text() if hasattr(self, "lora_custom") else "",
+            "lora_combo_text": self.lora_combo.currentText(),
+            "lora_paths": self._lora_paths,
+            "lora_rank": self.lora_rank.value(),
+            "device": self.device.currentText(),
+            "points_per_side": self.points_per_side.value(),
+            "pred_iou_thresh": self.pred_iou_thresh.value(),
+            "stability_score_thresh": self.stability_score_thresh.value(),
+            "box_nms_thresh": self.box_nms_thresh.value(),
+            "min_mask_area": self.min_mask_area.value(),
+            "clahe": self.clahe.isChecked(),
+            "tiled": self.tiled.isChecked(),
+            "cp_diameter": self.cp_diameter.value(),
+            "cp_flow_threshold": self.cp_flow.value(),
+            "cp_cellprob_threshold": self.cp_cellprob.value(),
+            "channels": self._selected_channels(),
+        }
+
     def _build_config(self):
-        img = self.image_path.text().strip()
-        if not img or not Path(img).exists():
-            raise ValueError(f"Image not found: {img}")
-        rs = int(self.resize_size.currentText())
-
-        # Cellpose-SAM needs no LoRA/SAM checkpoint — a much shorter config.
-        if self._current_engine() == "cellpose":
-            from napari_app.engines import cellpose_available
-            if not cellpose_available():
-                raise ValueError("Cellpose is not installed — run: pip install cellpose")
-            return {
-                "engine": "cellpose", "image_path": img,
-                "resize_size": [rs, rs],
-                "cp_diameter": self.cp_diameter.value(),
-                "cp_flow_threshold": self.cp_flow.value(),
-                "cp_cellprob_threshold": self.cp_cellprob.value(),
-                "selected_device": self.device.currentText(),
-                "clahe": self.clahe.isChecked(),
-                "tiled": self.tiled.isChecked(),
-                "tile_size": rs, "tile_overlap": 0,
-                # kept so downstream (refine, caching keys) stays valid
-                "vit_name": self.vit_name.currentText(),
-                "image_encoder_lora_rank": self.lora_rank.value(),
-                "sam_image_size": rs, "result_pth_path": "",
-                "channels": self._selected_channels(),
-            }
-
-        return self._sam_config()
+        return self._controller.build_config(self._gather_params())
 
     def _sam_config(self) -> dict:
         """Full SAM + LoRA config. Used by the CellSeg1 engine and always by the
         interactive Annotate session (which needs SAM regardless of the engine
         selector). Requires an image, a LoRA checkpoint and a SAM backbone."""
-        img = self.image_path.text().strip()
-        if not img or not Path(img).exists():
-            raise ValueError(f"Image not found: {img}")
-        lora = self._resolve_lora()
-        sam  = self._resolve_sam()
-        if not lora or not Path(lora).exists():
-            raise ValueError(f"LoRA checkpoint not found: {lora}")
-        rs = int(self.resize_size.currentText())
-        return {
-            "engine": "cellseg1",
-            "vit_name": self.vit_name.currentText(),
-            "model_path": sam, "result_pth_path": lora, "image_path": img,
-            "image_encoder_lora_rank": self.lora_rank.value(),
-            "mask_decoder_lora_rank":  self.lora_rank.value(),
-            "freeze_image_encoder": True, "freeze_prompt_encoder": True,
-            "freeze_mask_decoder_transformer": True, "freeze_upscaling_cnn": True,
-            "freeze_output_hypernetworks_mlps": True,
-            "freeze_mask_decoder_mask_tokens": True, "freeze_mask_decoder_iou": True,
-            "lora_dropout": 0.1,
-            "sam_image_size": rs, "resize_size": [rs, rs],
-            "points_per_side":          self.points_per_side.value(),
-            "points_per_batch":         64,
-            "pred_iou_thresh":          self.pred_iou_thresh.value(),
-            "stability_score_thresh":   self.stability_score_thresh.value(),
-            "stability_score_offset":   0.8,
-            "box_nms_thresh":           self.box_nms_thresh.value(),
-            "crop_nms_thresh": 0.05, "crop_n_layers": 1,
-            "crop_n_points_downscale_factor": 1,
-            "min_mask_region_area":     self.min_mask_area.value(),
-            "max_mask_region_area_ratio": 0.1,
-            "selected_device": self.device.currentText(),
-            "deterministic": True, "seed": 0,
-            "allow_tf32_on_cudnn": True, "allow_tf32_on_matmul": True,
-            "clahe": self.clahe.isChecked(),
-            "tiled": self.tiled.isChecked(),
-            "tile_size": rs, "tile_overlap": 0,
-            "channels": self._selected_channels(),
-        }
+        return self._controller.sam_config(self._gather_params())
 
     # ── Parameter access for the Assistant agent ──────────────────────────────
 
@@ -1101,28 +1061,16 @@ class PredictWidget(QWidget):
             from napari_app.inference_cache import cache_status
             self._append_log(f"▶ {Path(config['image_path']).name}  [{cache_status()}]")
 
-        def run():
-            try:
-                sink = {}
-                img_arr, mask = _predict_cached(
-                    config, on_tile=self._tile_progress_signal.emit, sink=sink)
-                # Stash the raw channel stack (None on the ordinary path) so the
-                # measurement pass can report per-channel intensity. Set before
-                # emitting so the queued main-thread handler sees it.
-                self._last_channel_stack = sink.get("stack")
-                self._done_signal.emit(img_arr, mask)
-                if is_cp:
-                    self._log_signal.emit(f"✓ {int(mask.max())} cells  [Cellpose-SAM]")
-                else:
-                    from napari_app.inference_cache import cache_status as cs
-                    self._log_signal.emit(f"✓ {int(mask.max())} cells  [{cs()}]")
-            except Exception as e:
-                import traceback
-                self._log_signal.emit(f"[ERROR] {e}\n{traceback.format_exc()}")
-            finally:
-                self._finish_signal.emit()
+        def on_result(img_arr, mask, stack):
+            # Stash the raw channel stack (None on the ordinary path) so the
+            # measurement pass can report per-channel intensity. Set before
+            # emitting so the queued main-thread handler sees it.
+            self._last_channel_stack = stack
+            self._done_signal.emit(img_arr, mask)
 
-        threading.Thread(target=run, daemon=True).start()
+        self._controller.run_prediction_async(
+            config, on_tile=self._tile_progress_signal.emit, on_result=on_result,
+            on_log=self._log_signal.emit, on_finish=self._finish_signal.emit)
 
     def _on_done(self):
         self.run_btn.setEnabled(True)
@@ -1454,7 +1402,6 @@ class PredictWidget(QWidget):
         except ValueError as e:
             self._append_log(f"[ERROR] {e}"); return
 
-        self._batch_stop.clear()
         self.batch_btn.setEnabled(False)
         self.batch_stop_btn.setEnabled(True)
         self.batch_progress.setVisible(True)
@@ -1462,49 +1409,21 @@ class PredictWidget(QWidget):
         self.batch_lbl.setText(f"0 / {len(images)}")
         self._append_log(f"▶ Batch: {len(images)} images → {out_dir.name}/")
 
-        import cv2 as _cv2
         px = self.pixel_size.value()
         self._cohort_records = []
         self._cohort_out = out_dir
 
-        def run():
-            from napari_app import analysis
-            n = len(images)
-            done = 0
-            records = []
-            for img_path in images:
-                if self._batch_stop.is_set():
-                    self._log_signal.emit(f"■ Stopped at {done}/{n}"); break
-                self._log_signal.emit(f"[{done + 1}/{n}] {img_path.name}")
-                try:
-                    cfg = {**config, "image_path": str(img_path)}
-                    img_arr, mask = _predict_cached(cfg)
-                    _cv2.imwrite(str(out_dir / f"{img_path.stem}_mask.png"),
-                                 mask.astype(np.uint16))
-                    result = analysis.compute_measurements(
-                        mask, intensity_image=img_arr, pixel_size_um=px)
-                    cov = float((mask > 0).sum()) / mask.size * 100.0
-                    records.append((img_path.name, result, cov))
-                except Exception as e:
-                    self._log_signal.emit(f"  [ERROR] {e}")
-                done += 1
-                self._batch_progress_signal.emit(done, n)
-            else:
-                # completed without a break
-                try:
-                    from napari_app import cohort
-                    cell_csv, summ_csv = cohort.write_cohort_csvs(out_dir, records)
-                    pop = cohort.population_stats(records)
-                    self._cohort_records = records
-                    self._log_signal.emit(
-                        f"✓ Batch done — {n} masks + cohort CSVs in {out_dir.name}/  "
-                        f"({pop['total_cells']} cells across {pop['n_images']} images)")
-                except Exception as e:
-                    self._log_signal.emit(f"  [WARN] cohort analysis failed: {e}")
-                self._cohort_ready_signal.emit()
-            self._batch_finish_signal.emit()
+        def on_cohort_ready(records, cohort_out_dir):
+            self._cohort_records = records
+            self._cohort_out = cohort_out_dir
+            self._cohort_ready_signal.emit()
 
-        threading.Thread(target=run, daemon=True).start()
+        self._controller.run_batch_async(
+            config, images, out_dir, px,
+            on_log=self._log_signal.emit,
+            on_progress=self._batch_progress_signal.emit,
+            on_cohort_ready=on_cohort_ready,
+            on_finish=self._batch_finish_signal.emit)
 
     def _on_cohort_ready(self):
         records = getattr(self, "_cohort_records", [])
@@ -1516,8 +1435,6 @@ class PredictWidget(QWidget):
         w.show_and_raise()
 
     # ── Benchmark engines vs ground truth ─────────────────────────────────────
-
-    _ENGINE_LABELS = {"cellseg1": "CellSeg1 (LoRA)", "cellpose": "Cellpose-SAM"}
 
     def _run_benchmark(self):
         img_dir = Path(self.bench_img.text().strip())
@@ -1574,41 +1491,15 @@ class PredictWidget(QWidget):
         self._append_log(
             f"▶ Benchmark: {len(engines)} engine(s) × {len(pairs)} images = {total} runs")
 
-        def run():
-            from napari_app import benchmark
-            import cv2
-            per_engine = {e: [] for e in engines}
-            done = 0
-            for eng in engines:
-                for img_path, gt_path in pairs:
-                    try:
-                        cfg = {**bases[eng], "image_path": str(img_path)}
-                        _, pred = _predict_cached(cfg)
-                        if str(gt_path).lower().endswith(".npy"):
-                            gt = np.load(str(gt_path))
-                        else:
-                            gt = cv2.imread(str(gt_path), cv2.IMREAD_UNCHANGED)
-                        gt = np.ascontiguousarray(gt).astype(np.int32)
-                        if gt.shape != pred.shape:
-                            gt = cv2.resize(gt.astype(np.float32),
-                                            (pred.shape[1], pred.shape[0]),
-                                            interpolation=cv2.INTER_NEAREST).astype(np.int32)
-                        per_engine[eng].append(benchmark.evaluate(gt, pred))
-                    except Exception as ex:
-                        self._log_signal.emit(f"  [ERROR] {eng} {img_path.name}: {ex}")
-                    done += 1
-                    self._benchmark_row_signal.emit(f"{done} / {total}  ({self._ENGINE_LABELS[eng]})")
-            summaries = {self._ENGINE_LABELS[e]: benchmark.summarize(per_engine[e])
-                         for e in engines}
-            cols, rows = benchmark.results_table(summaries)
-            try:
-                benchmark.write_csv(str(img_dir / "benchmark.csv"), cols, rows)
-            except Exception:
-                pass
+        def on_done(cols, rows):
             self._bench_cols, self._bench_rows = cols, rows
             self._benchmark_done_signal.emit()
 
-        threading.Thread(target=run, daemon=True).start()
+        self._controller.run_benchmark_async(
+            engines, bases, pairs, img_dir,
+            on_row=self._benchmark_row_signal.emit,
+            on_log=self._log_signal.emit,
+            on_done=on_done)
 
     def _on_benchmark_row(self, text: str):
         self.bench_progress.setText(text)
@@ -1641,7 +1532,7 @@ class PredictWidget(QWidget):
         self._append_log(f"✓ Benchmark done — winner (mAP): {best_name}. CSV saved.")
 
     def _stop_batch(self):
-        self._batch_stop.set()
+        self._controller.stop_batch()
         self.batch_stop_btn.setEnabled(False)
         self.batch_lbl.setText("stopping…")
 
@@ -1864,159 +1755,10 @@ def _make_custom_lora_row(parent) -> QHBoxLayout:
 
 
 # ── Prediction core ───────────────────────────────────────────────────────────
-
-def _to_display_uint8(img: np.ndarray) -> np.ndarray:
-    """Coerce an image to 8-bit for engines that require uint8 (e.g. SAM).
-
-    uint8 input is returned unchanged (the default path stays byte-for-byte).
-    Higher bit-depth or float input (16-bit PNG/TIFF, e.g. a fluorescence image
-    or a uint16 label/GT file) is percentile-stretched (1–99%) into 0–255 —
-    the same normalisation the multi-channel path already uses — so SAM no
-    longer raises "Input type uint16 is not supported".
-    """
-    if img.dtype == np.uint8:
-        return img
-    a = img.astype(np.float32)
-    lo = float(np.percentile(a, 1.0))
-    hi = float(np.percentile(a, 99.0))
-    if hi <= lo:
-        lo, hi = float(a.min()), float(a.max())
-    if hi <= lo:
-        return np.zeros(img.shape, dtype=np.uint8)
-    a = (a - lo) / (hi - lo)
-    return (np.clip(a, 0.0, 1.0) * 255.0).astype(np.uint8)
-
-
-def _read_for_predict(config):
-    """Read ``config['image_path']`` into ``(rgb_uint8_HxWx3, stack_or_None)``.
-
-    Default path (no ``channels`` key): the exact legacy ``cv2`` BGR→RGB read
-    and a ``None`` stack, so ordinary RGB/grayscale images are byte-for-byte
-    unchanged. Multi-channel path (opt-in via a ``channels`` list of channel
-    indices): read the full-depth stack with tifffile, percentile-normalise and
-    project the selected channels to the RGB frame the engine expects, and also
-    return the raw :class:`~napari_app.channels.ChannelStack` for per-channel
-    intensity measurement.
-    """
-    channels = config.get("channels")
-    # Native microscopy formats (.nd2/.czi/.lif) can't be read by cv2, so they
-    # always go through the channel-stack path — projecting the first channels
-    # by default when the user hasn't picked any explicitly.
-    is_native = Path(config["image_path"]).suffix.lower() in (".nd2", ".czi", ".lif")
-    if channels or is_native:
-        from napari_app.channels import read_channel_stack, project_to_rgb
-        stack = read_channel_stack(config["image_path"])
-        rgb = project_to_rgb(stack, channels,
-                             low=float(config.get("channel_low", 1.0)),
-                             high=float(config.get("channel_high", 99.0)))
-        return rgb, stack
-
-    import cv2
-    img = cv2.imread(config["image_path"], cv2.IMREAD_UNCHANGED)
-    if img is None:
-        raise ValueError(f"Cannot read: {config['image_path']}")
-    if img.ndim == 2:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    elif img.shape[2] == 4:
-        img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
-    else:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    # SAM (and the downstream cv2/torchvision transforms) require uint8; 16-bit
-    # and float images crash otherwise. uint8 is returned unchanged.
-    img = _to_display_uint8(img)
-    return img, None
-
-
-def _predict_cached(config, on_tile=None, sink=None):
-    from data.utils import resize_image
-    from napari_app.inference_cache import predict_cached
-    import cv2
-
-    img, stack = _read_for_predict(config)
-    if sink is not None:
-        sink["stack"] = stack
-
-    # Large-image path: tile at native resolution instead of shrinking the
-    # whole image (which loses small cells). Opt-in via the "Large image" box.
-    from napari_app.tiling import should_tile
-    if config.get("tiled") and should_tile(img.shape, tile=int(config.get("tile_size") or 1024)):
-        return img, _predict_tiled(config, img, on_tile=on_tile)
-
-    orig_h, orig_w = img.shape[:2]
-    resized = resize_image(img, config["resize_size"])
-    if config.get("clahe"):
-        resized = _apply_clahe(resized)
-
-    if config.get("engine") == "cellpose":
-        from napari_app.engines import predict_cellpose
-        small = predict_cellpose(
-            resized,
-            diameter=config.get("cp_diameter", 0),
-            flow_threshold=config.get("cp_flow_threshold", 0.4),
-            cellprob_threshold=config.get("cp_cellprob_threshold", 0.0),
-            device=config.get("selected_device", "cpu"),
-        )
-    else:
-        small = predict_cached(config, resized)
-
-    if small.shape != (orig_h, orig_w):
-        mask = cv2.resize(small.astype(np.float32), (orig_w, orig_h),
-                          interpolation=cv2.INTER_NEAREST).astype(small.dtype)
-    else:
-        mask = small
-    return img, mask
-
-
-def _predict_tiled(config, img, on_tile=None):
-    """Segment a large RGB image tile-by-tile at native resolution and stitch.
-
-    Reuses the exact per-image engine calls of the normal path, applied to each
-    overlapping tile; cells crossing a seam are merged by the stitcher. Returns
-    a full-resolution instance mask the same H×W as ``img``. ``on_tile(done,
-    total)`` is forwarded to the tiler for per-tile progress reporting.
-    """
-    from napari_app.tiling import recommend_overlap, tiled_predict
-
-    tile = int(config.get("tile_size") or 1024)
-    overlap = int(config.get("tile_overlap") or 0)
-    if overlap <= 0:
-        overlap = recommend_overlap(float(config.get("cp_diameter") or 0), tile)
-
-    if config.get("engine") == "cellpose":
-        from napari_app.engines import predict_cellpose
-
-        def _fn(t):
-            if config.get("clahe"):
-                t = _apply_clahe(t)
-            return predict_cellpose(
-                t,
-                diameter=config.get("cp_diameter", 0),
-                flow_threshold=config.get("cp_flow_threshold", 0.4),
-                cellprob_threshold=config.get("cp_cellprob_threshold", 0.0),
-                device=config.get("selected_device", "cpu"),
-            )
-    else:
-        from napari_app.inference_cache import predict_cached
-
-        def _fn(t):
-            if config.get("clahe"):
-                t = _apply_clahe(t)
-            return predict_cached(config, t)
-
-    min_area = int(config.get("min_mask_area") or config.get("min_mask_region_area") or 0)
-    return tiled_predict(img, _fn, tile=tile, overlap=overlap, min_area=min_area,
-                         on_tile=on_tile)
-
-
-def _apply_clahe(rgb: np.ndarray) -> np.ndarray:
-    """Adaptive histogram equalisation on the luminance channel (uint8 RGB)."""
-    import cv2
-    lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    l = clahe.apply(l)
-    return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2RGB)
-
+# _to_display_uint8 / _read_for_predict / _predict_cached / _predict_tiled /
+# _apply_clahe now live in napari_app.core.predict_controller (Qt-free, unit
+# tested) and are imported at the top of this file; kept importable from here
+# too since existing wiring tests reference them as `predict_widget.<name>`.
 
 def _find_test_image():
     for ext in ("*.png", "*.tif", "*.tiff", "*.jpg"):
