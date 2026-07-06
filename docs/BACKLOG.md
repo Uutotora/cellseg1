@@ -1,10 +1,21 @@
 # CellSeg1 — Engineering Backlog (agent-actionable)
 
-The machine-readable companion to `AUDIT_2026.md`. Each task has a **goal**,
-**why**, **acceptance criteria** (how you know it's done), **touch** (files),
-and a rough **size**. Work top-down within a priority band: take the top
-unchecked P0, satisfy its acceptance criteria, add tests, commit, push, tick
-it off. Keep this file honest — check items only when their criteria are met.
+The machine-readable companion to [`docs/AUDIT_2026.md`](AUDIT_2026.md)
+(strategic rationale — read sections by reference, don't duplicate them here)
+and [`docs/CHANGELOG.md`](CHANGELOG.md) (dated record of what actually shipped,
+including work that never came through this file — see its intro for why that
+matters). Each task has a **goal**, **why**, **acceptance criteria** (how you
+know it's done), **touch** (files), and a rough **size**. Work top-down within
+a priority band: take the top unchecked P0, satisfy its acceptance criteria,
+add tests, commit, push, tick it off. Keep this file honest — check items only
+when their criteria are met.
+
+**Before picking a task**, spend two minutes sanity-checking this file against
+`git log --oneline -20`: has something below already shipped (a stale prompt
+or a resumed session can point at a done task)? Has something shipped that
+*isn't* below at all (the "Lab" design system UI redesign, 2026-07-05, landed
+as ~17 commits with zero backlog entry — see `docs/CHANGELOG.md`)? If docs and
+code have diverged, reconcile first — it's cheap now and expensive later.
 
 Legend — size: S (hours) · M (day) · L (multi-day). Priority: P0 ship-blocker
 for a credible product · P1 differentiation · P2 later.
@@ -13,7 +24,7 @@ for a credible product · P1 differentiation · P2 later.
 
 ## ✅ Done
 
-- [x] **Due-diligence audit** → `AUDIT_2026.md`
+- [x] **Due-diligence audit** → `docs/AUDIT_2026.md`
 - [x] **Test + CI foundation** — pytest suite (analysis/benchmark/cohort/
       advisor/tiling), `pytest.ini`, GitHub Actions on py3.11/3.12.
 - [x] **Tiled inference core** — `napari_app/tiling.py` (plan/stitch/
@@ -23,6 +34,18 @@ for a credible product · P1 differentiation · P2 later.
 - [x] **Remove Streamlit GUI** — shared logic moved to `napari_app/core/`.
 - [x] **Remove paper artifacts** — figures/, experiment_in_paper/, video/,
       visualize_cell.py.
+- [x] **UI redesign — the "Lab" design system** (2026-07-05) — *shipped
+      outside this backlog; logged here retroactively, see `docs/CHANGELOG.md`
+      and `docs/AUDIT_2026.md` §4.4.* Icon-rail navigation replacing top tabs
+      (`widgets/shell.py`), card system v2 (`widgets/common.py`), a custom
+      `Combo` dropdown, the Assistant rebuilt as a chat surface
+      (`widgets/chat.py`), an icon set + micro-animations (`icons.py`,
+      `motion.py`). Raises the UX/UI audit score (6.5 → 7.5) but **does not**
+      close any concrete UX task below — those gaps are interaction-model,
+      not visual, and are listed fresh in P1.
+- [x] **Docs reconciliation** (2026-07-06) — `AUDIT_2026.md` moved to `docs/`
+      with dated addenda (not rewritten); `docs/CHANGELOG.md` added;
+      `docs/AGENT_KICKOFF_PROMPT.md` added; this file reconciled against both.
 
 ---
 
@@ -179,18 +202,96 @@ for a credible product · P1 differentiation · P2 later.
 ### [ ] Reproducibility capsule  · M
 - **Goal:** one click exports model + params + input hash + versions so a
   result can be reproduced.
-- **Acceptance:** a manifest (json) + optional bundle; a "reproduce" path that
-  re-runs from it and matches.
-- **Touch:** new `napari_app/core/provenance.py`, predict/export paths.
+- **Why (partially done already):** `PredictWidget._write_manifest` already
+  writes a JSON sidecar on every "Save masks" — engine, full params, python/
+  torch versions, a 16-char sha256 of the input image. See
+  `docs/AUDIT_2026.md` §5.4. What's missing is the other half: reading a
+  manifest back and re-running from it.
+- **Acceptance:** a "reproduce" path — load a `*.json` manifest, rebuild the
+  exact config, re-run, and confirm the resulting mask matches (or report a
+  diff if the environment can't reproduce it bit-for-bit, e.g. different
+  torch/CUDA version).
+- **Touch:** `napari_app/widgets/predict_widget.py` (`_write_manifest` already
+  there), new `napari_app/core/provenance.py` for the read/replay half.
 
 ### [ ] Built-in statistics + auto-report  · M
 - **Goal:** compare conditions (t-test/Mann-Whitney) and emit a figure-ready
   report from a cohort.
 - **Touch:** `cohort.py`, `widgets/cohort_window.py`, new report module.
 
+### [ ] Command palette (⌘K)  · M
+- **Goal:** one keyboard-driven surface for predict/switch-engine/apply-
+  suggestion/export/save, instead of hunting across five rail panels.
+- **Why:** `docs/AUDIT_2026.md` §4.2/§4.3 — the "Lab" redesign (2026-07-05)
+  improved every panel's visual hierarchy but didn't touch the click-heavy,
+  multi-tab interaction model itself; this is still fully open.
+- **Acceptance:** a fuzzy-searchable command list bound to a shortcut (⌘K/
+  Ctrl+K), covering at minimum: run prediction, switch engine, switch tab,
+  apply an Assistant suggestion, export CSV/masks.
+- **Touch:** new `napari_app/widgets/command_palette.py`, `main.py` (global
+  shortcut), each widget exposes its actions to a shared registry.
+
+### [ ] Undo/redo for mask *proofreading* edits  · M
+- **Goal:** a real history stack (merge/split/delete cells on a Labels layer)
+  with hotkeys, distinct from Annotate's existing single-step "Undo last"
+  point-click button (`annotate_widget.py:170` — that undoes one annotation
+  click, not a mask edit).
+- **Why:** `docs/AUDIT_2026.md` §4.2 — proofreading a predicted mask today has
+  no undo beyond napari's generic layer history.
+- **Acceptance:** a visible undo/redo stack for label-merge/split/delete
+  actions with keyboard shortcuts; multi-step; survives at least one Save.
+- **Touch:** `napari_app/widgets/predict_widget.py` or `annotate_widget.py`
+  (wherever proofreading actions live), viewer Labels-layer integration.
+
+### [ ] Persist floating-window geometry across sessions  · S
+- **Goal:** the Log/Measurements/Cohort windows (`widgets/log_window.py`,
+  `measurements_window.py`, `cohort_window.py`) reopen where you left them.
+- **Why:** these are already independent, multi-monitor-friendly `QWidget`
+  windows (`docs/AUDIT_2026.md` §4.2's "detachable panels" ask is more done
+  than the audit assumed) — the one real gap is that position/size resets to
+  default every launch.
+- **Acceptance:** each window's geometry is saved on close (`QSettings` or a
+  small JSON sidecar) and restored on next open; falls back to the current
+  default position if nothing saved yet.
+- **Touch:** `napari_app/widgets/log_window.py`, `measurements_window.py`,
+  `cohort_window.py`.
+
+### [ ] Interactive onboarding tour  · S
+- **Goal:** a first-run guided path on sample data — "load → predict → N
+  cells → export" — instead of a static Guide tab.
+- **Why:** `docs/AUDIT_2026.md` §4.2; the Guide tab got new visuals in the
+  2026-07-05 redesign (`design: Train, Guide and floating windows on the new
+  language`) but is still static content, not an interactive walkthrough.
+- **Acceptance:** a first-launch (or Guide-triggered) sequence that drives the
+  user through one real prediction on bundled sample data in under 60s.
+- **Touch:** `napari_app/widgets/guide_widget.py`, `predict_widget.py`.
+
+### [ ] Warn before silently downsampling a large image  · S
+- **Goal:** when an image would be shrunk significantly for inference (and
+  "Large image" tiling is off), tell the user before they lose small cells.
+- **Why:** `docs/AUDIT_2026.md` §4.2 — tiling (done) is opt-in; a user who
+  doesn't know to enable it gets silently downsampled with no warning.
+- **Acceptance:** if `should_tile(img.shape, ...)` would return true but the
+  `tiled` toggle is off, show a one-line hint suggesting "Large image" mode
+  before/after running.
+- **Touch:** `napari_app/widgets/predict_widget.py`, `napari_app/tiling.py`
+  (`should_tile` already exists).
+
+### [ ] OME-Zarr multiscale viewing for whole-slide images  · L
+- **Goal:** open a whole-slide image as a lazy pyramid so napari's viewer
+  stays responsive without loading the full-resolution array.
+- **Why:** `docs/AUDIT_2026.md` §3.2/§10 — tiled *inference* is done, but
+  *viewing* a 100k×100k image still means loading it whole; this is the
+  remaining half of the original "no tiling" finding.
+- **Acceptance:** an OME-Zarr (or a zarr/dask-backed pyramid built on the fly)
+  path that napari renders at multiple zoom levels without a full-res load;
+  degrades gracefully for non-pyramidal formats.
+- **Touch:** `napari_app/channels.py` or a new `napari_app/pyramids.py`,
+  `predict_widget.py` image-loading path.
+
 ---
 
-## P2 — platform / enterprise (own product surface; see AUDIT_2026 §8)
+## P2 — platform / enterprise (own product surface; see `docs/AUDIT_2026.md` §8)
 
 - [ ] Service core (REST/gRPC) + task queue + object storage  · L
 - [ ] SSO / RBAC / immutable audit log  · L
@@ -206,4 +307,13 @@ for a credible product · P1 differentiation · P2 later.
 - Add a task before you start non-trivial work; tick it only when its
   **acceptance criteria** are met and tests are green.
 - Keep priorities honest — if something becomes a ship-blocker, move it to P0.
-- Link deeper rationale to `AUDIT_2026.md` sections rather than duplicating it.
+- Link deeper rationale to `docs/AUDIT_2026.md` sections rather than
+  duplicating it.
+- **Shipped something that wasn't a backlog item** (a design pass, a quick
+  fix, anything non-trivial)? Add a line to `docs/CHANGELOG.md` regardless —
+  that file's whole job is to catch exactly this, since this backlog can't
+  retroactively track work it never knew about.
+- If a chunk of work here turns out to already be partially done by the time
+  you read it (check the code, not just the checkbox), narrow the acceptance
+  criteria to the real remaining gap instead of redoing it — see the
+  "Reproducibility capsule" item for the pattern.
