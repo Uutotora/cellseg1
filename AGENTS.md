@@ -69,8 +69,9 @@ napari_app/            THE PRODUCT (napari desktop app)
                        see predict_controller.py's _predict_volume for the
                        per-plane-predict + stitch orchestration that uses it
   advisor.py           the Assistant's offline diagnostic engine + Ollama bridge
-  analysis.py          per-cell morphometry (skimage regionprops) — 2-D only;
-                       z-stack results aren't wired into measurements yet
+  analysis.py          per-cell morphometry (skimage regionprops); dispatches
+                       on mask.ndim to a 3-D-specific schema (volume, 3-D
+                       centroid, ...) for z-stack results
   benchmark.py         instance F1/AP vs ground truth
   cohort.py            batch/population aggregation
 

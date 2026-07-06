@@ -18,6 +18,43 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-07
+
+- **SAM 2 / z-stack follow-up: closed every gap the previous entry left
+  open.** Requested directly rather than picked from the backlog, after
+  landing the SAM2 engine — four pieces of real, additional work:
+  - `_predict_volume` now composes z-stacks with tiling (a plane large
+    enough that `should_tile` recommends it goes through `_predict_tiled`
+    instead of always shrinking to `resize_size`).
+  - `read_volume_stack`/`has_z_stack` now keep the real Z/T axis for
+    ND2/CZI/LIF too, not just TIFF/OME-TIFF (`_nd2_raw`/`_czi_raw` share
+    their array+axes extraction between the channel-only and
+    volume-keeping read paths; LIF falls back to its existing
+    channel-only behaviour if its per-plane API doesn't look like
+    expected, since there's no real `.lif` file anywhere to confirm the
+    guess against).
+  - `analysis.compute_measurements` now dispatches on `mask.ndim` to a
+    real 3-D schema (volume, 3-D centroid, equivalent diameter, ...) —
+    2-D-only regionprops properties with no 3-D equivalent (perimeter,
+    circularity, eccentricity, orientation) are correctly absent rather
+    than faked, and `_show_volume_results` now populates real
+    measurements so "Open Measurements"/"Export CSV" work on a volume
+    result exactly like the 2-D path.
+  - A second, opt-in SAM2 tracking mode — **propagate** — seeds objects
+    with the automatic mask generator on the first plane, then tracks
+    each one across the rest of the stack with SAM2's actual video
+    predictor (memory-bank propagation) instead of independent-per-plane
+    detection + IoU stitching. The single most speculative piece here:
+    the video predictor's exact API is this module's best-effort reading
+    of the public interface, not confirmed against a real install.
+
+  107 new tests total across both SAM2 passes (163 pre-existing → 270).
+  **Not verified anywhere in this work:** actual SAM2 inference (either
+  tracking mode), the guessed checkpoint/Hydra-config names, the video
+  predictor's exact method signatures, real ND2/CZI/LIF files (fake-module
+  round-trips only), the widget on a real screen. Full writeup in
+  `docs/BACKLOG.md`.
+
 ## 2026-07-06 (night)
 
 - **SAM 2 engine for z-stacks / time-lapse** (top open P1 backlog item —

@@ -203,28 +203,76 @@ for a credible product · P1 differentiation · P2 later.
   file's house rules already establish. napari's Labels/Image layers are
   n-D natively, so the result path just adds the volume arrays directly
   (`_show_volume_results`, a scoped-down sibling of `_show_results`).
-  66 new tests (163 pre-existing + 66 = 229 total; `test_volume_stitch.py`,
-  `test_engines_sam2.py`, additions to
-  `test_channels.py`/`test_predict_controller.py`, and a new
-  `test_predict_volume_wiring.py` that — a first for this repo — actually
-  constructs a real `PredictWidget` under offscreen Qt with a mocked napari
-  viewer, since a real `napari.Viewer()` segfaults in this sandbox's
-  offscreen platform; that mock-viewer construction also caught a real bug
-  before commit: `tests/test_engines_sam2.py`'s own module-level import order
-  could flip which engine registers first and silently change the Predict
-  tab's default engine, fixed by importing `predict_controller` first).
-  **Not verified here** (no GPU, no real `sam2` package/checkpoint, no
-  display in this sandbox): actual SAM2 inference of any kind, the exact
-  checkpoint/Hydra-config filenames guessed in `engines_sam2.py` (overridable
-  in the SAM2 settings card if wrong), real multi-plane files beyond
-  synthetic TIFFs, and the widget rendered on an actual screen. **Explicitly
-  out of scope, not attempted:** SAM2's video-predictor mode (memory-bank
-  mask *propagation* from a prompted frame — stronger than independent
-  per-plane detection + IoU stitching, but a fundamentally different,
-  interactive-prompt workflow); ND2/CZI/LIF volume reading (TIFF/OME-TIFF
-  only); 3-D per-cell measurements/GT overlay (`analysis.py` is 2-D-only;
-  the results card is hidden rather than showing stale/wrong numbers);
-  composing z-stack with tiling (a whole-slide-sized z-stack).
+  a mock-viewer construction that — a first for this repo — actually
+  constructs a real `PredictWidget` under offscreen Qt (a real
+  `napari.Viewer()` segfaults in this sandbox's offscreen platform); that
+  same technique caught a real bug pre-commit (a test file's own
+  module-level import order could flip which engine registers first and
+  silently change the Predict tab's default engine, fixed by importing
+  `predict_controller` first).
+
+  **Follow-up pass (same day)** closed every gap the first cut had
+  deliberately left open, once it was clear the acceptance criteria above
+  didn't require them but a genuinely complete engine would benefit from
+  them:
+  - **z-stack + tiling composed**: `_predict_volume` now tiles a plane large
+    enough that `should_tile` recommends it (same `tiled`/`tile_size` config
+    already used for a single 2-D image), instead of unconditionally
+    shrinking every plane to `resize_size`.
+  - **ND2/CZI/LIF volume reading**: `read_volume_stack`/`has_z_stack` now
+    keep the real Z/T axis for these three formats too (previously
+    TIFF/OME-TIFF only) — `_nd2_raw`/`_czi_raw` share their array+axes
+    extraction between the channel-only and volume-keeping paths; LIF's
+    per-plane API (`LifImage.dims.z`/`.get_frame`) is this module's
+    best-effort read of readlif's docs (no real `.lif` file anywhere in this
+    codebase to check against), so it falls back to the existing
+    channel-only behaviour on any attribute/shape surprise rather than
+    risking a wrong guess crashing the read.
+  - **3-D per-cell measurements**: `analysis.compute_measurements` now
+    dispatches on `mask.ndim`, with a real 3-D schema (volume in voxels/µm³,
+    3-D centroid, equivalent sphere diameter, major/minor axis, solidity,
+    extent) instead of faking 2-D-only regionprops properties that have no
+    3-D equivalent (perimeter, circularity, eccentricity, a single
+    orientation angle — all correctly absent from the 3-D schema, not
+    zero-filled). `_show_volume_results` now populates `_last_measure` for
+    real, so "Open Measurements" and "Export CSV" both work on a volume
+    result exactly like the 2-D path; the compact hero-chip row stays hidden
+    since its captions ("Area") are hardcoded 2-D wording, not schema-driven.
+  - **SAM2 video-predictor propagation mode**: a second, opt-in tracking
+    mode (Predict tab → SAM2 settings → "Tracking mode") that seeds objects
+    with the automatic mask generator on the first plane, then tracks each
+    one across every other plane via SAM2's actual video predictor
+    (`add_new_mask` + `propagate_in_video` on a temp directory of JPEG
+    frames) instead of independent-per-plane detection + IoU stitching. This
+    is the single most speculative piece in the whole feature: unlike the
+    automatic-mask-generator path (which mirrors SAM1's well-known API
+    closely), the video predictor's exact method signatures are this
+    module's best-effort understanding of the public API, entirely unverified
+    against a real install — capped at `sam2_max_objects` (default 40)
+    tracked objects since a video predictor's memory bank holds every
+    tracked object for every frame, a real cost with no hardware here to
+    measure it on.
+
+  107 new tests total across both passes (163 pre-existing → 270): the
+  z-stitching algorithm, z-stack reading for all four formats (fake
+  nd2/czifile/readlif modules, mirroring `test_formats.py`'s existing
+  pattern), SAM2 registration/config/propagation (fake `sam2` video/mask
+  predictors — no torch needed to test the temp-directory and label-volume
+  bookkeeping), 3-D measurements (synthetic label volumes, hand-computed
+  expected volumes/diameters/centroids), and widget wiring (checkbox
+  visibility, engine-card switching, tracking-mode combo, `_show_volume_results`
+  populating real measurements).
+
+  **Not verified anywhere in this work** (no GPU, no real `sam2`
+  package/checkpoint, no display in this sandbox): actual SAM2 inference of
+  any kind (automatic *or* propagate mode), the exact checkpoint/Hydra-config
+  filenames guessed in `engines_sam2.py` (overridable in the SAM2 settings
+  card if wrong), the video predictor's exact method signatures, real
+  ND2/CZI/LIF files (only fake-module round-trips), and the widget rendered
+  on an actual screen. **Still explicitly out of scope:** GT overlay for
+  volume results (`_show_volume_results` doesn't touch the 2-D-only GT
+  evaluate path), and OME-Zarr/dask lazy loading for a whole-slide-sized
+  z-stack (loads every plane into memory).
 
 ### [x] Engine registry + plugins  · M
 - **Goal:** turn the two hard-coded engines into a registry so StarDist/

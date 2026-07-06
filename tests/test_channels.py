@@ -3,6 +3,9 @@
 No torch/napari/GPU — runs in the lightweight CI job. Multi-page and OME-TIFF
 reading is exercised through tifffile round-trips on synthetic stacks.
 """
+import sys
+import types
+
 import numpy as np
 import pytest
 
@@ -338,3 +341,215 @@ def test_has_z_stack_false_for_unreadable_file(tmp_path):
     path = tmp_path / "mystery.tif"
     path.write_bytes(b"not a real tiff")
     assert ch.has_z_stack(path) is False
+
+
+# ── ND2/CZI/LIF volume (z-stack) reading via fake modules ───────────────────
+# No real nd2/czifile/readlif packages available here, so every test below
+# injects a minimal fake module into sys.modules, mirroring test_formats.py's
+# existing _install_fake_nd2 pattern.
+
+class _FakeND2FileVol:
+    def __init__(self, arr, sizes):
+        self._arr, self.sizes = arr, sizes
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def asarray(self):
+        return self._arr
+
+
+def _install_fake_nd2_vol(monkeypatch, arr, sizes):
+    mod = types.ModuleType("nd2")
+    mod.ND2File = lambda path: _FakeND2FileVol(arr, sizes)
+    monkeypatch.setitem(sys.modules, "nd2", mod)
+
+
+def test_read_volume_stack_nd2_keeps_z_axis(tmp_path, monkeypatch):
+    arr = np.zeros((4, 2, 16, 24), dtype=np.uint16)   # Z,C,Y,X
+    for z in range(4):
+        arr[z, 1] = z + 1
+    _install_fake_nd2_vol(monkeypatch, arr, {"Z": 4, "C": 2, "Y": 16, "X": 24})
+    p = tmp_path / "stack.nd2"
+    p.write_bytes(b"")
+    vol = ch.read_volume_stack(p)
+    assert vol.n_planes == 4
+    assert vol.n_channels == 2
+    for z in range(4):
+        assert vol.plane(z).channel(1).max() == z + 1
+
+
+def test_has_z_stack_true_for_nd2_zstack(tmp_path, monkeypatch):
+    _install_fake_nd2_vol(monkeypatch, np.zeros((4, 2, 16, 24), dtype=np.uint16),
+                          {"Z": 4, "C": 2, "Y": 16, "X": 24})
+    p = tmp_path / "stack.nd2"
+    p.write_bytes(b"")
+    assert ch.has_z_stack(p) is True
+
+
+def test_has_z_stack_false_for_nd2_single_plane(tmp_path, monkeypatch):
+    _install_fake_nd2_vol(monkeypatch, np.zeros((3, 16, 24), dtype=np.uint16),
+                          {"C": 3, "Y": 16, "X": 24})
+    p = tmp_path / "flat.nd2"
+    p.write_bytes(b"")
+    assert ch.has_z_stack(p) is False
+
+
+class _FakeCziFile:
+    def __init__(self, arr, axes):
+        self._arr, self.axes, self.shape = arr, axes, arr.shape
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def asarray(self):
+        return self._arr
+
+    def metadata(self):
+        return "<Metadata/>"
+
+
+def _install_fake_czi(monkeypatch, arr, axes):
+    mod = types.ModuleType("czifile")
+    mod.CziFile = lambda path: _FakeCziFile(arr, axes)
+    monkeypatch.setitem(sys.modules, "czifile", mod)
+
+
+def test_read_volume_stack_czi_keeps_z_axis(tmp_path, monkeypatch):
+    arr = np.zeros((3, 2, 20, 30), dtype=np.uint16)   # Z,C,Y,X
+    for z in range(3):
+        arr[z, 0] = z + 5
+    _install_fake_czi(monkeypatch, arr, "ZCYX")
+    p = tmp_path / "stack.czi"
+    p.write_bytes(b"")
+    vol = ch.read_volume_stack(p)
+    assert vol.n_planes == 3
+    assert vol.n_channels == 2
+    for z in range(3):
+        assert vol.plane(z).channel(0).max() == z + 5
+
+
+def test_read_volume_stack_czi_drops_singleton_acquisition_axes(tmp_path, monkeypatch):
+    # czifile pads with acquisition axes (S here); a length-1 S must be
+    # dropped while the genuine multi-plane Z survives, in both the channel
+    # and volume paths.
+    arr = np.zeros((1, 3, 2, 20, 30), dtype=np.uint16)  # S,Z,C,Y,X
+    _install_fake_czi(monkeypatch, arr, "SZCYX")
+    p = tmp_path / "padded.czi"
+    p.write_bytes(b"")
+    vol = ch.read_volume_stack(p)
+    assert vol.n_planes == 3
+    assert vol.n_channels == 2
+
+
+def test_has_z_stack_true_for_czi_zstack(tmp_path, monkeypatch):
+    _install_fake_czi(monkeypatch, np.zeros((3, 2, 20, 30), dtype=np.uint16), "ZCYX")
+    p = tmp_path / "stack.czi"
+    p.write_bytes(b"")
+    assert ch.has_z_stack(p) is True
+
+
+def test_has_z_stack_false_for_czi_single_plane(tmp_path, monkeypatch):
+    _install_fake_czi(monkeypatch, np.zeros((2, 20, 30), dtype=np.uint16), "CYX")
+    p = tmp_path / "flat.czi"
+    p.write_bytes(b"")
+    assert ch.has_z_stack(p) is False
+
+
+class _FakeLifImage:
+    """``channel_frames`` back get_iter_c() (channel-only fallback path);
+    ``z_frames[(z, c)]`` back get_frame(z=, c=) (the z-stack path)."""
+
+    def __init__(self, channel_frames, z_frames=None, dims_z=1, n_channels=None, scale_x=2.0):
+        self._channel_frames = channel_frames
+        self._z_frames = z_frames or {}
+        self.dims = types.SimpleNamespace(z=dims_z)
+        # n_channels defaults from channel_frames but is independently
+        # settable, since a z-stack-only fake may not populate channel_frames
+        # (get_iter_c() is only ever called on the no-z fallback path).
+        self.channels = n_channels if n_channels is not None else len(channel_frames)
+        self.scale = (scale_x, scale_x, 1.0)
+
+    def get_iter_c(self):
+        return iter(self._channel_frames)
+
+    def get_frame(self, z=0, c=0):
+        return self._z_frames[(z, c)]
+
+
+def _install_fake_readlif(monkeypatch, img):
+    # __import__("readlif.reader") returns the *top* package ("readlif"), so
+    # LifFile must live there, not on the "readlif.reader" submodule object —
+    # matches napari_app.channels._require's exact import mechanism.
+    parent = types.ModuleType("readlif")
+    parent.LifFile = lambda path: types.SimpleNamespace(get_image=lambda idx: img)
+    submod = types.ModuleType("readlif.reader")
+    monkeypatch.setitem(sys.modules, "readlif", parent)
+    monkeypatch.setitem(sys.modules, "readlif.reader", submod)
+
+
+def test_read_volume_stack_lif_keeps_z_axis(tmp_path, monkeypatch):
+    z_frames = {(z, c): np.full((16, 20), z * 10 + c, dtype=np.uint8)
+               for z in range(3) for c in range(2)}
+    img = _FakeLifImage(channel_frames=[], z_frames=z_frames, dims_z=3, n_channels=2)
+    _install_fake_readlif(monkeypatch, img)
+    p = tmp_path / "stack.lif"
+    p.write_bytes(b"")
+    vol = ch.read_volume_stack(p)
+    assert vol.n_planes == 3
+    assert vol.n_channels == 2
+    for z in range(3):
+        for c in range(2):
+            assert vol.plane(z).channel(c).max() == z * 10 + c
+
+
+def test_read_volume_stack_lif_falls_back_when_no_z(tmp_path, monkeypatch):
+    channel_frames = [np.full((16, 20), c, dtype=np.uint8) for c in range(3)]
+    img = _FakeLifImage(channel_frames=channel_frames, dims_z=1)
+    _install_fake_readlif(monkeypatch, img)
+    p = tmp_path / "flat.lif"
+    p.write_bytes(b"")
+    vol = ch.read_volume_stack(p)
+    assert vol.n_planes == 1
+    assert vol.n_channels == 3
+
+
+def test_read_volume_stack_lif_falls_back_when_dims_unavailable(tmp_path, monkeypatch):
+    """A readlif version whose LifImage doesn't expose the attributes this
+    module guesses at (dims.z / channels / get_frame) must degrade to the
+    channel-only path instead of raising."""
+    channel_frames = [np.full((16, 20), c, dtype=np.uint8) for c in range(2)]
+
+    class _MinimalLifImage:
+        def get_iter_c(self):
+            return iter(channel_frames)
+        # deliberately no .dims / .channels / .get_frame / .scale
+
+    _install_fake_readlif(monkeypatch, _MinimalLifImage())
+    p = tmp_path / "minimal.lif"
+    p.write_bytes(b"")
+    vol = ch.read_volume_stack(p)
+    assert vol.n_planes == 1
+    assert vol.n_channels == 2
+
+
+def test_has_z_stack_true_for_lif_zstack(tmp_path, monkeypatch):
+    img = _FakeLifImage(channel_frames=[np.zeros((8, 8), dtype=np.uint8)], dims_z=5)
+    _install_fake_readlif(monkeypatch, img)
+    p = tmp_path / "stack.lif"
+    p.write_bytes(b"")
+    assert ch.has_z_stack(p) is True
+
+
+def test_has_z_stack_false_for_lif_single_plane(tmp_path, monkeypatch):
+    img = _FakeLifImage(channel_frames=[np.zeros((8, 8), dtype=np.uint8)], dims_z=1)
+    _install_fake_readlif(monkeypatch, img)
+    p = tmp_path / "flat.lif"
+    p.write_bytes(b"")
+    assert ch.has_z_stack(p) is False

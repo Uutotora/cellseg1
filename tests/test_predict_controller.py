@@ -444,6 +444,99 @@ def test_predict_volume_reports_on_slice_progress(tmp_path, monkeypatch):
     assert calls == [(1, 3), (2, 3), (3, 3)]
 
 
+def test_predict_volume_composes_with_tiling_for_large_planes(tmp_path, monkeypatch):
+    """A plane large enough that should_tile recommends it (and tiled=True)
+    must go through _predict_tiled instead of a plain resize+predict — the
+    z-stack path composes with the existing tiling feature instead of
+    ignoring config["tiled"]."""
+    import napari_app.engines as engines
+    from napari_app.core import predict_controller as pc
+    monkeypatch.setattr(engines, "predict_cellpose", lambda t, **k: _cc(t))
+
+    calls = []
+    real_tiled = pc._predict_tiled
+
+    def spy_tiled(config, img, on_tile=None):
+        calls.append(img.shape)
+        return real_tiled(config, img, on_tile=on_tile)
+
+    monkeypatch.setattr(pc, "_predict_tiled", spy_tiled)
+
+    path = _write_zstack(tmp_path)   # 3 planes, 40x40 each
+    config = {"engine": "cellpose", "image_path": str(path), "resize_size": [40, 40],
+              "clahe": False, "channels": None, "tiled": True, "tile_size": 20,
+              "tile_overlap": 8, "stitch_iou": 0.25, "min_mask_area": 0}
+
+    img_vol, mask_vol = pc._predict_volume(config)
+    assert len(calls) == 3                     # every plane went through the tiled path
+    assert all(shape == (40, 40, 3) for shape in calls)
+    assert img_vol.shape == (3, 40, 40, 3)
+    assert mask_vol.shape == (3, 40, 40)
+    assert int(mask_vol.max()) >= 1
+
+
+def test_predict_volume_untiled_when_tiled_flag_off_even_if_large(tmp_path, monkeypatch):
+    import napari_app.engines as engines
+    from napari_app.core import predict_controller as pc
+    monkeypatch.setattr(engines, "predict_cellpose", lambda t, **k: _cc(t))
+
+    calls = []
+    monkeypatch.setattr(pc, "_predict_tiled", lambda *a, **k: calls.append(1))
+
+    path = _write_zstack(tmp_path)
+    config = {"engine": "cellpose", "image_path": str(path), "resize_size": [40, 40],
+              "clahe": False, "channels": None, "tiled": False, "tile_size": 20}
+    pc._predict_volume(config)
+    assert calls == []                         # tiled=False -> never routed to _predict_tiled
+
+
+def test_predict_volume_dispatches_to_sam2_propagate_mode(tmp_path, monkeypatch):
+    """engine=sam2 + sam2_tracking_mode=propagate must call
+    predict_sam2_propagate directly and skip the generic per-plane-predict +
+    stitch_slices path entirely (no per-plane spec.predict, no stitching)."""
+    import napari_app.engines_sam2 as es2
+    from napari_app.core import predict_controller as pc
+
+    calls = []
+
+    def fake_propagate(frames, config, on_slice=None):
+        calls.append((len(frames), config.get("sam2_tracking_mode")))
+        if on_slice:
+            for i in range(len(frames)):
+                on_slice(i + 1, len(frames))
+        return np.ones((len(frames), 40, 40), dtype=np.int32)
+
+    monkeypatch.setattr(es2, "predict_sam2_propagate", fake_propagate)
+
+    path = _write_zstack(tmp_path)
+    config = {"engine": "sam2", "image_path": str(path), "resize_size": [40, 40],
+              "clahe": False, "channels": None, "sam2_tracking_mode": "propagate"}
+
+    slice_calls = []
+    img_vol, mask_vol = pc._predict_volume(config, on_slice=lambda d, n: slice_calls.append((d, n)))
+
+    assert calls == [(3, "propagate")]
+    assert img_vol.shape == (3, 40, 40, 3)
+    assert mask_vol.shape == (3, 40, 40)
+    assert slice_calls == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_predict_volume_sam2_automatic_mode_never_calls_propagate(tmp_path, monkeypatch):
+    import napari_app.engines_sam2 as es2
+    from napari_app.core import predict_controller as pc
+
+    calls = []
+    monkeypatch.setattr(es2, "predict_sam2_propagate", lambda *a, **k: calls.append(1))
+    monkeypatch.setattr(es2, "predict_sam2", lambda image, config: _cc(image))
+
+    path = _write_zstack(tmp_path)
+    config = {"engine": "sam2", "image_path": str(path), "resize_size": [40, 40],
+              "clahe": False, "channels": None, "sam2_tracking_mode": "automatic",
+              "stitch_iou": 0.25, "min_mask_area": 0}
+    pc._predict_volume(config)
+    assert calls == []                          # "automatic" -> generic per-plane path, not propagate
+
+
 def test_run_volume_prediction_async_success_sequences_callbacks(tmp_path, monkeypatch):
     import napari_app.engines as engines
     monkeypatch.setattr(engines, "predict_cellpose", lambda t, **k: _cc(t))

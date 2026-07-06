@@ -123,3 +123,144 @@ def test_summary_line_and_csv_roundtrip():
 def test_summary_line_empty():
     res = compute_measurements(np.zeros((16, 16), dtype=np.int32))
     assert summary_line(res) == "No cells detected"
+
+
+# ── 3-D (z-stack) measurements ───────────────────────────────────────────────
+
+def _cuboid(canvas, label, z0, r0, c0, dz, side, img=None, value=None):
+    canvas[z0:z0 + dz, r0:r0 + side, c0:c0 + side] = label
+    if img is not None and value is not None:
+        img[z0:z0 + dz, r0:r0 + side, c0:c0 + side] = value
+
+
+def test_empty_3d_mask_returns_no_cells():
+    mask = np.zeros((4, 32, 32), dtype=np.int32)
+    res = compute_measurements(mask)
+    assert res["n_cells"] == 0
+    assert res["rows"] == []
+    assert res["summary"] == {}
+    assert any(k == "volume" for k, _l, _u in res["columns"])
+
+
+def test_single_cuboid_volume_and_centroid_exact():
+    mask = np.zeros((10, 20, 20), dtype=np.int32)
+    _cuboid(mask, 1, z0=2, r0=5, c0=5, dz=6, side=10)   # z 2..7, r/c 5..14
+    res = compute_measurements(mask)
+    assert res["n_cells"] == 1
+    cols = [k for k, _l, _u in res["columns"]]
+    row = res["rows"][0]
+    assert row[cols.index("volume")] == pytest.approx(600.0)   # 6*10*10 voxels
+    assert row[cols.index("centroid_z")] == pytest.approx(4.5)  # (2+7)/2
+    assert row[cols.index("centroid_y")] == pytest.approx(9.5)  # (5+14)/2
+    assert row[cols.index("centroid_x")] == pytest.approx(9.5)
+
+
+def test_3d_equivalent_diameter_matches_sphere_formula():
+    mask = np.zeros((10, 20, 20), dtype=np.int32)
+    _cuboid(mask, 1, z0=2, r0=5, c0=5, dz=6, side=10)
+    res = compute_measurements(mask)
+    cols = [k for k, _l, _u in res["columns"]]
+    row = res["rows"][0]
+    volume = row[cols.index("volume")]
+    expected = (6.0 * volume / math.pi) ** (1.0 / 3.0)
+    assert row[cols.index("diameter")] == pytest.approx(expected, rel=1e-3)
+
+
+def test_3d_pixel_size_scales_volume_and_length():
+    mask = np.zeros((10, 20, 20), dtype=np.int32)
+    _cuboid(mask, 1, z0=0, r0=0, c0=0, dz=4, side=10)   # 400 voxels
+    res_px = compute_measurements(mask)
+    res_um = compute_measurements(mask, pixel_size_um=0.5)
+    cols = [k for k, _l, _u in res_um["columns"]]
+    vol_px = res_px["rows"][0][cols.index("volume")]
+    vol_um = res_um["rows"][0][cols.index("volume")]
+    assert vol_um == pytest.approx(vol_px * 0.5 ** 3, rel=1e-6)
+    vu = next(u for k, _l, u in res_um["columns"] if k == "volume")
+    lu = next(u for k, _l, u in res_um["columns"] if k == "diameter")
+    assert vu == "µm³"
+    assert lu == "µm"
+    vu_px = next(u for k, _l, u in res_px["columns"] if k == "volume")
+    assert vu_px == "px³"
+
+
+def test_3d_schema_excludes_2d_only_columns():
+    mask = np.zeros((6, 16, 16), dtype=np.int32)
+    _cuboid(mask, 1, 0, 0, 0, 4, 8)
+    res = compute_measurements(mask)
+    cols = {k for k, _l, _u in res["columns"]}
+    for absent in ("area", "perimeter", "circularity", "eccentricity", "orientation"):
+        assert absent not in cols
+    for present in ("volume", "diameter", "major_axis", "minor_axis",
+                   "solidity", "extent", "centroid_x", "centroid_y", "centroid_z"):
+        assert present in cols
+
+
+def test_3d_two_separate_cuboids_each_measured():
+    mask = np.zeros((10, 30, 30), dtype=np.int32)
+    _cuboid(mask, 1, 0, 0, 0, 4, 8)
+    _cuboid(mask, 2, 5, 15, 15, 4, 8)
+    res = compute_measurements(mask)
+    assert res["n_cells"] == 2
+    assert [r[0] for r in res["rows"]] == [1, 2]        # sorted by cell_id
+
+
+def test_3d_solidity_and_extent_near_one_for_a_filled_cuboid():
+    mask = np.zeros((10, 20, 20), dtype=np.int32)
+    _cuboid(mask, 1, 2, 5, 5, 6, 10)
+    res = compute_measurements(mask)
+    cols = [k for k, _l, _u in res["columns"]]
+    row = res["rows"][0]
+    assert row[cols.index("solidity")] == pytest.approx(1.0, abs=1e-6)
+    assert row[cols.index("extent")] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_3d_intensity_columns_with_grayscale_volume():
+    mask = np.zeros((6, 16, 16), dtype=np.int32)
+    img = np.zeros((6, 16, 16), dtype=np.float64)
+    _cuboid(mask, 1, 1, 2, 2, 3, 6, img=img, value=50.0)
+    res = compute_measurements(mask, intensity_image=img)
+    cols = [k for k, _l, _u in res["columns"]]
+    row = res["rows"][0]
+    assert row[cols.index("mean_intensity")] == pytest.approx(50.0)
+    assert row[cols.index("max_intensity")] == pytest.approx(50.0)
+    assert row[cols.index("min_intensity")] == pytest.approx(50.0)
+
+
+def test_3d_intensity_columns_with_color_volume():
+    mask = np.zeros((6, 16, 16), dtype=np.int32)
+    img = np.zeros((6, 16, 16, 3), dtype=np.float64)
+    _cuboid(mask, 1, 1, 2, 2, 3, 6, img=img, value=90.0)
+    res = compute_measurements(mask, intensity_image=img)
+    cols = [k for k, _l, _u in res["columns"]]
+    assert "mean_intensity" in cols
+    row = res["rows"][0]
+    assert row[cols.index("mean_intensity")] > 0.0      # luminosity-weighted, non-zero
+
+
+def test_3d_intensity_misaligned_shape_ignored():
+    mask = np.zeros((6, 16, 16), dtype=np.int32)
+    _cuboid(mask, 1, 1, 2, 2, 3, 6)
+    bad_img = np.zeros((6, 8, 8), dtype=np.float64)     # wrong H/W
+    res = compute_measurements(mask, intensity_image=bad_img)
+    cols = [k for k, _l, _u in res["columns"]]
+    assert "mean_intensity" not in cols                 # ignored, no crash
+    assert res["n_cells"] == 1
+
+
+def test_summary_line_3d_result():
+    mask = np.zeros((6, 16, 16), dtype=np.int32)
+    _cuboid(mask, 1, 1, 2, 2, 3, 6)
+    res = compute_measurements(mask)
+    line = summary_line(res)
+    assert "volume" in line.lower()
+    assert "circularity" not in line.lower()
+
+
+def test_rows_as_csv_3d_result():
+    mask = np.zeros((6, 16, 16), dtype=np.int32)
+    _cuboid(mask, 1, 1, 2, 2, 3, 6)
+    res = compute_measurements(mask)
+    csv = rows_as_csv(res)
+    lines = csv.strip().splitlines()
+    assert len(lines) == 1 + res["n_cells"]
+    assert "Volume" in lines[0]

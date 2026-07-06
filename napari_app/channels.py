@@ -275,26 +275,34 @@ def _read_tiff_stack(path: Path) -> ChannelStack:
 def read_volume_stack(path: Union[str, Path]) -> VolumeStack:
     """Read a z-stack or time-lapse file, keeping every plane.
 
-    Only TIFF/OME-TIFF is supported for now — the common z-stack/time-lapse
-    container microscopes and napari itself use. ND2/CZI/LIF volumes are a
-    future extension (no backlog item currently needs them); such a file, or
-    any TIFF with no Z/T axis, degrades to a 1-plane :class:`VolumeStack` via
+    TIFF/OME-TIFF, ND2, and CZI all keep their real Z/T axis structure (via
+    :func:`stack_from_axes_array_zstack`, shared with the channel-only path
+    so per-plane channel handling is identical either way). LIF does too when
+    its per-plane dimensions can be read (:func:`_read_lif_volume`); any
+    format with no Z/T axis at all, or one this function doesn't specifically
+    handle, degrades to a 1-plane :class:`VolumeStack` via
     :func:`read_channel_stack` so the caller never needs a separate branch.
     """
     path = Path(path)
-    if path.suffix.lower() not in (".tif", ".tiff"):
-        stack = read_channel_stack(path)
-        return VolumeStack(data=stack.data[None], names=stack.names,
-                           pixel_size_um=stack.pixel_size_um)
-
-    import tifffile
-    with tifffile.TiffFile(path) as tf:
-        series = tf.series[0]
-        arr = series.asarray()
-        axes = series.axes or ""
-        names = _ome_channel_names(tf)
-        pixel_size = _tiff_pixel_size_um(tf)
-    return stack_from_axes_array_zstack(arr, axes, names=names, pixel_size_um=pixel_size)
+    suffix = path.suffix.lower()
+    if suffix in (".tif", ".tiff"):
+        import tifffile
+        with tifffile.TiffFile(path) as tf:
+            series = tf.series[0]
+            arr = series.asarray()
+            axes = series.axes or ""
+            names = _ome_channel_names(tf)
+            pixel_size = _tiff_pixel_size_um(tf)
+        return stack_from_axes_array_zstack(arr, axes, names=names, pixel_size_um=pixel_size)
+    if suffix == ".nd2":
+        return _read_nd2_volume(path)
+    if suffix == ".czi":
+        return _read_czi_volume(path)
+    if suffix == ".lif":
+        return _read_lif_volume(path)
+    stack = read_channel_stack(path)
+    return VolumeStack(data=stack.data[None], names=stack.names,
+                       pixel_size_um=stack.pixel_size_um)
 
 
 def _require(module: str, fmt: str, package: str | None = None):
@@ -312,19 +320,33 @@ def _require(module: str, fmt: str, package: str | None = None):
             f"Install it with:  pip install {pkg}") from exc
 
 
-def _read_nd2_stack(path: Path) -> ChannelStack:
-    """Read a Nikon ``.nd2`` file via the optional ``nd2`` package."""
+def _nd2_raw(path: Path):
+    """Open a ``.nd2`` file and return ``(arr, axes, names, pixel_size_um)``,
+    shared by the channel-only and volume-keeping read paths."""
     nd2 = _require("nd2", ".nd2")
     with nd2.ND2File(str(path)) as f:
         arr = np.asarray(f.asarray())
         axes = "".join(getattr(f, "sizes", {}).keys())
         names = _nd2_channel_names(f)
         pixel_size = _nd2_pixel_size_um(f)
+    return arr, axes, names, pixel_size
+
+
+def _read_nd2_stack(path: Path) -> ChannelStack:
+    """Read a Nikon ``.nd2`` file via the optional ``nd2`` package."""
+    arr, axes, names, pixel_size = _nd2_raw(path)
     return stack_from_axes_array(arr, axes, names=names, pixel_size_um=pixel_size)
 
 
-def _read_czi_stack(path: Path) -> ChannelStack:
-    """Read a Zeiss ``.czi`` file via the optional ``czifile`` package."""
+def _read_nd2_volume(path: Path) -> VolumeStack:
+    """Read a Nikon ``.nd2`` z-stack/time-lapse, keeping every plane."""
+    arr, axes, names, pixel_size = _nd2_raw(path)
+    return stack_from_axes_array_zstack(arr, axes, names=names, pixel_size_um=pixel_size)
+
+
+def _czi_raw(path: Path):
+    """Open a ``.czi`` file and return ``(arr, axes, pixel_size_um)``, shared
+    by the channel-only and volume-keeping read paths."""
     czifile = _require("czifile", ".czi")
     with czifile.CziFile(str(path)) as f:
         arr = np.asarray(f.asarray())
@@ -332,11 +354,25 @@ def _read_czi_stack(path: Path) -> ChannelStack:
         pixel_size = _czi_pixel_size_um(f)
     # czifile pads with singleton acquisition axes (B/V/M/0/...); drop every
     # length-1 axis that isn't a real Y/X/C plane so the axis string aligns.
+    # A genuine multi-plane Z/T axis (size > 1) is never dropped here, so the
+    # volume path below still sees it.
     drop = tuple(i for i, s in enumerate(arr.shape)
                  if s == 1 and (i >= len(axes) or axes[i] not in "YXC"))
     arr = np.squeeze(arr, axis=drop)
     axes = "".join(axes[i] for i in range(len(axes)) if i not in drop)
+    return arr, axes, pixel_size
+
+
+def _read_czi_stack(path: Path) -> ChannelStack:
+    """Read a Zeiss ``.czi`` file via the optional ``czifile`` package."""
+    arr, axes, pixel_size = _czi_raw(path)
     return stack_from_axes_array(arr, axes, pixel_size_um=pixel_size)
+
+
+def _read_czi_volume(path: Path) -> VolumeStack:
+    """Read a Zeiss ``.czi`` z-stack/time-lapse, keeping every plane."""
+    arr, axes, pixel_size = _czi_raw(path)
+    return stack_from_axes_array_zstack(arr, axes, pixel_size_um=pixel_size)
 
 
 def _read_lif_stack(path: Path) -> ChannelStack:
@@ -348,6 +384,41 @@ def _read_lif_stack(path: Path) -> ChannelStack:
     arr = np.stack(frames, axis=0)                      # C,H,W
     pixel_size = _lif_pixel_size_um(img)
     return stack_from_axes_array(arr, "CYX", pixel_size_um=pixel_size)
+
+
+def _read_lif_volume(path: Path) -> VolumeStack:
+    """Read a Leica ``.lif`` z-stack (first image), keeping every Z plane.
+
+    readlif's per-plane API (``LifImage.dims.z`` / ``.get_frame(z=, c=)``)
+    isn't exercised against a real ``.lif`` file anywhere in this codebase's
+    test data, so this can't be verified against the real package here —
+    if the z-plane count can't be read, or is 1 (no real z-stack), this
+    degrades to exactly :func:`_read_lif_stack`'s existing channel-only
+    behaviour wrapped as a 1-plane volume, rather than risking a wrong
+    attribute-name guess crashing the read entirely.
+    """
+    readlif = _require("readlif.reader", ".lif", package="readlif")
+    lif = readlif.LifFile(str(path))
+    img = lif.get_image(0)
+    pixel_size = _lif_pixel_size_um(img)
+
+    try:
+        nz = int(img.dims.z)
+        nc = int(img.channels)
+        if nz <= 1:
+            raise ValueError("no multi-plane z-stack in this .lif image")
+        planes = []
+        for z in range(nz):
+            frames = [np.asarray(img.get_frame(z=z, c=c)) for c in range(nc)]
+            planes.append(np.stack(frames, axis=0))            # C,H,W at this z
+        arr = np.stack(planes, axis=0)                          # Z,C,H,W
+        return stack_from_axes_array_zstack(arr, "ZCYX", pixel_size_um=pixel_size)
+    except Exception:
+        frames = [np.asarray(p) for p in img.get_iter_c()]
+        arr = np.stack(frames, axis=0)
+        stack = stack_from_axes_array(arr, "CYX", pixel_size_um=pixel_size)
+        return VolumeStack(data=stack.data[None], names=stack.names,
+                           pixel_size_um=pixel_size)
 
 
 def _ome_channel_names(tf) -> list[str] | None:
@@ -530,29 +601,54 @@ def probe_channels(path: Union[str, Path]) -> tuple[int, list[str]]:
     return stack.n_channels, stack.names
 
 
+def _axes_has_multiplane(axes: str, shape: tuple) -> bool:
+    """Whether an axes string + shape pair has a genuine (length > 1) Z or T
+    axis. Shared by every format's has_z_stack branch below."""
+    if not axes or len(axes) != len(shape):
+        return False
+    return any(ax in axes and shape[axes.index(ax)] > 1 for ax in ("Z", "T"))
+
+
 def has_z_stack(path: Union[str, Path]) -> bool:
     """Cheaply report whether a file has a genuine multi-plane Z or T axis.
 
-    Reads only the series shape/axes (no pixel data), mirroring
-    :func:`probe_channels`'s "don't load the full array" shape, so the UI can
-    decide whether a "segment as z-stack" toggle is even worth offering.
-    ``False`` for anything that isn't TIFF/OME-TIFF, that has no axis
-    metadata, or whose Z/T axis has length 1 (a single-plane file with
-    incidental Z/T metadata shouldn't offer a no-op toggle).
+    TIFF/OME-TIFF, ND2, and CZI read only shape/axis metadata (no pixel
+    data), mirroring :func:`probe_channels`'s "don't load the full array"
+    shape, so the UI can decide whether a "segment as z-stack" toggle is even
+    worth offering. LIF reads its lightweight per-image dimension descriptor
+    (see :func:`_read_lif_volume` for why this can't be verified against a
+    real file here). ``False`` for any other format, any file with no axis
+    metadata, a Z/T axis of length 1 (a single-plane file with incidental Z/T
+    metadata shouldn't offer a no-op toggle), a missing optional reader
+    package, or any read/parse failure — this must never raise, only ever
+    suggest the toggle when it's actually useful.
     """
     path = Path(path)
-    if path.suffix.lower() not in (".tif", ".tiff"):
-        return False
+    suffix = path.suffix.lower()
     try:
-        import tifffile
-        with tifffile.TiffFile(path) as tf:
-            series = tf.series[0]
-            axes, shape = series.axes or "", series.shape
-        if not axes or len(axes) != len(shape):
-            return False
-        for ax in ("Z", "T"):
-            if ax in axes and shape[axes.index(ax)] > 1:
-                return True
+        if suffix in (".tif", ".tiff"):
+            import tifffile
+            with tifffile.TiffFile(path) as tf:
+                series = tf.series[0]
+                axes, shape = series.axes or "", series.shape
+            return _axes_has_multiplane(axes, shape)
+        if suffix == ".nd2":
+            nd2 = _require("nd2", ".nd2")
+            with nd2.ND2File(str(path)) as f:
+                sizes = dict(getattr(f, "sizes", {}))
+            axes = "".join(sizes.keys())
+            shape = tuple(sizes.values())
+            return _axes_has_multiplane(axes, shape)
+        if suffix == ".czi":
+            czifile = _require("czifile", ".czi")
+            with czifile.CziFile(str(path)) as f:
+                axes, shape = f.axes or "", f.shape
+            return _axes_has_multiplane(axes, shape)
+        if suffix == ".lif":
+            readlif = _require("readlif.reader", ".lif", package="readlif")
+            lif = readlif.LifFile(str(path))
+            img = lif.get_image(0)
+            return int(img.dims.z) > 1
         return False
     except Exception:
         return False

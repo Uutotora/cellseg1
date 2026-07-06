@@ -663,6 +663,18 @@ class PredictWidget(QWidget):
             "configs/sam2.1/sam2.1_hiera_l.yaml. Leave blank to use the "
             "default for the model size above.")
         self._sam2_card.addWidget(self.sam2_config_text)
+        self.sam2_tracking_mode = Combo()
+        self.sam2_tracking_mode.addItem("Independent + stitch (default)", "automatic")
+        self.sam2_tracking_mode.addItem("Propagate — video predictor (experimental)", "propagate")
+        self.sam2_tracking_mode.setToolTip(
+            "Only applies to \"Segment as z-stack\" above.\n"
+            "Independent + stitch: segments each plane on its own, links "
+            "instances by overlap between neighbouring planes.\n"
+            "Propagate: seeds objects on the first plane, then tracks each "
+            "one across every other plane with SAM2's memory-bank video "
+            "model — stronger consistency, but experimental and unverified "
+            "in this build.")
+        self._sam2_card.addLayout(_param_row("Tracking mode", self.sam2_tracking_mode))
         self._sam2_card.setVisible(False)
         L.addWidget(self._sam2_card)
 
@@ -1082,6 +1094,7 @@ class PredictWidget(QWidget):
             "sam2_model_type": self.sam2_model_type.currentText(),
             "sam2_checkpoint_text": self.sam2_checkpoint.text(),
             "sam2_config_text": self.sam2_config_text.text(),
+            "sam2_tracking_mode": self.sam2_tracking_mode.currentData() or "automatic",
         }
 
     def _build_config(self):
@@ -1239,11 +1252,18 @@ class PredictWidget(QWidget):
 
         A scoped-down sibling of _show_results for volumes: napari's Image/
         Labels layers are n-D natively, so add_image/add_labels need no
-        change — but per-cell measurements (_recompute_measurements) assume a
-        2-D mask (skimage regionprops properties like perimeter/circularity
-        are 2-D-only), so this deliberately does not call it; the results
-        card is hidden instead of showing stale numbers from a previous 2-D
-        run. Wiring real 3-D measurements is a follow-up, not attempted here.
+        change. Measurements *are* computed (analysis.compute_measurements
+        dispatches on mask.ndim to a 3-D-specific schema — volume instead of
+        area, no perimeter/circularity/eccentricity/orientation, which have
+        no 3-D equivalent), populating _last_measure so "Open measurements"
+        and "Export measurements" work exactly like the 2-D path. The
+        compact hero-chip row (_chip_diam/_chip_area/_chip_cov) stays hidden
+        for this result, though — those chips' captions ("Area", a 2-D word)
+        are hardcoded Qt labels, not schema-driven, so relabelling them for a
+        volume result is a UI change of its own rather than a size a 3-D
+        mask should silently trigger; the full, correctly-labelled table is
+        one click away in the Measurements window instead. GT overlay is
+        still 2-D-only.
         """
         name = Path(self.image_path.text()).stem
         self._last_mask     = None
@@ -1259,11 +1279,23 @@ class PredictWidget(QWidget):
         if n_cells > 0:
             lyr = self.viewer.add_labels(mask_vol.astype(np.int32), name=f"{name}_masks", opacity=0.7)
             lyr.contour = 1
-        self._results_card.setVisible(False)
-        self._append_log(
-            f"[INFO] 3-D result: {n_cells} cells across {mask_vol.shape[0]} planes. "
-            "Per-cell measurements/GT overlay are 2-D-only for now — switch to a "
-            "single plane to measure.")
+
+        from napari_app import analysis
+        try:
+            result = (analysis.compute_measurements(mask_vol, intensity_image=img_vol,
+                                                     pixel_size_um=self.pixel_size.value())
+                      if n_cells > 0 else None)
+        except Exception as e:
+            self._append_log(f"[WARN] 3-D measurement failed: {e}")
+            result = None
+        self._last_measure = result
+        self._results_card.setVisible(False)   # hero chips are 2-D-worded; see docstring
+
+        if result:
+            self._append_log(f"[INFO] 3-D result: {analysis.summary_line(result)}  "
+                             f"(open Measurements for the full table)")
+        else:
+            self._append_log(f"[INFO] 3-D result: {n_cells} cells across {mask_vol.shape[0]} planes.")
         if n_cells > 0:
             motion.count_up(self._cell_count_lbl, n_cells)
         self.viewer.reset_view()

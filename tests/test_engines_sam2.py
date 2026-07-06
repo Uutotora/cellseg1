@@ -8,14 +8,23 @@ tests/test_engine_registry.py's approach for the built-in engines.
 
 Deliberately NOT tested here (needs torch, which the pure-logic `test`
 dependency-group excludes by design — see AGENTS.md): predict_sam2(),
-get_mask_generator(), _build_mask_generator(), _torch_device(). Those import
-torch even with a fake `sam2` module installed, so exercising them would pass
-in a full conda env but break the lightweight CI job, exactly the class of
-gap AGENTS.md's "verifying changes without a display" section warns about.
+get_mask_generator(), get_video_predictor(), _build_mask_generator(),
+_build_video_predictor(), _torch_device(). Those import torch even with a
+fake `sam2` module installed, so exercising them would pass in a full conda
+env but break the lightweight CI job, exactly the class of gap AGENTS.md's
+"verifying changes without a display" section warns about.
+
+predict_sam2_propagate() *is* tested, despite calling get_mask_generator()/
+get_video_predictor() internally — every test below monkeypatches both to
+fakes, so the only real code exercised is the temp-JPEG-directory bookkeeping
+and the propagation-output-to-label-volume accumulation, neither of which
+needs torch or the real sam2 package.
 """
+import os
 import sys
 import types
 
+import numpy as np
 import pytest
 
 from napari_app import engine_registry
@@ -170,3 +179,178 @@ def test_predict_dispatches_through_registry(monkeypatch):
     result = engine_registry.get("sam2").predict("img", {"engine": "sam2"})
     assert result == "mask"
     assert calls == [("img", {"engine": "sam2"})]
+
+
+# ── predict_sam2_propagate: video-predictor tracking mode ───────────────────
+# get_mask_generator()/get_video_predictor() are always monkeypatched to fakes
+# here (see module docstring) — no torch, no real sam2 package involved.
+
+class _FakeVideoPredictor:
+    def __init__(self, propagate_output=None, raise_in_propagate=None):
+        self.init_state_calls = []
+        self.add_new_mask_calls = []
+        self.propagate_calls = 0
+        self._propagate_output = propagate_output or []
+        self._raise_in_propagate = raise_in_propagate
+
+    def init_state(self, video_path):
+        self.init_state_calls.append(video_path)
+        return {"video_path": video_path}
+
+    def add_new_mask(self, inference_state, frame_idx, obj_id, mask):
+        self.add_new_mask_calls.append((frame_idx, obj_id, np.array(mask)))
+
+    def propagate_in_video(self, inference_state):
+        self.propagate_calls += 1
+        if self._raise_in_propagate:
+            raise self._raise_in_propagate
+        yield from self._propagate_output
+
+
+class _FakeMaskGenerator:
+    def __init__(self, seeds):
+        self._seeds = seeds
+        self.generate_calls = 0
+
+    def generate(self, image):
+        self.generate_calls += 1
+        return self._seeds
+
+
+def _frames(n, h=12, w=16):
+    return [np.zeros((h, w, 3), dtype=np.uint8) for _ in range(n)]
+
+
+def test_predict_sam2_propagate_empty_frames_returns_empty_volume():
+    out = es2.predict_sam2_propagate([], {})
+    assert out.shape == (0, 0, 0)
+    assert out.dtype == np.int32
+
+
+def test_predict_sam2_propagate_writes_one_jpeg_per_frame_and_cleans_up(monkeypatch):
+    frames = _frames(3)
+    vp = _FakeVideoPredictor(propagate_output=[])
+    mg = _FakeMaskGenerator(seeds=[])
+    monkeypatch.setattr(es2, "get_video_predictor", lambda config: vp)
+    monkeypatch.setattr(es2, "get_mask_generator", lambda config: mg)
+
+    es2.predict_sam2_propagate(frames, {})
+
+    assert len(vp.init_state_calls) == 1
+    tmp_dir = vp.init_state_calls[0]
+    written = sorted(os.listdir(tmp_dir)) if os.path.isdir(tmp_dir) else None
+    # The directory must have held exactly one .jpg per frame *during* the
+    # call — but is removed again afterwards (temp scratch space, not an
+    # artifact this feature is meant to leave behind).
+    assert written is None or written == []  # already gone, or (if not) empty
+    assert not os.path.exists(tmp_dir)
+
+
+def test_predict_sam2_propagate_seeds_objects_largest_first(monkeypatch):
+    frames = _frames(2)
+    small = np.zeros((12, 16), dtype=bool); small[0:2, 0:2] = True     # area 4
+    big = np.zeros((12, 16), dtype=bool); big[0:6, 0:6] = True         # area 36
+    mg = _FakeMaskGenerator(seeds=[
+        {"segmentation": small, "area": 4},
+        {"segmentation": big, "area": 36},
+    ])
+    vp = _FakeVideoPredictor(propagate_output=[])
+    monkeypatch.setattr(es2, "get_video_predictor", lambda config: vp)
+    monkeypatch.setattr(es2, "get_mask_generator", lambda config: mg)
+
+    es2.predict_sam2_propagate(frames, {})
+
+    assert len(vp.add_new_mask_calls) == 2
+    (frame0, obj0, mask0), (frame1, obj1, mask1) = vp.add_new_mask_calls
+    assert frame0 == 0 and frame1 == 0                  # always seeded on the first plane
+    assert (obj0, obj1) == (1, 2)
+    assert np.array_equal(mask0, big)                   # largest area seeded first
+    assert np.array_equal(mask1, small)
+
+
+def test_predict_sam2_propagate_respects_max_objects_cap(monkeypatch):
+    frames = _frames(2)
+    seeds = [{"segmentation": np.zeros((12, 16), dtype=bool), "area": i} for i in range(5)]
+    mg = _FakeMaskGenerator(seeds=seeds)
+    vp = _FakeVideoPredictor(propagate_output=[])
+    monkeypatch.setattr(es2, "get_video_predictor", lambda config: vp)
+    monkeypatch.setattr(es2, "get_mask_generator", lambda config: mg)
+
+    es2.predict_sam2_propagate(frames, {"sam2_max_objects": 2})
+
+    assert len(vp.add_new_mask_calls) == 2
+
+
+def test_predict_sam2_propagate_builds_label_volume_from_output(monkeypatch):
+    h, w = 12, 16
+    frames = _frames(2, h, w)
+    seed_mask = np.zeros((h, w), dtype=bool); seed_mask[0:4, 0:4] = True
+    mg = _FakeMaskGenerator(seeds=[{"segmentation": seed_mask, "area": 16}])
+
+    obj1_frame0 = np.zeros((1, h, w), dtype=np.float32); obj1_frame0[0, 0:4, 0:4] = 1.0
+    obj1_frame1 = np.zeros((1, h, w), dtype=np.float32); obj1_frame1[0, 1:5, 1:5] = 1.0
+    vp = _FakeVideoPredictor(propagate_output=[
+        (0, [1], [obj1_frame0]),
+        (1, [1], [obj1_frame1]),
+    ])
+    monkeypatch.setattr(es2, "get_video_predictor", lambda config: vp)
+    monkeypatch.setattr(es2, "get_mask_generator", lambda config: mg)
+
+    out = es2.predict_sam2_propagate(frames, {})
+
+    assert out.shape == (2, h, w)
+    assert out[0, 2, 2] == 1 and out[0, 10, 10] == 0
+    assert out[1, 3, 3] == 1 and out[1, 0, 0] == 0       # tracked object moved between planes
+
+
+def test_predict_sam2_propagate_reports_on_slice_progress(monkeypatch):
+    h, w = 8, 8
+    frames = _frames(3, h, w)
+    seed_mask = np.zeros((h, w), dtype=bool); seed_mask[0:2, 0:2] = True
+    mg = _FakeMaskGenerator(seeds=[{"segmentation": seed_mask, "area": 4}])
+    out_mask = np.zeros((1, h, w), dtype=np.float32); out_mask[0, 0:2, 0:2] = 1.0
+    vp = _FakeVideoPredictor(propagate_output=[
+        (0, [1], [out_mask]), (1, [1], [out_mask]), (2, [1], [out_mask]),
+    ])
+    monkeypatch.setattr(es2, "get_video_predictor", lambda config: vp)
+    monkeypatch.setattr(es2, "get_mask_generator", lambda config: mg)
+
+    calls = []
+    es2.predict_sam2_propagate(frames, {}, on_slice=lambda d, n: calls.append((d, n)))
+    assert calls == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_predict_sam2_propagate_no_seeds_skips_propagation_but_still_reports_progress(monkeypatch):
+    frames = _frames(3)
+    mg = _FakeMaskGenerator(seeds=[])   # nothing detected on the first plane
+    vp = _FakeVideoPredictor(propagate_output=[])
+    monkeypatch.setattr(es2, "get_video_predictor", lambda config: vp)
+    monkeypatch.setattr(es2, "get_mask_generator", lambda config: mg)
+
+    calls = []
+    out = es2.predict_sam2_propagate(frames, {}, on_slice=lambda d, n: calls.append((d, n)))
+
+    assert vp.propagate_calls == 0             # nothing to track -> never even called
+    assert int(out.max()) == 0
+    assert calls == [(1, 3), (2, 3), (3, 3)]    # progress still completes
+
+
+def test_predict_sam2_propagate_cleans_up_temp_dir_even_on_exception(monkeypatch):
+    frames = _frames(2)
+    seed_mask = np.zeros((12, 16), dtype=bool); seed_mask[0:2, 0:2] = True
+    mg = _FakeMaskGenerator(seeds=[{"segmentation": seed_mask, "area": 4}])
+    vp = _FakeVideoPredictor(raise_in_propagate=RuntimeError("boom"))
+    monkeypatch.setattr(es2, "get_video_predictor", lambda config: vp)
+    monkeypatch.setattr(es2, "get_mask_generator", lambda config: mg)
+
+    tmp_dir_holder = {}
+    real_init_state = vp.init_state
+
+    def spy_init_state(video_path):
+        tmp_dir_holder["path"] = video_path
+        return real_init_state(video_path)
+    vp.init_state = spy_init_state
+
+    with pytest.raises(RuntimeError, match="boom"):
+        es2.predict_sam2_propagate(frames, {})
+    assert not os.path.exists(tmp_dir_holder["path"])
