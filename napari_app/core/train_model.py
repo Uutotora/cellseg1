@@ -77,6 +77,9 @@ def train_model(config, state_manager, progress_queue=None, stop_event=None):
     save_model = config["result_pth_path"]
     started_at = datetime.now().isoformat()
 
+    from napari_app.core import experiment_tracking as tracking
+    tracked = tracking.start_run("train", config)
+
     try:
         for epoch in range(config["epoch_max"]):
             stopped = (
@@ -92,6 +95,7 @@ def train_model(config, state_manager, progress_queue=None, stop_event=None):
             pct = int(current_epoch / config["epoch_max"] * 100)
             loss_entry = {"epoch": current_epoch, "loss": round(float(avg_loss), 6)}
             loss_history.append(loss_entry)
+            tracked.track(loss_entry["loss"], name="loss", step=current_epoch)
 
             # fast in-process path
             if progress_queue is not None:
@@ -106,6 +110,7 @@ def train_model(config, state_manager, progress_queue=None, stop_event=None):
             _save_config_sidecar(config, loss_history)
 
         final_loss = loss_history[-1]["loss"] if loss_history else None
+        tracked["status"] = "completed" if save_model else "stopped"
         state_manager.append_history_entry({
             "started_at": started_at,
             "finished_at": datetime.now().isoformat(),
@@ -118,4 +123,5 @@ def train_model(config, state_manager, progress_queue=None, stop_event=None):
             "status": "completed" if save_model else "stopped",
         })
     finally:
+        tracked.close()
         state_manager.clear_training_state()

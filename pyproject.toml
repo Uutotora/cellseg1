@@ -65,6 +65,25 @@ sam2 = [
     "sam2",
 ]
 
+# Optional experiment tracking (napari_app/core/experiment_tracking.py):
+# logs predict/train/auto-tune runs to a local Aim (aimstack.io) repo instead
+# of only this app's own custom charts. Fully local/self-hosted — nothing is
+# sent anywhere — and degrades gracefully without it (every tracking call is
+# a guarded no-op; "Dashboard" buttons show a "pip install aim" hint).
+tracking = [
+    "aim",
+]
+
+# Optional embedded dashboard view (napari_app/widgets/dashboard_window.py):
+# shows Aim's own web UI inside a floating window via QWebEngineView instead
+# of only opening it in the system browser. Bundles a Chromium-based engine
+# (a real size/complexity cost for a desktop app) — kept separate from
+# `tracking` above so installing Aim itself stays light; the "Open in
+# browser" action always works even without this extra.
+tracking-ui = [
+    "PyQt6-WebEngine",
+]
+
 # The pure-logic test suite (analysis/benchmark/cohort/advisor/tiling/formats)
 # must run WITHOUT torch or napari, so CI installs only this group. Kept in a
 # PEP 735 dependency-group (not an extra) so `pip install --group test` pulls

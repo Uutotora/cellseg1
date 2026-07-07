@@ -377,7 +377,16 @@ class TrainWidget(QWidget):
             f"color: {DIM}; background: transparent; border: none; font-size: 11px;")
         _log_btn.setToolTip("Open the floating log window")
         _log_btn.clicked.connect(lambda: get_log_window().show_and_raise())
+        _dash_btn = QPushButton("  Dashboard")
+        _dash_btn.setIcon(icons.icon("chart", DIM, 13))
+        _dash_btn.setStyleSheet(
+            f"color: {DIM}; background: transparent; border: none; font-size: 11px;")
+        _dash_btn.setToolTip(
+            "Open the training-history dashboard (Aim) — every run logged "
+            "here, alongside Predict and Auto-tune runs")
+        _dash_btn.clicked.connect(self._open_dashboard)
         _footer.addStretch()
+        _footer.addWidget(_dash_btn)
         _footer.addWidget(_log_btn)
         outer.addLayout(_footer)
 
@@ -404,6 +413,10 @@ class TrainWidget(QWidget):
             lw.show_and_raise()
         elif not lw.isVisible():
             lw.show()
+
+    def _open_dashboard(self):
+        from napari_app.widgets.dashboard_window import get_dashboard_window
+        get_dashboard_window().show_and_raise()
 
     def _populate_devices(self):
         import torch

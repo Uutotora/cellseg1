@@ -56,6 +56,42 @@ def _base_params(tmp_path, engine="cellseg1", **overrides):
     return params
 
 
+class _FakeTrackedRun:
+    """Records what the controller does with a run instead of touching Aim
+    (never installed in this sandbox — see tests/test_experiment_tracking.py
+    for the tracker's own unit tests)."""
+
+    def __init__(self):
+        self.items = {}
+        self.tracked = []
+        self.closed = False
+
+    def track(self, value, **kw):
+        self.tracked.append((value, kw))
+
+    def __setitem__(self, key, value):
+        self.items[key] = value
+
+    def close(self):
+        self.closed = True
+
+
+def _spy_tracking(monkeypatch):
+    """Monkeypatch experiment_tracking.start_run to record every call
+    instead of touching Aim. Returns the list of (experiment, hparams,
+    fake_run) tuples captured, in call order."""
+    from napari_app.core import experiment_tracking as tracking
+    calls = []
+
+    def fake_start_run(experiment, hparams=None):
+        run = _FakeTrackedRun()
+        calls.append((experiment, hparams, run))
+        return run
+
+    monkeypatch.setattr(tracking, "start_run", fake_start_run)
+    return calls
+
+
 # ── Config building ───────────────────────────────────────────────────────────
 
 def test_build_config_missing_image_raises(tmp_path):
@@ -395,6 +431,33 @@ def test_run_prediction_async_forwards_on_tile(tmp_path, monkeypatch):
     assert calls and calls[-1][0] == calls[-1][1]  # ends at total/total
 
 
+def test_run_prediction_async_logs_a_tracked_run(tmp_path, monkeypatch):
+    import cv2
+    import napari_app.engines as engines
+    monkeypatch.setattr(engines, "predict_cellpose", lambda t, **k: _cc(t))
+    tracked = _spy_tracking(monkeypatch)
+
+    img = np.zeros((40, 40, 3), dtype=np.uint8)
+    img[10:30, 10:30] = 200
+    path = tmp_path / "img.png"
+    cv2.imwrite(str(path), img)
+    config = {"engine": "cellpose", "image_path": str(path),
+              "resize_size": [40, 40], "clahe": False, "tile_size": 1024,
+              "selected_device": "cpu"}
+
+    controller = PredictController()
+    t = controller.run_prediction_async(config)
+    t.join(timeout=10)
+
+    assert len(tracked) == 1
+    experiment, hparams, run = tracked[0]
+    assert experiment == "predict"
+    assert hparams["image_path"] == str(path)
+    names = {kw["name"] for _, kw in run.tracked}
+    assert names == {"n_cells", "coverage_pct"}
+    assert run.closed
+
+
 # ── run_tuning_loop_async (agentic predict -> score -> adjust loop) ──────────
 
 def _cellpose_blob_setup(tmp_path):
@@ -532,6 +595,30 @@ def test_run_tuning_loop_async_llm_strategy_without_model_falls_back_to_advisor(
     t.join(timeout=10)
 
     assert events[-1] == "plateau"   # same outcome as the advisor-strategy test above
+
+
+def test_run_tuning_loop_async_logs_one_run_with_score_per_round(tmp_path, monkeypatch):
+    import napari_app.engines as engines
+    monkeypatch.setattr(engines, "predict_cellpose", lambda t, **k: _cc(t))
+    monkeypatch.setattr(engines, "cellpose_available", lambda: True)
+    tracked = _spy_tracking(monkeypatch)
+
+    path, gt = _cellpose_blob_setup(tmp_path)
+    params = _base_params(tmp_path, engine="cellpose", image_path=str(path), resize_size=40)
+
+    controller = PredictController()
+    t = controller.run_tuning_loop_async(params, gt, patience=1)
+    t.join(timeout=10)
+
+    assert len(tracked) == 1   # one run for the whole loop, not one per round
+    experiment, hparams, run = tracked[0]
+    assert experiment == "auto-tune"
+    assert hparams["strategy"] == "advisor"
+    names = [kw["name"] for _, kw in run.tracked]
+    assert names.count("score") == 2    # patience=1 -> 2 rounds, both a perfect 1.0 (plateau)
+    assert names.count("n_cells") == 2
+    assert run.items["stop_reason"] == "plateau"
+    assert run.closed
 
 
 # ── z-stack / time-lapse orchestration (_predict_volume / run_volume_prediction_async) ──
@@ -840,6 +927,27 @@ def test_run_batch_async_continues_after_a_per_image_error(tmp_path, monkeypatch
     assert len(records) == 1                 # only the 2nd image succeeded
 
 
+def test_run_batch_async_logs_one_tracked_run_per_image(tmp_path, monkeypatch):
+    import napari_app.engines as engines
+    monkeypatch.setattr(engines, "predict_cellpose", lambda t, **k: _cc(t))
+    tracked = _spy_tracking(monkeypatch)
+
+    images = _write_images(tmp_path, 3)
+    out_dir = tmp_path / "out"; out_dir.mkdir()
+    config = {"engine": "cellpose", "resize_size": [30, 30], "clahe": False,
+              "tile_size": 1024, "selected_device": "cpu"}
+
+    finished = threading.Event()
+    controller = PredictController()
+    t = controller.run_batch_async(config, images, out_dir, 0.0, on_finish=finished.set)
+    t.join(timeout=10)
+
+    assert finished.is_set()
+    assert len(tracked) == 3
+    assert all(c[0] == "predict" for c in tracked)
+    assert {c[1]["image"] for c in tracked} == {"img0.png", "img1.png", "img2.png"}
+
+
 # ── run_benchmark_async ───────────────────────────────────────────────────────
 
 def test_run_benchmark_async_aggregates_and_calls_on_done(tmp_path, monkeypatch):
@@ -877,6 +985,39 @@ def test_run_benchmark_async_aggregates_and_calls_on_done(tmp_path, monkeypatch)
     assert done["rows"][0][0] == ENGINE_LABELS["cellpose"]
     assert done["rows"][0][1] == 2            # n_images
     assert (img_dir / "benchmark.csv").exists()
+
+
+def test_run_benchmark_async_logs_a_tracked_run_per_pair_with_metrics(tmp_path, monkeypatch):
+    import cv2
+    import napari_app.engines as engines
+    monkeypatch.setattr(engines, "predict_cellpose", lambda t, **k: _cc(t))
+    tracked = _spy_tracking(monkeypatch)
+
+    img_dir = tmp_path / "images"; img_dir.mkdir()
+    gt_dir = tmp_path / "gt"; gt_dir.mkdir()
+    for i in range(2):
+        img = np.zeros((30, 30, 3), dtype=np.uint8)
+        img[5:15, 5:15] = 200
+        cv2.imwrite(str(img_dir / f"img{i}.png"), img)
+        gt = np.zeros((30, 30), dtype=np.uint16)
+        gt[5:15, 5:15] = 1
+        cv2.imwrite(str(gt_dir / f"img{i}.png"), gt)
+
+    pairs = [(img_dir / "img0.png", gt_dir / "img0.png"),
+             (img_dir / "img1.png", gt_dir / "img1.png")]
+    bases = {"cellpose": {"engine": "cellpose", "resize_size": [30, 30],
+                          "image_path": "", "clahe": False}}
+
+    controller = PredictController()
+    t = controller.run_benchmark_async(["cellpose"], bases, pairs, img_dir)
+    t.join(timeout=10)
+
+    assert len(tracked) == 2   # one run per (engine × image) pair
+    experiment, hparams, run = tracked[0]
+    assert experiment == "benchmark"
+    assert hparams["engine_label"] == ENGINE_LABELS["cellpose"]
+    names = {kw["name"] for _, kw in run.tracked}
+    assert "ap@0.5" in names and "f1" in names
 
 
 def test_run_benchmark_async_logs_per_pair_errors(tmp_path, monkeypatch):

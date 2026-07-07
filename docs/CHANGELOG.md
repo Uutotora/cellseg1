@@ -18,6 +18,58 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-07 (afternoon, later) — unified experiment tracking (Aim), not a backlog item
+
+Direct request following the auto-tune follow-up: an open-source dashboard
+that predict/train/auto-tune could all log to, instead of hand-rolling
+another custom chart. Compared Aim, TensorBoard, MLflow and ClearML;
+picked **Aim** — fully local/self-hosted (no account, matching this app's
+existing "nothing leaves your machine" stance, unlike W&B's cloud-first
+model), a modern UI explicitly built to out-do TensorBoard, and its
+run/hparam-comparison shape is the closest match to what this app's three
+producers (one-shot predicts, multi-epoch training, multi-round auto-tune)
+all generate. Full writeup in `docs/BACKLOG.md`'s new "Unified experiment
+tracking (Aim)" entry.
+
+- New `napari_app/core/experiment_tracking.py`: `start_run(experiment,
+  hparams)` — a real `aim.Run`-backed handle or a `_NullRun` no-op,
+  lazy-imported and `available()`-gated exactly like sam2/cellpose/Ollama
+  elsewhere (a new `tracking` extra, not a hard dependency). Every call on
+  the real handle is individually guarded, so a tracking hiccup degrades to
+  one dropped data point, never an interrupted real run.
+- `predict_controller.py` now logs one run per single predict, one per
+  batch image, and one per benchmark (engine × image) pair with the real
+  AP/F1 metrics already computed there; the auto-tune loop logs one run for
+  the whole loop, tracking score/cell-count per round plus the final stop
+  reason. `core/train_model.py` now also tracks loss per epoch (a first
+  for that file) alongside its existing `LossChart` — Aim is an addition,
+  not a replacement.
+- New `napari_app/widgets/dashboard_window.py`: a floating singleton window
+  (the `log_window.py`/`measurements_window.py` pattern) embedding Aim's
+  real web UI via `QWebEngineView` when the separate, heavier
+  `tracking-ui` extra (`PyQt6-WebEngine` — bundles Chromium, ~+100MB) is
+  installed, always with an "Open in browser" fallback that needs only the
+  base `tracking` extra. A "Dashboard" button was added to Predict's and
+  Train's log-footer row and to the Assistant's Auto-tune card, all three
+  sharing the same window/repo.
+
+40 new tests (393 → 433): the `tests/test_engines_sam2.py` pattern of
+injecting a bare `types.ModuleType("aim")` into `sys.modules` rather than
+installing the real package, covering the no-op path, the real-module path
+via a recording fake `aim.Run`, every guarded-failure path, the dashboard
+subprocess singleton/reuse/restart logic, and each orchestration method's/
+widget's own wiring (`train_model.py`'s tests are a first for that file,
+which had zero coverage before). Full suite green in the full conda env
+(433 passed) and in a from-scratch venv with only `pip install --group
+test` (314 passed, 11 skipped — the 2 new skips are exactly the new
+torch-gated and PyQt6-gated files).
+
+**Not verified:** a real Aim install (no network access to confirm `aim up`
+actually serves a working dashboard for this app's specific hparam shapes)
+and the embedded `QWebEngineView` path (`PyQt6-WebEngine` isn't installed
+either) — every test proves the wrapping code is correct assuming Aim's
+documented API surface, not that a real Aim server behaves as documented.
+
 ## 2026-07-07 (afternoon) — agentic tuning loop follow-up: a real LLM tool-calling strategy, live chart + leaderboard + CSV export, parameter importance
 
 Direct instruction, right after the first pass landed: don't stop at the
