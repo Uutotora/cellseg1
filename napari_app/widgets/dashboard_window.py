@@ -56,6 +56,8 @@ class DashboardWindow(QWidget):
         self._browser_btn = QPushButton("Open in browser")
         self._browser_btn.setFixedHeight(24)
         self._browser_btn.setStyleSheet(btn_ss)
+        self._browser_btn.setEnabled(False)   # nothing to open until a URL exists
+        self._browser_btn.setToolTip("Waiting for the dashboard to start…")
         self._browser_btn.clicked.connect(self._open_in_browser)
         hdr_row.addWidget(lbl)
         hdr_row.addWidget(self._status, stretch=1)
@@ -94,9 +96,14 @@ class DashboardWindow(QWidget):
         try:
             self._url = tracking.ensure_dashboard_running()
         except Exception as e:
+            self._url = None
+            self._browser_btn.setEnabled(False)
+            self._browser_btn.setToolTip("Waiting for the dashboard to start…")
             self._status.setText(f"✗ {e}")
             return
         self._status.setText(self._url)
+        self._browser_btn.setEnabled(True)
+        self._browser_btn.setToolTip(f"Open {self._url} in your system browser")
         if self._view is not None:
             from PyQt6.QtCore import QUrl
             self._view.setUrl(QUrl(self._url))

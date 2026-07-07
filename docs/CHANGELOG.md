@@ -18,6 +18,26 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-07 (evening, later) — installed Aim for real in the app's actual env; "Open in browser" was silently inert, not broken
+
+The previous entry's real-Aim verification ran in a throwaway venv, kept
+deliberately separate from this repo's shared conda env. Once the user
+started actually using the feature in the real running app, that
+separation stopped being useful and started being the problem: their
+Dashboard window correctly reported "Aim is not installed", because in
+*that* environment, it genuinely wasn't. Installed `aim` for real into the
+`cellseg1` conda env `run_napari.sh`/the `cellseg1` launcher actually use.
+
+The "Open in browser" button "not working" was a direct, correct
+consequence of that — `_open_in_browser` already no-ops without a URL — but
+the button gave no visual signal it was inert, so it read as broken rather
+than "waiting". Fixed: the button now starts disabled, enables only once
+`open_dashboard()` gets a real URL, and disables again if a later retry
+fails (e.g. the server died) — matching the tooltip to whichever state it's
+in. 2 new tests for both transitions. No app restart needed to pick up the
+newly-installed package — Python doesn't cache a *failed* import, so the
+next click of any "Dashboard" button retries `import aim` fresh.
+
 ## 2026-07-07 (evening) — real-Aim verification found and fixed a genuine bug; Train's history card replaced
 
 User report: the "Dashboard" button wasn't visible in Predict/Train.

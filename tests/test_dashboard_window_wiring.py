@@ -59,6 +59,17 @@ def test_open_dashboard_shows_the_url_in_the_status_label(app, monkeypatch):
     assert w._url == "http://127.0.0.1:12345"
 
 
+def test_browser_button_starts_disabled_and_enables_once_a_url_exists(app, monkeypatch):
+    monkeypatch.setattr(dashboard_window, "_has_webengine", lambda: False)
+    w = dashboard_window.DashboardWindow()
+    assert w._browser_btn.isEnabled() is False   # nothing to open yet
+
+    from napari_app.core import experiment_tracking as tracking
+    monkeypatch.setattr(tracking, "ensure_dashboard_running", lambda: "http://127.0.0.1:12345")
+    w.open_dashboard()
+    assert w._browser_btn.isEnabled() is True
+
+
 def test_open_dashboard_shows_the_error_when_aim_is_not_installed(app, monkeypatch):
     monkeypatch.setattr(dashboard_window, "_has_webengine", lambda: False)
     w = dashboard_window.DashboardWindow()
@@ -70,6 +81,28 @@ def test_open_dashboard_shows_the_error_when_aim_is_not_installed(app, monkeypat
     monkeypatch.setattr(tracking, "ensure_dashboard_running", boom)
     w.open_dashboard()
     assert "not installed" in w._status.text()
+    assert w._url is None
+    assert w._browser_btn.isEnabled() is False   # stays disabled, not just silently inert
+
+
+def test_browser_button_disables_again_after_a_failed_retry(app, monkeypatch):
+    """A successful open followed by a failed retry (e.g. the dashboard
+    process died) must re-disable the button rather than leaving it
+    enabled with a now-stale URL."""
+    monkeypatch.setattr(dashboard_window, "_has_webengine", lambda: False)
+    w = dashboard_window.DashboardWindow()
+    from napari_app.core import experiment_tracking as tracking
+
+    monkeypatch.setattr(tracking, "ensure_dashboard_running", lambda: "http://127.0.0.1:1")
+    w.open_dashboard()
+    assert w._browser_btn.isEnabled() is True
+
+    def boom():
+        raise RuntimeError("Aim is not installed — run: pip install aim")
+
+    monkeypatch.setattr(tracking, "ensure_dashboard_running", boom)
+    w.open_dashboard()
+    assert w._browser_btn.isEnabled() is False
     assert w._url is None
 
 
