@@ -233,6 +233,21 @@ def _predict_volume(config, on_slice=None, sink=None):
     return image_volume, volume_mask
 
 
+def _log_predict_run(config: dict, mask: np.ndarray, *, experiment: str = "predict",
+                     extra: dict | None = None) -> None:
+    """Log one prediction to the optional experiment tracker (a no-op unless
+    Aim is installed — see :mod:`napari_app.core.experiment_tracking`)."""
+    from napari_app.core import experiment_tracking as tracking
+    hparams = dict(config)
+    if extra:
+        hparams.update(extra)
+    run = tracking.start_run(experiment, hparams)
+    run.track(int(mask.max()) if mask.size else 0, name="n_cells")
+    if mask.size:
+        run.track(float((mask > 0).sum()) / mask.size * 100.0, name="coverage_pct")
+    run.close()
+
+
 # ── Controller: config building + predict/batch/benchmark orchestration ──────
 
 class PredictController:
@@ -435,6 +450,7 @@ class PredictController:
                 img_arr, mask = _predict_cached(config, on_tile=on_tile, sink=sink)
                 if on_result:
                     on_result(img_arr, mask, sink.get("stack"))
+                _log_predict_run(config, mask)
                 if on_log:
                     spec = get_engine(config.get("engine") or "cellseg1")
                     status = spec.status_line() if spec.status_line else spec.result_label
@@ -474,6 +490,7 @@ class PredictController:
                 img_vol, mask_vol = _predict_volume(config, on_slice=on_slice, sink=sink)
                 if on_result:
                     on_result(img_vol, mask_vol, sink.get("volume_stack"))
+                _log_predict_run(config, mask_vol, extra={"n_planes": int(mask_vol.shape[0])})
                 if on_log:
                     spec = get_engine(config.get("engine") or "cellseg1")
                     status = spec.status_line() if spec.status_line else spec.result_label
@@ -526,6 +543,7 @@ class PredictController:
                         mask, intensity_image=img_arr, pixel_size_um=pixel_size_um)
                     cov = float((mask > 0).sum()) / mask.size * 100.0
                     records.append((img_path.name, result, cov))
+                    _log_predict_run(cfg, mask, extra={"image": img_path.name})
                 except Exception as e:
                     if on_log:
                         on_log(f"  [ERROR] {e}")
@@ -586,7 +604,16 @@ class PredictController:
                             gt = cv2.resize(gt.astype(np.float32),
                                             (pred.shape[1], pred.shape[0]),
                                             interpolation=cv2.INTER_NEAREST).astype(np.int32)
-                        per_engine[eng].append(benchmark.evaluate(gt, pred))
+                        metrics = benchmark.evaluate(gt, pred)
+                        per_engine[eng].append(metrics)
+                        from napari_app.core import experiment_tracking as tracking
+                        brun = tracking.start_run(
+                            "benchmark", {**cfg, "engine_label": ENGINE_LABELS[eng],
+                                         "image": img_path.name})
+                        for mk, mv in metrics.items():
+                            if isinstance(mv, (int, float)):
+                                brun.track(mv, name=mk)
+                        brun.close()
                     except Exception as ex:
                         if on_log:
                             on_log(f"  [ERROR] {eng} {img_path.name}: {ex}")
@@ -643,11 +670,20 @@ class PredictController:
         def run():
             stop_reason = "error"
             stop_detail = ""
+            from napari_app.core import experiment_tracking as tracking
+            tracked = tracking.start_run(
+                "auto-tune", {**initial_params, "strategy": strategy, "model": model})
             try:
                 from napari_app.core import tuning_loop
 
                 def predict_fn(p):
                     return _predict_cached(self.build_config(p))
+
+                def tracked_on_step(step):
+                    tracked.track(step.score, name="score", step=step.step)
+                    tracked.track(step.n_cells, name="n_cells", step=step.step)
+                    if on_step:
+                        on_step(step)
 
                 score_fn = tuning_loop.default_score_fn(gt_mask)
                 propose_fn = (tuning_loop.llm_propose_fn(model)
@@ -656,7 +692,7 @@ class PredictController:
                 result = tuning_loop.run_tuning_loop(
                     initial_params, predict_fn, score_fn, propose_fn=propose_fn,
                     max_steps=max_steps, patience=patience, min_delta=min_delta,
-                    on_step=on_step, on_round_start=on_round_start,
+                    on_step=tracked_on_step, on_round_start=on_round_start,
                     should_stop=self._tuning_stop.is_set)
                 stop_reason = result.stop_reason
                 stop_detail = result.stop_detail
@@ -665,6 +701,8 @@ class PredictController:
                 if on_log:
                     on_log(f"[ERROR] {e}\n{traceback.format_exc()}")
             finally:
+                tracked["stop_reason"] = stop_reason
+                tracked.close()
                 if on_finish:
                     on_finish(stop_reason, stop_detail)
 

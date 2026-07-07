@@ -534,6 +534,89 @@ for a credible product · P1 differentiation · P2 later.
   most of the same insight without a custom multi-axis renderer neither
   pyqtgraph nor matplotlib gives for free in a ~100px-tall embedded widget.
 
+### [x] Unified experiment tracking (Aim)  · L
+- **Goal:** every predict/batch/benchmark/train/auto-tune run logged to one
+  real, open-source experiment-tracking dashboard instead of three separate
+  custom charts (the auto-tune trajectory chart above, `train_widget`'s
+  `LossChart`, and no history at all for ordinary predicts).
+- **Why:** direct request, not a pre-existing backlog item — asked in the
+  same conversation as the auto-tune follow-up, after researching open
+  self-hosted tools that could be embedded "for free" (no custom chart code)
+  rather than reinventing history/comparison views a third time.
+- **Acceptance:** predict/batch/benchmark/train/auto-tune each write to a
+  shared local run history; a "Dashboard" button opens it, embedded in-app
+  when possible and always available in the system browser as a fallback.
+- **Touch:** new `napari_app/core/experiment_tracking.py`,
+  new `napari_app/widgets/dashboard_window.py`, `predict_controller.py`,
+  `core/train_model.py`, `pyproject.toml`, three widgets' footers.
+- **Done:** chose [Aim](https://aimstack.io/) over TensorBoard/MLflow/
+  ClearML after comparing them directly: fully local/self-hosted (no
+  account, matching this app's existing "nothing leaves your machine"
+  stance — unlike W&B's cloud-first model), a modern UI explicitly built to
+  out-do TensorBoard, and its run/hparam-comparison shape is the closest
+  match to what this app's three producers (one-shot predicts, multi-epoch
+  training, multi-round auto-tune) all generate. New
+  `napari_app/core/experiment_tracking.py` is the only file that imports
+  `aim` (lazily, `available()`-gated exactly like sam2/cellpose/Ollama
+  elsewhere in this package — a new `tracking` extra, not a hard
+  dependency): `start_run(experiment, hparams)` returns either a real
+  `aim.Run`-backed handle or a `_NullRun` no-op, and **every single call on
+  the real handle is individually wrapped in its own try/except** — a
+  tracking hiccup (disk full, a future Aim API change, a corrupt repo)
+  degrades to one dropped data point, never an interrupted predict/train/
+  auto-tune run. `ensure_dashboard_running()`/`stop_dashboard()` manage
+  Aim's own `aim up` dashboard server as a background subprocess, shared
+  across every "Dashboard" button the same way `get_log_window()`/
+  `get_measurements_window()` already share one floating window each.
+  `predict_controller.py` logs one run per single predict, one per batch
+  image, and one per (engine × image) benchmark pair (with the real AP/F1
+  metrics already computed there — Aim becomes a second, comparable view
+  onto the same numbers the benchmark results table shows); the auto-tune
+  loop logs one run for the whole loop, `.track()`-ing score/cell-count per
+  round exactly like the existing chart/table do, plus the final
+  `stop_reason`. `core/train_model.py`'s per-epoch loop now also tracks
+  `loss` per epoch, a first for that file (`LossChart` itself is untouched
+  — Aim is an *addition*, not a replacement, since the in-app chart is still
+  the faster at-a-glance view during a live run).
+  New `napari_app/widgets/dashboard_window.py` is a floating singleton
+  window (the exact `log_window.py`/`measurements_window.py` pattern):
+  embeds Aim's real web UI via `QWebEngineView` when the separate,
+  heavier `tracking-ui` extra (`PyQt6-WebEngine` — it bundles Chromium,
+  roughly +100MB, a real cost for a desktop app) is installed, and always
+  offers "Open in browser" (`webbrowser.open`) as a fallback that needs
+  only the base `tracking` extra — deliberately two separate extras so
+  installing Aim itself stays light. A "Dashboard" button was added to
+  Predict's and Train's existing log-footer row and to the Assistant's
+  Auto-tune card, all three opening the *same* shared window/repo.
+  40 new tests (393 → 433): `tests/test_experiment_tracking.py` (22 — the
+  `tests/test_engines_sam2.py` pattern of injecting a bare
+  `types.ModuleType("aim")` into `sys.modules` rather than installing the
+  real package, covering the no-op path, the real-module path via a
+  recording fake `aim.Run`, every guarded-failure path (`track`/`__setitem__`/
+  `close`/constructor each raising), `_sanitize`, and the dashboard
+  subprocess singleton/reuse/restart-after-death logic with a fake
+  `subprocess.Popen`), 4 more in `tests/test_predict_controller.py` (one
+  per orchestration method, monkeypatching `experiment_tracking.start_run`
+  to a spy), `tests/test_train_model_tracking.py` (4, new — a first for
+  `train_model.py`, which had zero test coverage before this; every heavy
+  dependency it touches — `cellseg1_train`'s functions, `set_environment.
+  set_env`, dataset loading — is monkeypatched to a scripted fake so the
+  "training loop" runs in milliseconds), and `tests/test_dashboard_window_wiring.py`
+  (10, new — the singleton, both the embedded and (since PyQt6-WebEngine
+  isn't installed here) fallback-message paths, and each of the three
+  widgets' own "Dashboard" button). Full suite green in the full conda env
+  (433 passed) and in a from-scratch venv with only `pip install --group
+  test` (314 passed, 11 skipped — the 2 new skips are exactly the
+  torch-gated and PyQt6-gated new files, as expected).
+  **Not verified anywhere in this work:** a real Aim install of any kind (no
+  network access to actually `pip install aim` and confirm `aim up` really
+  serves a working dashboard, or that its UI renders sensibly for this
+  app's specific hparam shapes) and the embedded `QWebEngineView` path (no
+  `PyQt6-WebEngine` installed either) — every test here proves the
+  *wrapping* code (guards, singleton reuse, correct CLI args, correct
+  `track()`/hparams calls) is correct assuming Aim's own documented API
+  surface, not that a real Aim server behaves as documented.
+
 ### [ ] Vision-grounded QC in the Assistant  · L
 - **Goal:** the agent inspects the actual mask (not just scalar stats) and
   highlights specific wrong cells ("45 and 46 are merged").

@@ -318,6 +318,13 @@ class AssistantWidget(QWidget):
         self._export_tune_btn.clicked.connect(self._export_tune_csv)
         tbl_btn_row.addWidget(self._export_tune_btn)
         tbl_btn_row.addStretch()
+        dash_btn = QPushButton("Dashboard")
+        dash_btn.setFixedHeight(30); dash_btn.setStyleSheet(BTN_SECONDARY)
+        dash_btn.setToolTip(
+            "Open the run-history dashboard (Aim) — every auto-tune round "
+            "logged here, alongside Predict and Train runs")
+        dash_btn.clicked.connect(self._open_dashboard)
+        tbl_btn_row.addWidget(dash_btn)
         tune_card.addLayout(tbl_btn_row)
 
         self._tune_importance = QLabel("")
@@ -569,6 +576,10 @@ class AssistantWidget(QWidget):
             self._autotune_status.setText(f"Exported {len(self._tune_rows)} rounds to {Path(path).name}")
         except Exception as e:
             self._autotune_status.setText(f"Export failed: {e}")
+
+    def _open_dashboard(self):
+        from napari_app.widgets.dashboard_window import get_dashboard_window
+        get_dashboard_window().show_and_raise()
 
     def _on_autotune_finished(self, stop_reason: str, stop_detail: str):
         self._autotune_active = False
