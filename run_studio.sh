@@ -1,9 +1,10 @@
 #!/bin/bash
-# Launch CellSeg1 Studio — the standalone desktop app (napari embedded inside).
+# Launch CellSeg1 Studio — the standalone desktop app.
 #
-# This is the NEW entry point. The classic napari-plugin app is untouched and
-# still launches via run_napari.sh / the `cellseg1` command — run that to
-# revert instantly.
+# Currently a pure design skeleton (native Qt reproduction of the mockup, no
+# logic — launches on PyQt6 alone, no napari/torch/GPU needed). Functionality
+# is wired back tab by tab; see docstudio/. The classic napari-plugin app is
+# untouched and still launches via run_napari.sh / the `cellseg1` command.
 #
 # Resolution order for the Python interpreter (same as run_napari.sh):
 #   1. $CELLSEG1_PYTHON if set explicitly

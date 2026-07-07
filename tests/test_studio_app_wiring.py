@@ -1,12 +1,8 @@
-"""Headless wiring/smoke tests for the Studio shell (napari_app/studio/*).
+"""Headless wiring/smoke tests for the Studio design skeleton.
 
-Constructs the sidebar, Home/Projects screens and the full StudioWindow under
-``QT_QPA_PLATFORM=offscreen`` — no display, and crucially no napari (the shell
-is designed so napari is only touched inside ``main()``/``build_workspace``).
-Skipped in the lightweight CI job that has no PyQt6.
-
-Verifies what's verifiable without a GUI: widgets construct, navigation flips
-the active screen, and the Home/Projects views reflect the ProjectStore.
+Constructs the whole app (sidebar, all screens, overlays, frameless rounded
+window) under ``QT_QPA_PLATFORM=offscreen`` with **no napari and no torch** —
+the branch is a pure-design skeleton. Skipped in the GUI-less CI job.
 """
 import os
 
@@ -15,15 +11,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 
 pytest.importorskip("PyQt6")
-# import the shell pieces (these must NOT pull in napari/torch)
 components = pytest.importorskip("napari_app.studio.components")
-screens = pytest.importorskip("napari_app.studio.screens")
 app_mod = pytest.importorskip("napari_app.studio.app")
+paint = pytest.importorskip("napari_app.studio.paint")
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
 
 from napari_app.studio import theme
-from napari_app.studio.project import ProjectStore
 
 
 @pytest.fixture
@@ -31,144 +26,120 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
-@pytest.fixture
-def store(tmp_path):
-    s = ProjectStore(tmp_path)
-    s.create("Alpha", description="first", tags=["nuclei"])
-    s.create("Beta", description="second", tags=["H&E"])
-    return s
+# ── UI kit ───────────────────────────────────────────────────────────────────
+def test_ui_atoms_construct(app):
+    t = theme.DARK
+    assert components.Chip("x", t, "primary") is not None
+    assert components.PillButton("Go", t, "primary", "plus").text() == "Go"
+    assert components.PillButton("Ghost", t, "ghost").text() == "Ghost"
+    assert components.Badge("0.80", t) is not None
+    assert components.SelectBox("512 px", t) is not None
+    assert components.Stepper("32", t) is not None
+    assert components.StatTile("25.5", "px", "MEDIAN", t) is not None
 
 
-# ── components ───────────────────────────────────────────────────────────────
-def test_sidebar_builds_and_emits_navigate(app):
+def test_toggle_flips_state(app):
+    tg = components.Toggle(theme.DARK, on=False)
+    assert not tg.is_on()
+    tg.set_on(True)
+    assert tg.is_on()
+
+
+def test_segcontrol_selection_emits(app):
+    seen = []
+    seg = components.SegControl(["A", "B", "C"], theme.DARK, active=0)
+    seg.changed.connect(seen.append)
+    seg._select(2)
+    assert seen == [2]
+    assert seg._btns[2].isChecked() and not seg._btns[0].isChecked()
+
+
+def test_accordion_toggles(app):
+    acc = components.Accordion("Ground truth", theme.LIGHT, open_=False)
+    assert not acc._body.isVisible()
+    acc.toggle()
+    assert acc._open
+
+
+def test_sidebar_navigates(app):
     seen = []
     sb = components.Sidebar(app_mod._NAV, theme.DARK)
     sb.navigate.connect(seen.append)
-    # click the Projects nav item
-    sb._items["projects"].click()
-    assert seen == ["projects"]
-    # set_active only marks checkable nav items
-    sb.set_active("home")
-    assert sb._items["home"].isChecked()
-    assert not sb._items["projects"].isChecked()
+    sb._items["workspace"].click()
+    assert seen == ["workspace"]
 
 
-def test_chip_and_buttons_construct(app):
-    for kind in ("default", "primary", "signal", "success", "muted"):
-        assert components.Chip("x", theme.LIGHT, kind) is not None
-    assert components.PrimaryButton("Go", theme.DARK, "plus").text() == "Go"
-    assert components.GhostButton("Filter", theme.LIGHT, "filter").text() == "Filter"
+# ── paint ────────────────────────────────────────────────────────────────────
+def test_nuclei_pixmap_renders(app):
+    px = paint.nuclei_pixmap(120, 90, seed=7)
+    assert not px.isNull()
+    assert paint.NucleiView(seed=7) is not None
 
 
 # ── screens ──────────────────────────────────────────────────────────────────
-def test_home_screen_lists_recent_projects(app, store):
-    seen = {}
-    home = screens.HomeScreen(store, theme.DARK,
-                              on_new=lambda: seen.setdefault("new", True),
-                              on_open=lambda pid: seen.setdefault("open", pid),
-                              on_navigate=lambda k: seen.setdefault("nav", k))
-    # two recent rows rendered
-    assert home._recent_box.count() == 2
-
-
-def test_projects_screen_grid_and_search(app, store):
-    scr = screens.ProjectsScreen(store, theme.DARK,
-                                 on_new=lambda: None, on_open=lambda pid: None)
-    # 2 project cards + 1 ghost "new" card
-    assert scr._grid.count() == 3
-    # search narrows and drops the ghost card
-    scr._on_search("alpha")
-    kinds = [scr._grid.itemAt(i).widget() for i in range(scr._grid.count())]
-    assert len(kinds) == 1
-    assert isinstance(kinds[0], screens.ProjectCard)
-    assert kinds[0].project.name == "Alpha"
-
-
-def test_project_card_open_callback(app, store):
-    opened = []
-    p = store.list()[0]
-    card = screens.ProjectCard(p, theme.LIGHT, on_open=opened.append)
-    card._on_open(p.id)
-    assert opened == [p.id]
+def test_all_screens_construct(app):
+    from napari_app.studio.screens import HomeScreen, ProjectsScreen
+    from napari_app.studio.workspace import WorkspaceScreen
+    from napari_app.studio.extra_screens import ModelsScreen, DashboardScreen
+    t = theme.DARK
+    assert HomeScreen(t, lambda k: None, lambda i: None) is not None
+    assert ProjectsScreen(t, lambda k: None, lambda i: None) is not None
+    assert WorkspaceScreen(t) is not None
+    assert ModelsScreen(t) is not None
+    assert DashboardScreen(t) is not None
 
 
 # ── window ───────────────────────────────────────────────────────────────────
-def test_studio_window_constructs_without_napari(app, store):
-    win = app_mod.StudioWindow(store, theme_name="dark")
-    assert win._stack.count() >= 2          # home + projects registered
-    assert "home" in win._screens and "projects" in win._screens
+def test_window_is_frameless_with_titlebar_and_grips(app):
+    from napari_app.studio import window_chrome
+    win = app_mod.StudioWindow(theme_name="dark")
+    assert win.windowFlags() & Qt.WindowType.FramelessWindowHint
+    assert len(win.findChildren(window_chrome.TitleBar)) == 1
+    assert len(win._grips) == 4
 
 
-def test_navigation_switches_active_screen(app, store):
-    win = app_mod.StudioWindow(store, theme_name="dark")
-    win.navigate("projects")
-    assert win._stack.currentWidget() is win._screens["projects"]
-    win.navigate("home")
-    assert win._stack.currentWidget() is win._screens["home"]
+def test_window_constructs_without_napari_or_store(app):
+    # If this imported napari/torch, the light CI job would fail — it must not.
+    win = app_mod.StudioWindow(theme_name="dark")
+    assert win._stack.count() == len(app_mod._STACK_KEYS)
 
 
-def test_unregistered_screen_gets_placeholder(app, store):
-    win = app_mod.StudioWindow(store, theme_name="dark")
-    win.navigate("dashboard")               # not registered without main()
-    assert "dashboard" in win._screens
+def test_navigation_switches_stack_screens(app):
+    win = app_mod.StudioWindow(theme_name="dark")
+    win.navigate("dashboard")
     assert win._stack.currentWidget() is win._screens["dashboard"]
-
-
-def test_new_project_flow_creates_and_opens(app, store):
-    win = app_mod.StudioWindow(store, theme_name="dark")
-    before = len(store.list())
-    win._new_project()
-    assert len(store.list()) == before + 1
-    # opening navigates to workspace (placeholder here)
+    win.navigate("workspace")
     assert win._stack.currentWidget() is win._screens["workspace"]
 
 
-def test_toggle_theme_rebuilds_chrome(app, store):
-    win = app_mod.StudioWindow(store, theme_name="dark")
-    assert win._theme_name == "dark"
+def test_assistant_and_logs_toggle_as_overlays(app):
+    # isHidden() is the explicit flag; isVisible() needs the top-level shown.
+    win = app_mod.StudioWindow(theme_name="dark")
+    assert win._assistant.isHidden()
+    win.navigate("assistant")
+    assert not win._assistant.isHidden()
+    win.navigate("assistant")
+    assert win._assistant.isHidden()
+    win.navigate("logs")
+    assert not win._logs.isHidden()
+
+
+def test_command_palette_opens_and_escape_closes(app):
+    win = app_mod.StudioWindow(theme_name="dark")
+    win._toggle_palette()
+    assert not win._palette.isHidden()
+    win._close_overlays()
+    assert win._palette.isHidden()
+
+
+def test_theme_toggle_rebuilds(app):
+    from napari_app.studio import window_chrome
+    win = app_mod.StudioWindow(theme_name="dark")
     win.toggle_theme()
     assert win._theme_name == "light"
-    # home/projects still present after rebuild
-    assert "home" in win._screens and "projects" in win._screens
-
-
-def test_load_fonts_returns_a_family(app):
-    fam = app_mod.load_fonts()
-    assert isinstance(fam, str) and fam
-
-
-# ── custom window chrome (frameless title bar) ───────────────────────────────
-def test_window_is_frameless(app, store):
-    from PyQt6.QtCore import Qt
-    win = app_mod.StudioWindow(store, theme_name="dark")
-    assert win.windowFlags() & Qt.WindowType.FramelessWindowHint
-
-
-def test_titlebar_has_three_traffic_lights_and_grips(app, store):
-    from napari_app.studio import window_chrome
-    win = app_mod.StudioWindow(store, theme_name="dark")
-    bars = win.findChildren(window_chrome.TitleBar)
-    assert len(bars) == 1
-    lights = bars[0].findChildren(window_chrome._TrafficButton)
-    assert len(lights) == 3            # close / minimise / zoom
-    assert len(win._grips) == 4        # four corner resize handles
-
-
-def test_traffic_close_button_calls_window_close(app, store, monkeypatch):
-    from napari_app.studio import window_chrome
-    win = app_mod.StudioWindow(store, theme_name="dark")
-    called = {"n": 0}
-    monkeypatch.setattr(win, "close", lambda: called.__setitem__("n", called["n"] + 1))
-    bar = win.findChildren(window_chrome.TitleBar)[0]
-    close_btn = bar.findChildren(window_chrome._TrafficButton)[0]
-    close_btn.click()
-    assert called["n"] == 1
-
-
-def test_titlebar_rebuilds_on_theme_toggle(app, store):
-    from napari_app.studio import window_chrome
-    win = app_mod.StudioWindow(store, theme_name="dark")
-    win.toggle_theme()
-    assert win._theme_name == "light"
-    # still exactly one title bar after the rebuild
+    assert win._stack.count() == len(app_mod._STACK_KEYS)
     assert len(win.findChildren(window_chrome.TitleBar)) == 1
+
+
+def test_load_fonts_returns_family(app):
+    assert isinstance(app_mod.load_fonts(), str) and app_mod.load_fonts()

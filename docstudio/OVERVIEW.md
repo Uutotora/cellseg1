@@ -1,0 +1,58 @@
+# Overview — CellSeg1 Studio
+
+## What it is
+
+A world-class desktop application for cell instance segmentation, built to
+compete on UX with Figma / Linear / Label Studio. Same ML core as the classic
+CellSeg1 app (three engines: CellSeg1·LoRA, Cellpose-SAM, SAM 2), but wrapped
+in a product that owns its window and is organised around **Projects**.
+
+The design was set by an interactive HTML north-star mockup, agreed with the
+product owner, and then reproduced natively.
+
+## The current phase: **design skeleton**
+
+Right now this branch is deliberately **all design, no logic**:
+
+- Every mockup screen is reproduced in **native PyQt6** — Home, Projects, the
+  Segment workspace (adapted-napari layers · canvas · inspector), Models &
+  Train, Dashboard — plus the overlays (Assistant drawer, Logs console, ⌘K
+  command palette, toast).
+- It renders **static demo content** (`napari_app/studio/demo.py`) and gives
+  only light visual feedback. There is **no** napari, torch, model inference,
+  file IO, or project persistence. `import napari` / `import torch` never runs.
+- The window is **frameless with rounded corners** and our own dark title bar
+  (own traffic lights, native move/resize), so it reads as a product, not a
+  Qt window.
+
+Why strip the logic? The half-wired earlier version mixed the new shell with
+the raw legacy `PredictWidget`, which felt like "napari with a skin". Resetting
+to a pure, faithful design skeleton gives a clean, consistent target to build
+against — then each tab is wired properly, in isolation, with its own plan.
+
+## Ground rules
+
+- **Keep the classic app untouched.** `napari_app/main.py`, `run_napari.sh`,
+  the `cellseg1` console script must stay byte-for-byte. Studio ships behind
+  `run_studio.sh` / `cellseg1-studio`.
+- **Design fidelity first.** Match `DESIGN.md`. When wiring a tab, the look
+  must not regress — behaviour is added *under* the existing design.
+- **No logic leaks into the skeleton's shared modules.** Keep `theme`,
+  `components`, `paint`, `demo`, screens free of torch/napari so the app stays
+  light and the pure-logic tests run in CI's light group. Wire real deps only
+  inside the tab you're building, lazily imported.
+- **One tab at a time.** Take a tab from `BACKLOG.md`, give it its own task
+  list, wire it end to end (data + interactions), test what's testable
+  headless, note what needs a GUI/GPU, ship. Then the next tab.
+
+## Run & verify
+
+```bash
+bash run_studio.sh                     # launch (pure design, no deps beyond PyQt6)
+<cellseg1-python> -m pytest tests/test_studio_*.py -q   # headless tests
+QT_QPA_PLATFORM=offscreen PYTHONPATH=. <python> -c \
+  "import napari_app.studio.app"       # import check
+```
+
+GUI behaviour (the live look, animations, real rendering) can't be verified in
+a headless sandbox — always say so in a summary.

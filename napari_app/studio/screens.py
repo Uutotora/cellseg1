@@ -1,37 +1,32 @@
-"""CellSeg1 Studio — the Home and Projects screens.
+"""CellSeg1 Studio — the screens (static design skeleton).
 
-Data-driven views over the :class:`~napari_app.studio.project.ProjectStore`:
-Home (welcome, quick actions, recent projects, resources) and Projects (a
-searchable card grid). Both call :meth:`refresh` when shown so they always
-reflect the store on disk. Interaction is delegated up via callbacks the app
-supplies (open a project, create a project, navigate).
+Native reproductions of the mockup, one screen per class, driven by
+``demo.py`` static content and the ``components``/``paint`` kits. No logic:
+buttons and controls render the design and give light visual feedback only.
+The Workspace is the signature screen (adapted-napari layers · canvas ·
+inspector). See ``docstudio/`` for the per-tab wiring plan.
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Optional
 
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QGridLayout,
-    QScrollArea, QSizePolicy, QLineEdit,
+    QScrollArea, QLineEdit, QSizePolicy, QStackedWidget, QToolButton,
 )
 
 from napari_app import icons
-from napari_app.studio import theme
+from napari_app.studio import theme, demo
+from napari_app.studio.paint import nuclei_pixmap, NucleiView
 from napari_app.studio.components import (
-    Chip, GhostButton, PrimaryButton, hline, soft_shadow,
+    Chip, Badge, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
+    SegControl, StatTile, FieldRow, GroupLabel, Accordion, hline, soft_shadow, label,
 )
-from napari_app.studio.project import Project, ProjectStore
-
-# engine key → (display label, accent token) for card chips
-_ENGINE_META = {
-    "cellseg1": ("CellSeg1 · LoRA", "primary"),
-    "cellpose": ("Cellpose-SAM", "signal"),
-    "sam2":     ("SAM 2", "primary"),
-}
 
 
-def _scroll(inner: QWidget) -> QScrollArea:
+# ── shared helpers ───────────────────────────────────────────────────────────
+def scroll(inner: QWidget) -> QScrollArea:
     sa = QScrollArea()
     sa.setWidgetResizable(True)
     sa.setFrameShape(QFrame.Shape.NoFrame)
@@ -40,18 +35,15 @@ def _scroll(inner: QWidget) -> QScrollArea:
     return sa
 
 
-def _page_header(title: str, subtitle: str, t: dict, action: QWidget | None = None) -> QWidget:
+def page_header(title: str, subtitle: str, t: dict, action: Optional[QWidget] = None) -> QWidget:
     head = QWidget()
     row = QHBoxLayout(head)
     row.setContentsMargins(34, 30, 34, 18)
     col = QVBoxLayout()
     col.setSpacing(5)
-    h = QLabel(title)
-    h.setStyleSheet(f"font-size:26px; font-weight:600; letter-spacing:-0.6px; color:{t['text']};")
-    s = QLabel(subtitle)
-    s.setStyleSheet(f"font-size:14px; color:{t['text_muted']};")
-    col.addWidget(h)
-    col.addWidget(s)
+    col.addWidget(label(title, 26, t["text"], 600, -0.6))
+    if subtitle:
+        col.addWidget(label(subtitle, 14, t["text_muted"]))
     row.addLayout(col)
     row.addStretch(1)
     if action is not None:
@@ -59,227 +51,62 @@ def _page_header(title: str, subtitle: str, t: dict, action: QWidget | None = No
     return head
 
 
-# ── Project card ─────────────────────────────────────────────────────────────
-class ProjectCard(QFrame):
-    """A library card for one project: cover, name, description, stats, tags."""
-
-    def __init__(self, project: Project, t: dict,
-                 on_open: Callable[[str], None]):
-        super().__init__()
-        self.project = project
-        self._t = t
-        self._on_open = on_open
-        self.setObjectName("PCard")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(
-            f"#PCard{{background:{t['surface']}; border:1px solid {t['border']};"
-            f"border-radius:14px;}} "
-            f"#PCard:hover{{border-color:{t['border_strong']};}}")
-        soft_shadow(self, blur=16, alpha=26, dy=3)
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-
-        lay.addWidget(self._cover())
-        body = QWidget()
-        b = QVBoxLayout(body)
-        b.setContentsMargins(15, 14, 15, 15)
-        b.setSpacing(3)
-
-        name = QLabel(project.name)
-        name.setStyleSheet(f"font-size:14.5px; font-weight:600; letter-spacing:-0.2px; color:{t['text']};")
-        b.addWidget(name)
-
-        desc = QLabel(project.description or "No description")
-        desc.setWordWrap(True)
-        desc.setStyleSheet(f"font-size:12px; color:{t['text_muted']};")
-        desc.setMaximumHeight(34)
-        b.addWidget(desc)
-
-        b.addSpacing(8)
-        b.addWidget(hline(t))
-        b.addSpacing(10)
-        b.addLayout(self._stats_row())
-
-        if project.tags:
-            tagrow = QHBoxLayout()
-            tagrow.setSpacing(6)
-            for tag in project.tags[:3]:
-                tagrow.addWidget(Chip(tag, t, "muted"))
-            tagrow.addStretch(1)
-            b.addSpacing(10)
-            b.addLayout(tagrow)
-
-        lay.addWidget(body)
-
-    def _cover(self) -> QWidget:
-        t = self._t
-        label, kind = _ENGINE_META.get(self.project.engine, ("Engine", "primary"))
-        accent = t["primary"] if kind == "primary" else t["signal"]
-        cover = QFrame()
-        cover.setFixedHeight(96)
-        cover.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        cover.setStyleSheet(
-            f"background:qlineargradient(x1:0,y1:0,x2:1,y2:1,"
-            f"stop:0 {t['scope']}, stop:1 {accent}); "
-            f"border-top-left-radius:14px; border-top-right-radius:14px;")
-        cl = QHBoxLayout(cover)
-        cl.setContentsMargins(12, 10, 12, 10)
-        eng = Chip(label, t, "primary" if kind == "primary" else "signal")
-        eng.setStyleSheet(eng.styleSheet() +
-                          "background:rgba(8,12,16,0.55); color:#eaf0f8; border-color:rgba(255,255,255,0.15);")
-        cl.addWidget(eng, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft)
-        cl.addStretch(1)
-        if self.project.stats.progress:
-            prog = QLabel(f"{self.project.stats.progress}%")
-            prog.setStyleSheet(
-                f"font-family:{theme.MONO}; font-size:10.5px; font-weight:600; color:#fff;"
-                f"background:rgba(8,12,16,0.55); border-radius:6px; padding:2px 7px;")
-            cl.addWidget(prog, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
-        if self.project.favorite:
-            star = QLabel()
-            star.setPixmap(icons.pixmap("star", "#f0b357", 15))
-            cl.addWidget(star, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
-        return cover
-
-    def _stats_row(self) -> QHBoxLayout:
-        t = self._t
-        row = QHBoxLayout()
-        row.setSpacing(16)
-        st = self.project.stats
-        f1 = "—" if st.last_f1 is None else f"{st.last_f1:.2f}"
-        for value, label, ok in (
-            (str(st.n_images), "Images", False),
-            (f"{st.n_cells:,}" if st.n_cells else "0", "Cells", False),
-            (f1, "F1 vs GT", st.last_f1 is not None),
-        ):
-            cell = QVBoxLayout()
-            cell.setSpacing(1)
-            v = QLabel(value)
-            col = t["success"] if ok else t["text"]
-            v.setStyleSheet(f"font-size:14px; font-weight:600; font-family:{theme.MONO}; color:{col};")
-            l = QLabel(label.upper())
-            l.setStyleSheet(f"font-size:10px; color:{t['text_muted']}; font-weight:600; letter-spacing:0.5px;")
-            cell.addWidget(v)
-            cell.addWidget(l)
-            row.addLayout(cell)
-        row.addStretch(1)
-        return row
-
-    def mouseReleaseEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self._on_open(self.project.id)
-        super().mouseReleaseEvent(e)
+def cover_label(seed: int, w: int, h: int, density: float, big: bool = False) -> QLabel:
+    lb = QLabel()
+    lb.setFixedSize(w, h)
+    lb.setPixmap(nuclei_pixmap(w, h, seed, density=density, big=big))
+    lb.setScaledContents(True)
+    return lb
 
 
-class NewProjectCard(QFrame):
-    """The dashed 'ghost' card that creates a new project."""
-
-    def __init__(self, t: dict, on_new: Callable[[], None]):
-        super().__init__()
-        self._on_new = on_new
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setObjectName("NewCard")
-        self.setMinimumHeight(240)
-        self.setStyleSheet(
-            f"#NewCard{{background:transparent; border:1px dashed {t['border_strong']};"
-            f"border-radius:14px;}} "
-            f"#NewCard:hover{{border-color:{t['primary_line']}; background:{t['primary_weak']};}}")
-        lay = QVBoxLayout(self)
-        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon = QLabel()
-        icon.setPixmap(icons.pixmap("plus", t["text_muted"], 26))
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title = QLabel("New Project")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet(f"font-size:13.5px; font-weight:600; color:{t['text_subtle']};")
-        sub = QLabel("Import images & pick an engine")
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub.setStyleSheet(f"font-size:12px; color:{t['text_muted']};")
-        lay.addWidget(icon)
-        lay.addSpacing(8)
-        lay.addWidget(title)
-        lay.addWidget(sub)
-
-    def mouseReleaseEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self._on_new()
-        super().mouseReleaseEvent(e)
+ENGINE_KIND = {"cellseg1": "primary", "cellpose": "signal", "sam2": "primary"}
 
 
-# ── Home screen ──────────────────────────────────────────────────────────────
+# ── Home ─────────────────────────────────────────────────────────────────────
 class HomeScreen(QWidget):
-    def __init__(self, store: ProjectStore, t: dict,
-                 on_new: Callable[[], None],
-                 on_open: Callable[[str], None],
-                 on_navigate: Callable[[str], None]):
+    def __init__(self, t: dict, on_navigate: Callable[[str], None], on_open: Callable[[int], None]):
         super().__init__()
-        self._store = store
         self._t = t
-        self._on_open = on_open
-        self._on_navigate = on_navigate
+        self._nav = on_navigate
+        self._open = on_open
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+        cta = PillButton("New Project", t, "primary", "plus")
+        cta.clicked.connect(lambda: on_navigate("projects"))
+        outer.addWidget(page_header("Welcome back  👋",
+                                    "Segment, measure and compare cells across your projects.",
+                                    t, cta))
 
-        outer.addWidget(_page_header(
-            "Welcome back  👋",
-            "Segment, measure and compare cells across your projects.",
-            t, PrimaryButton("New Project", t, "plus")))
+        body = QWidget()
+        grid = QHBoxLayout(body)
+        grid.setContentsMargins(34, 4, 34, 40)
+        grid.setSpacing(24)
 
-        content = QWidget()
-        self._content = QVBoxLayout(content)
-        self._content.setContentsMargins(34, 4, 34, 40)
-        self._content.setSpacing(24)
-        outer.addWidget(_scroll(content))
+        left = QVBoxLayout()
+        left.setSpacing(24)
+        left.addLayout(self._quick())
+        left.addWidget(self._recent_section())
+        left.addStretch(1)
+        grid.addLayout(left, 1)
+        grid.addLayout(self._aside(), 0)
 
-        # quick actions
-        self._content.addLayout(self._quick_actions())
-        # recent
-        self._recent_title = self._section_title("Recent projects", "View all →", "projects")
-        self._content.addWidget(self._recent_title)
-        self._recent_box = QVBoxLayout()
-        self._recent_box.setSpacing(10)
-        self._content.addLayout(self._recent_box)
-        self._content.addStretch(1)
+        outer.addWidget(scroll(body))
 
-        # wire the header CTA
-        for btn in self.findChildren(PrimaryButton):
-            btn.clicked.connect(on_new)
-
-        self.refresh()
-
-    def _section_title(self, text: str, link: str, link_key: str) -> QWidget:
-        w = QWidget()
-        row = QHBoxLayout(w)
-        row.setContentsMargins(0, 0, 0, 0)
-        h = QLabel(text)
-        h.setStyleSheet(f"font-size:15px; font-weight:600; color:{self._t['text']};")
-        a = QLabel(f"<a href='#' style='color:{self._t['primary']}; text-decoration:none;'>{link}</a>")
-        a.setStyleSheet("font-size:12.5px; font-weight:600;")
-        a.linkActivated.connect(lambda: self._on_navigate(link_key))
-        row.addWidget(h)
-        row.addStretch(1)
-        row.addWidget(a)
-        return w
-
-    def _quick_actions(self) -> QGridLayout:
+    def _quick(self) -> QGridLayout:
         t = self._t
-        grid = QGridLayout()
-        grid.setSpacing(14)
+        g = QGridLayout()
+        g.setSpacing(14)
         cards = [
             ("folder", "New Project", "Name it, import images, pick an engine.", "primary"),
             ("image", "Import Images", "TIFF · OME-TIFF · ND2 · CZI · PNG. Drag & drop.", "signal"),
             ("models", "Train a Model", "One-shot LoRA from a single annotated image.", "warning"),
             ("chart", "Open Sample", "Nuclei, tissue & mitosis datasets to explore.", "success"),
         ]
-        for i, (icon_name, title, sub, kind) in enumerate(cards):
-            grid.addWidget(self._quick_card(icon_name, title, sub, kind), i // 2, i % 2)
-        return grid
+        for i, c in enumerate(cards):
+            g.addWidget(self._quick_card(*c), i // 2, i % 2)
+        return g
 
     def _quick_card(self, icon_name, title, sub, kind) -> QFrame:
         t = self._t
@@ -290,51 +117,46 @@ class HomeScreen(QWidget):
         card.setStyleSheet(
             f"#QCard{{background:{t['surface']}; border:1px solid {t['border']}; border-radius:14px;}}"
             f"#QCard:hover{{border-color:{t['border_strong']};}}")
-        soft_shadow(card, blur=14, alpha=22, dy=3)
+        soft_shadow(card, 14, 22, 3)
         row = QHBoxLayout(card)
         row.setContentsMargins(18, 16, 18, 16)
         row.setSpacing(14)
-        col_map = {"primary": t["primary"], "signal": t["signal"],
-                   "warning": t["warning"], "success": t["success"]}
-        weak_map = {"primary": t["primary_weak"], "signal": t["signal_weak"],
-                    "warning": t["warning_weak"], "success": t["success_weak"]}
+        colm = {"primary": t["primary"], "signal": t["signal"], "warning": t["warning"], "success": t["success"]}
+        weakm = {"primary": t["primary_weak"], "signal": t["signal_weak"], "warning": t["warning_weak"], "success": t["success_weak"]}
         badge = QLabel()
         badge.setFixedSize(38, 38)
-        badge.setPixmap(icons.pixmap(icon_name, col_map[kind], 19))
+        badge.setPixmap(icons.pixmap(icon_name, colm[kind], 19))
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge.setStyleSheet(f"background:{weak_map[kind]}; border-radius:10px;")
+        badge.setStyleSheet(f"background:{weakm[kind]}; border-radius:10px;")
         col = QVBoxLayout()
         col.setSpacing(3)
-        h = QLabel(title)
-        h.setStyleSheet(f"font-size:14.5px; font-weight:600; color:{t['text']};")
-        s = QLabel(sub)
+        col.addWidget(label(title, 14.5, t["text"], 600))
+        s = label(sub, 12.5, t["text_muted"])
         s.setWordWrap(True)
-        s.setStyleSheet(f"font-size:12.5px; color:{t['text_muted']};")
-        col.addWidget(h)
         col.addWidget(s)
         row.addWidget(badge, alignment=Qt.AlignmentFlag.AlignTop)
         row.addLayout(col, 1)
         return card
 
-    def _clear(self, box):
-        while box.count():
-            item = box.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+    def _recent_section(self) -> QWidget:
+        t = self._t
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(14)
+        head = QHBoxLayout()
+        head.addWidget(label("Recent projects", 15, t["text"], 600))
+        head.addStretch(1)
+        link = QLabel(f"<a href='#' style='color:{t['primary']};text-decoration:none;'>View all →</a>")
+        link.setStyleSheet("font-size:12.5px; font-weight:600;")
+        link.linkActivated.connect(lambda: self._nav("projects"))
+        head.addWidget(link)
+        v.addLayout(head)
+        for i, p in enumerate(demo.PROJECTS[:4]):
+            v.addWidget(self._recent_row(i, p))
+        return w
 
-    def refresh(self) -> None:
-        self._clear(self._recent_box)
-        recents = self._store.recent(limit=4)
-        if not recents:
-            empty = QLabel("No projects yet — create your first one to get started.")
-            empty.setStyleSheet(f"color:{self._t['text_muted']}; font-size:13px; padding:8px 2px;")
-            self._recent_box.addWidget(empty)
-            return
-        for p in recents:
-            self._recent_box.addWidget(self._recent_row(p))
-
-    def _recent_row(self, p: Project) -> QFrame:
+    def _recent_row(self, idx: int, p: demo.DemoProject) -> QFrame:
         t = self._t
         row = QFrame()
         row.setObjectName("RRow")
@@ -346,59 +168,114 @@ class HomeScreen(QWidget):
         lay = QHBoxLayout(row)
         lay.setContentsMargins(14, 11, 14, 11)
         lay.setSpacing(14)
-        label, kind = _ENGINE_META.get(p.engine, ("Engine", "primary"))
-        swatch = QLabel()
-        swatch.setFixedSize(40, 30)
-        accent = t["primary"] if kind == "primary" else t["signal"]
-        swatch.setStyleSheet(
-            f"background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {t['scope']}, stop:1 {accent});"
-            f"border-radius:6px;")
+        lay.addWidget(cover_label(p.seed, 52, 40, 1.5))
         meta = QVBoxLayout()
         meta.setSpacing(2)
-        nm = QLabel(p.name)
-        nm.setStyleSheet(f"font-size:13.5px; font-weight:600; color:{t['text']};")
-        mm = QLabel(f"{label} · {p.stats.n_images} images · {p.stats.n_cells:,} cells")
-        mm.setStyleSheet(f"font-size:11.5px; color:{t['text_muted']};")
-        meta.addWidget(nm)
-        meta.addWidget(mm)
-        lay.addWidget(swatch)
+        meta.addWidget(label(p.name, 13.5, t["text"], 600))
+        meta.addWidget(label(f"{p.engine_label} · {p.n_images} images · {p.n_cells} cells", 11.5, t["text_muted"]))
         lay.addLayout(meta, 1)
-        row.mouseReleaseEvent = lambda e, pid=p.id: self._on_open(pid)
+        when = QLabel(demo.RECENT_WHEN[idx])
+        when.setStyleSheet(f"color:{t['text_muted']}; font-size:11.5px; font-family:{theme.MONO};")
+        lay.addWidget(when)
+        row.mouseReleaseEvent = lambda e, i=idx: self._open(i)
+        return row
+
+    def _aside(self) -> QVBoxLayout:
+        t = self._t
+        col = QVBoxLayout()
+        col.setSpacing(16)
+        col.setContentsMargins(0, 0, 0, 0)
+
+        tip = QFrame()
+        tip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        tip.setStyleSheet(
+            f"background:{t['primary_weak']}; border:1px solid {t['primary_line']}; border-radius:14px;")
+        tl = QVBoxLayout(tip)
+        tl.setContentsMargins(16, 16, 16, 16)
+        tl.setSpacing(6)
+        tl.addWidget(label("✦ Tip — press ⌘K anywhere", 13, t["primary"], 600))
+        tp = label("Run segmentation, switch engine, apply a preset or export — the "
+                   "command palette reaches every action without leaving the image.", 12.5, t["text_subtle"])
+        tp.setWordWrap(True)
+        tl.addWidget(tp)
+        col.addWidget(tip)
+
+        res = self._card("Resources")
+        for name, icon_name, ext in [
+            ("Documentation", "guide", True), ("Getting started guide", "guide", False),
+            ("Ask the Assistant", "assistant", False), ("GitHub", "settings", True)]:
+            res.layout().addWidget(self._res_link(name, icon_name, ext))
+        col.addWidget(res)
+
+        dev = self._card("This device")
+        for name, val in [("Compute", "Apple M-series · MPS"), ("SAM backbone", "ViT-H · cached"),
+                          ("Storage", "data_store · 3.1 GB")]:
+            dev.layout().addWidget(FieldRow(name, Badge(val, t), t))
+        col.addWidget(dev)
+        col.addStretch(1)
+        return col
+
+    def _card(self, title: str) -> QFrame:
+        t = self._t
+        c = QFrame()
+        c.setFixedWidth(300)
+        c.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        c.setStyleSheet(f"background:{t['surface']}; border:1px solid {t['border']}; border-radius:14px;")
+        soft_shadow(c, 14, 20, 3)
+        v = QVBoxLayout(c)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(10)
+        v.addWidget(label(title, 13.5, t["text"], 600))
+        return c
+
+    def _res_link(self, name: str, icon_name: str, ext: bool) -> QFrame:
+        t = self._t
+        row = QFrame()
+        row.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.setStyleSheet("QFrame:hover{background:%s; border-radius:8px;}" % t["surface2"])
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(6, 8, 6, 8)
+        lay.setSpacing(11)
+        ic = QLabel()
+        ic.setPixmap(icons.pixmap(icon_name, t["text_muted"], 16))
+        lay.addWidget(ic)
+        lay.addWidget(label(name, 13, t["text_subtle"], 500))
+        lay.addStretch(1)
+        if ext:
+            e = QLabel()
+            e.setPixmap(icons.pixmap("settings", t["text_muted"], 12))
+            lay.addWidget(e)
         return row
 
 
-# ── Projects screen ──────────────────────────────────────────────────────────
+# ── Projects ─────────────────────────────────────────────────────────────────
 class ProjectsScreen(QWidget):
-    def __init__(self, store: ProjectStore, t: dict,
-                 on_new: Callable[[], None],
-                 on_open: Callable[[str], None]):
+    def __init__(self, t: dict, on_navigate: Callable[[str], None], on_open: Callable[[int], None]):
         super().__init__()
-        self._store = store
         self._t = t
-        self._on_new = on_new
-        self._on_open = on_open
-        self._query = ""
+        self._nav = on_navigate
+        self._open = on_open
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-
-        cta = PrimaryButton("New Project", t, "plus")
-        cta.clicked.connect(on_new)
-        self._header = _page_header("Projects", "", t, cta)
-        outer.addWidget(self._header)
+        cta = PillButton("New Project", t, "primary", "plus")
+        cta.clicked.connect(lambda: on_navigate("workspace"))
+        outer.addWidget(page_header("Projects", f"{len(demo.PROJECTS)} projects · 794 images · 3 engines", t, cta))
         outer.addWidget(self._toolbar())
 
-        content = QWidget()
-        self._grid_host = QVBoxLayout(content)
-        self._grid_host.setContentsMargins(34, 0, 34, 40)
-        self._grid = QGridLayout()
-        self._grid.setSpacing(16)
-        self._grid_host.addLayout(self._grid)
-        self._grid_host.addStretch(1)
-        outer.addWidget(_scroll(content))
-
-        self.refresh()
+        body = QWidget()
+        host = QVBoxLayout(body)
+        host.setContentsMargins(34, 0, 34, 40)
+        grid = QGridLayout()
+        grid.setSpacing(16)
+        for i, p in enumerate(demo.PROJECTS):
+            grid.addWidget(self._card(i, p), i // 3, i % 3)
+        idx = len(demo.PROJECTS)
+        grid.addWidget(self._ghost(), idx // 3, idx % 3)
+        host.addLayout(grid)
+        host.addStretch(1)
+        outer.addWidget(scroll(body))
 
     def _toolbar(self) -> QWidget:
         t = self._t
@@ -410,44 +287,123 @@ class ProjectsScreen(QWidget):
         search.setPlaceholderText("Search projects, tags, engines…")
         search.setClearButtonEnabled(True)
         search.setMaximumWidth(420)
-        search.textChanged.connect(self._on_search)
+        search.addAction(icons.icon("diagnose", t["text_muted"], 15), QLineEdit.ActionPosition.LeadingPosition)
         row.addWidget(search)
         row.addStretch(1)
-        row.addWidget(GhostButton("Filter", t, "filter"))
+        row.addWidget(PillButton("Filter", t, "ghost", "filter", small=True))
+        view = SegControl(["▦", "☰"], t, 0, compact=True)
+        view.setFixedWidth(78)
+        row.addWidget(view)
         return bar
 
-    def _on_search(self, text: str) -> None:
-        self._query = text.strip().lower()
-        self.refresh()
+    def _card(self, idx: int, p: demo.DemoProject) -> QFrame:
+        t = self._t
+        card = QFrame()
+        card.setObjectName("PCard")
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setStyleSheet(
+            f"#PCard{{background:{t['surface']}; border:1px solid {t['border']}; border-radius:14px;}}"
+            f"#PCard:hover{{border-color:{t['border_strong']};}}")
+        soft_shadow(card, 16, 26, 3)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
 
-    def _match(self, p: Project) -> bool:
-        if not self._query:
-            return True
-        hay = " ".join([p.name, p.description, p.engine, *p.tags]).lower()
-        return self._query in hay
+        # cover
+        cover = QLabel()
+        cover.setFixedHeight(120)
+        cover.setPixmap(nuclei_pixmap(360, 120, p.seed, density=1.1, big=False))
+        cover.setScaledContents(True)
+        cover.setStyleSheet("border-top-left-radius:14px; border-top-right-radius:14px;")
+        cwrap = QFrame()
+        cwrap.setFixedHeight(120)
+        cwl = QVBoxLayout(cwrap)
+        cwl.setContentsMargins(0, 0, 0, 0)
+        cover.setParent(cwrap)
+        overlay = QHBoxLayout()
+        overlay.setContentsMargins(12, 0, 12, 10)
+        eng = Chip(p.engine_label, t, ENGINE_KIND.get(p.engine_key, "primary"))
+        eng.setStyleSheet(eng.styleSheet() + "background:rgba(8,12,16,0.55);color:#eaf0f8;border-color:rgba(255,255,255,0.15);")
+        overlay.addWidget(eng, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft)
+        overlay.addStretch(1)
+        prog = QLabel(f"{p.progress}%")
+        prog.setStyleSheet(f"color:#fff; font-family:{theme.MONO}; font-size:10.5px; font-weight:600;"
+                           f"background:rgba(8,12,16,0.55); border-radius:6px; padding:2px 7px;")
+        overlay.addWidget(prog, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
+        cwl.addStretch(1)
+        cwl.addLayout(overlay)
+        lay.addWidget(cwrap)
 
-    def _clear_grid(self):
-        while self._grid.count():
-            item = self._grid.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+        body = QWidget()
+        b = QVBoxLayout(body)
+        b.setContentsMargins(15, 14, 15, 15)
+        b.setSpacing(3)
+        b.addWidget(label(p.name, 14.5, t["text"], 600, -0.2))
+        desc = label(p.description, 12, t["text_muted"])
+        desc.setWordWrap(True)
+        desc.setMaximumHeight(34)
+        b.addWidget(desc)
+        b.addSpacing(8)
+        b.addWidget(hline(t))
+        b.addSpacing(10)
+        b.addLayout(self._stats(p))
+        if p.tags:
+            tags = QHBoxLayout()
+            tags.setSpacing(6)
+            for tag in p.tags[:3]:
+                tags.addWidget(Chip(tag, t, "muted"))
+            tags.addStretch(1)
+            b.addSpacing(10)
+            b.addLayout(tags)
+        lay.addWidget(body)
+        card.mouseReleaseEvent = lambda e, i=idx: self._open(i)
+        return card
 
-    def refresh(self) -> None:
-        self._clear_grid()
-        projects = [p for p in self._store.list() if self._match(p)]
-        self._header.findChild(QLabel)  # keep ref alive; subtitle updated below
-        # update subtitle count
-        subs = self._header.findChildren(QLabel)
-        if len(subs) >= 2:
-            total = len(self._store.list())
-            subs[1].setText(f"{total} project{'s' if total != 1 else ''}")
+    def _stats(self, p: demo.DemoProject) -> QHBoxLayout:
+        t = self._t
+        row = QHBoxLayout()
+        row.setSpacing(16)
+        f1 = p.f1 or "—"
+        for value, cap, ok in [(str(p.n_images), "Images", False), (p.n_cells, "Cells", False),
+                               (f1, "F1 vs GT", p.f1 is not None)]:
+            cell = QVBoxLayout()
+            cell.setSpacing(1)
+            col = t["success"] if ok else t["text"]
+            v = QLabel(value)
+            v.setStyleSheet(f"color:{col}; font-family:{theme.MONO}; font-size:14px; font-weight:600;")
+            cell.addWidget(v)
+            cell.addWidget(label(cap.upper(), 10, t["text_muted"], 600, 0.5))
+            row.addLayout(cell)
+        row.addStretch(1)
+        return row
 
-        cols = 3
-        idx = 0
-        for p in projects:
-            self._grid.addWidget(ProjectCard(p, self._t, self._on_open), idx // cols, idx % cols)
-            idx += 1
-        # ghost 'new' card only when not filtering
-        if not self._query:
-            self._grid.addWidget(NewProjectCard(self._t, self._on_new), idx // cols, idx % cols)
+    def _ghost(self) -> QFrame:
+        t = self._t
+        card = QFrame()
+        card.setObjectName("Ghost")
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setMinimumHeight(240)
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setStyleSheet(
+            f"#Ghost{{background:transparent; border:1px dashed {t['border_strong']}; border-radius:14px;}}"
+            f"#Ghost:hover{{border-color:{t['primary_line']}; background:{t['primary_weak']};}}")
+        v = QVBoxLayout(card)
+        v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ic = QLabel()
+        ic.setPixmap(icons.pixmap("plus", t["text_muted"], 26))
+        ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(ic)
+        v.addSpacing(8)
+        title = label("New Project", 13.5, t["text_subtle"], 600)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(title)
+        sub = label("Import images & pick an engine", 12, t["text_muted"])
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(sub)
+        card.mouseReleaseEvent = lambda e: self._nav("workspace")
+        return card
+
+
+from napari_app.studio.workspace import WorkspaceScreen  # noqa: E402
+from napari_app.studio.extra_screens import ModelsScreen, DashboardScreen  # noqa: E402

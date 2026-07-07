@@ -18,6 +18,16 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-07 — Studio reset to a pure design skeleton + `docstudio/`
+
+Reset CellSeg1 Studio to an all-design, **no-logic** skeleton: a faithful
+native-Qt reproduction of the north-star mockup (all screens + overlays) with
+napari/torch/model/IO stripped out — it launches on PyQt6 alone. Rationale and
+the tab-by-tab plan to wire functionality back live in a new **`docstudio/`**
+doc set (OVERVIEW, DESIGN, ARCHITECTURE, BACKLOG, ROADMAP, CHANGELOG,
+AGENT_PROMPT). Rounded window corners added. The classic app
+(`napari_app/main.py`) remains untouched. Full detail: `docstudio/CHANGELOG.md`.
+
 ## 2026-07-07 — Studio: own window chrome (no more grey OS title bar) + screen transitions
 
 First polish pass after the foundation landed and the app ran for real: it

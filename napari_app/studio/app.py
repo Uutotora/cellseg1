@@ -1,54 +1,50 @@
-"""CellSeg1 Studio — the application shell and entry point.
+"""CellSeg1 Studio — the application shell and entry point (design skeleton).
 
-``StudioWindow`` is a plain ``QMainWindow`` that *owns the top-level window*:
-a navigation sidebar plus a stack of screens (Home, Projects, and the heavier
-Workspace / Train / Dashboard / Assistant / Logs screens registered by
-``main``). This is the architectural pivot away from "napari plugin in a dock"
-— here napari's canvas is embedded as one component the shell hosts, not the
-other way round.
+A pure-design branch: this app is a faithful, **static** reproduction of the
+north-star mockup with **no business logic** — no napari, no torch, no model,
+no file/project IO. It launches on PyQt6 alone. Real functionality is wired
+back tab by tab; see ``docstudio/`` (OVERVIEW, ARCHITECTURE, BACKLOG,
+AGENT_PROMPT) for how, and why it's staged this way.
 
-Designed so the shell is importable and constructible headless (only a
-``QApplication``, no display, no napari): the napari import and canvas
-embedding live entirely inside :func:`main` / :func:`build_workspace`, never in
-``StudioWindow.__init__``. That keeps the smoke tests light and the classic
-``napari_app.main`` entry point completely untouched — launch that to revert.
+``StudioWindow`` owns a frameless, rounded window with our own dark title bar,
+a navigation sidebar, a stack of screens (Home · Projects · Segment · Models &
+Train · Dashboard), and overlay surfaces (Assistant drawer, Logs console, ⌘K
+command palette, toast). The classic napari-plugin app
+(``napari_app.main`` / ``run_napari.sh`` / ``cellseg1``) is untouched.
 """
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
-# Make the repo root importable *before* the ``napari_app`` imports below, so
-# the app works when launched as a script (``python .../studio/app.py``) from
-# any working directory — mirrors ``napari_app/main.py``. This is deliberate:
-# ``python -m napari_app.studio.app`` injects the *current directory* at the
-# front of ``sys.path`` ahead of ``PYTHONPATH``, so running it from a different
-# checkout (e.g. the main tree while the code lives in a worktree) would import
-# the wrong ``napari_app``. Running the file + bootstrapping here avoids that.
+# Make the repo root importable before the napari_app imports (see the note in
+# the git history) so ``python .../studio/app.py`` works from any cwd.
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtGui import QFontDatabase, QFont, QRegion, QPainterPath, QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QLabel,
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QApplication,
 )
-from PyQt6.QtGui import QFontDatabase, QFont
 
 from napari_app.studio import theme
 from napari_app.studio.components import Sidebar
 from napari_app.studio.screens import HomeScreen, ProjectsScreen
-from napari_app.studio.project import ProjectStore, default_store_root
+from napari_app.studio.workspace import WorkspaceScreen
+from napari_app.studio.extra_screens import ModelsScreen, DashboardScreen
+from napari_app.studio.overlays import AssistantDrawer, LogsConsole, CommandPalette, Toast
 from napari_app.studio.window_chrome import (
     TitleBar, install_corner_grips, layout_corner_grips,
 )
 
 _FONT_DIR = Path(__file__).parent / "fonts"
+_CORNER_RADIUS = 12
 
-# Sidebar layout: (key, icon, label, section). Panel keys (assistant/logs) are
-# toggled as overlays; the rest switch the main stack.
+# (key, icon, label, section). assistant/logs toggle overlays; the rest switch
+# the main stack.
 _NAV = [
     ("home",      "home",      "Home",           ""),
     ("projects",  "projects",  "Projects",       ""),
@@ -58,14 +54,11 @@ _NAV = [
     ("assistant", "assistant", "Assistant",      "Tools"),
     ("logs",      "log",       "Logs",           "Tools"),
 ]
+_STACK_KEYS = ("home", "projects", "workspace", "train", "dashboard")
 
 
 def load_fonts() -> str:
-    """Register the bundled Figtree faces; return the resolved family name.
-
-    Falls back silently to the system stack (the tokens already chain to
-    ``-apple-system``) if the files are missing or Qt can't load them.
-    """
+    """Register the bundled Figtree faces; return the resolved family name."""
     family = "Figtree"
     for name in ("Figtree-Regular.ttf", "Figtree-SemiBold.ttf"):
         path = _FONT_DIR / name
@@ -78,312 +71,175 @@ def load_fonts() -> str:
 
 
 class StudioWindow(QMainWindow):
-    """Sidebar + stacked screens. Heavier screens are registered post-construction."""
+    """Frameless rounded window: title bar + sidebar + screen stack + overlays."""
 
-    def __init__(self, store: ProjectStore, theme_name: str = "dark"):
+    def __init__(self, theme_name: str = "dark"):
         super().__init__()
-        self._store = store
         self._theme_name = theme_name
         self._screens: dict[str, QWidget] = {}
         self.setWindowTitle("CellSeg1 Studio")
         self.resize(1320, 860)
         self.setMinimumSize(1040, 680)
-
-        # Frameless: drop the native grey OS title bar and wear our own dark one
-        # (with our own traffic lights), so the app reads as a product, not a
-        # generic Qt window. Move/resize stay native via startSystemMove +
-        # corner grips (see window_chrome).
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
 
+        self._build_ui()
+        self.apply_theme(theme_name)
+        self._grips = install_corner_grips(self)
+        self.navigate("home")
+
+        QShortcut(QKeySequence("Ctrl+K"), self, activated=self._toggle_palette)
+        QShortcut(QKeySequence("Meta+K"), self, activated=self._toggle_palette)
+        QShortcut(QKeySequence("Escape"), self, activated=self._close_overlays)
+
+    @property
+    def tokens(self) -> dict:
+        return theme.tokens_for(self._theme_name)
+
+    # ── construction ────────────────────────────────────────────────────────
+    def _build_ui(self) -> None:
+        t = self.tokens
         central = QWidget()
+        central.setObjectName("Central")
+        central.setStyleSheet(f"#Central{{background:{t['bg']};}}")
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         self.setCentralWidget(central)
 
-        # Title bar sits in its own holder so a theme switch can rebuild just it.
-        self._titlebar_holder = QWidget()
-        self._titlebar_lay = QVBoxLayout(self._titlebar_holder)
-        self._titlebar_lay.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(self._titlebar_holder)
+        outer.addWidget(TitleBar(self, t, on_toggle_theme=self.toggle_theme))
 
         body = QWidget()
-        self._root = QHBoxLayout(body)          # sidebar + stack
-        self._root.setContentsMargins(0, 0, 0, 0)
-        self._root.setSpacing(0)
-        outer.addWidget(body, 1)
-
-        self._stack = QStackedWidget()
-        self._build_chrome()
-        self._build_titlebar()
-        self.apply_theme(theme_name)
-        self._grips = install_corner_grips(self)
-        self.navigate("home")
-
-    # ── construction ────────────────────────────────────────────────────────
-    @property
-    def tokens(self) -> dict:
-        return theme.tokens_for(self._theme_name)
-
-    def _build_chrome(self) -> None:
-        """(Re)build the sidebar + the always-present Home/Projects screens."""
-        t = self.tokens
-        # clear previous root children (theme rebuild)
-        while self._root.count():
-            item = self._root.takeAt(0)
-            w = item.widget()
-            if w and w is not self._stack:
-                w.setParent(None)      # remove from child tree synchronously
-                w.deleteLater()
+        row = QHBoxLayout(body)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
 
         self._sidebar = Sidebar(_NAV, t)
         self._sidebar.navigate.connect(self.navigate)
         self._sidebar.toggle_theme.connect(self.toggle_theme)
-        self._root.addWidget(self._sidebar)
-        self._root.addWidget(self._stack, 1)
+        self._sidebar.open_guide.connect(lambda: None)  # design skeleton: no-op
+        row.addWidget(self._sidebar)
 
-        # Home + Projects are cheap and store-backed → owned by the shell.
-        home = HomeScreen(self._store, t, on_new=self._new_project,
-                          on_open=self.open_project, on_navigate=self.navigate)
-        projects = ProjectsScreen(self._store, t, on_new=self._new_project,
-                                  on_open=self.open_project)
-        self.register_screen("home", home)
-        self.register_screen("projects", projects)
+        self._stack = QStackedWidget()
+        self._screens = {
+            "home": HomeScreen(t, self.navigate, self._open_project),
+            "projects": ProjectsScreen(t, self.navigate, self._open_project),
+            "workspace": WorkspaceScreen(t),
+            "train": ModelsScreen(t),
+            "dashboard": DashboardScreen(t),
+        }
+        for key in _STACK_KEYS:
+            self._stack.addWidget(self._screens[key])
+        row.addWidget(self._stack, 1)
+        outer.addWidget(body, 1)
 
-    def _build_titlebar(self) -> None:
-        """(Re)build the custom title bar for the current theme."""
-        while self._titlebar_lay.count():
-            item = self._titlebar_lay.takeAt(0)
-            w = item.widget()
-            if w:
-                w.setParent(None)      # remove from child tree synchronously
-                w.deleteLater()
-        self._titlebar_lay.addWidget(
-            TitleBar(self, self.tokens, on_toggle_theme=self.toggle_theme))
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        grips = getattr(self, "_grips", None)
-        if grips:
-            layout_corner_grips(self, grips)
-
-    def register_screen(self, key: str, widget: QWidget) -> None:
-        """Register (or replace) a screen widget under a nav ``key``."""
-        if key in self._screens:
-            old = self._screens[key]
-            idx = self._stack.indexOf(old)
-            if idx != -1:
-                self._stack.removeWidget(old)
-            old.deleteLater()
-        self._screens[key] = widget
-        self._stack.addWidget(widget)
-
-    def placeholder(self, title: str, subtitle: str) -> QWidget:
-        """A tidy 'not wired yet' screen for keys main() hasn't registered."""
-        t = self.tokens
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        h = QLabel(title)
-        h.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        h.setStyleSheet(f"font-size:18px; font-weight:600; color:{t['text']};")
-        s = QLabel(subtitle)
-        s.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        s.setStyleSheet(f"font-size:13px; color:{t['text_muted']};")
-        lay.addWidget(h)
-        lay.addWidget(s)
-        return w
+        # overlays (children of the window, positioned on resize / open)
+        self._assistant = AssistantDrawer(self, t)
+        self._logs = LogsConsole(self, t)
+        self._palette = CommandPalette(self, t)
+        self._toast = Toast(self, t)
+        self._overlays = [self._assistant, self._logs, self._palette, self._toast]
 
     # ── navigation ──────────────────────────────────────────────────────────
     def navigate(self, key: str) -> None:
-        # Assistant/Logs are overlay panels in the full app; if not registered
-        # as stack screens, ignore here (main() wires the drawers).
-        if key not in self._screens:
-            if key in ("assistant", "logs"):
-                return
-            self.register_screen(key, self.placeholder(
-                key.title(), "This screen is wired in the full app."))
-        screen = self._screens[key]
-        if hasattr(screen, "refresh"):
-            try:
-                screen.refresh()
-            except Exception:
-                pass
-        self._stack.setCurrentWidget(screen)
-        self._sidebar.set_active(key)
-        # A soft fade on the incoming screen — the "beautiful transitions" from
-        # the mockup. Skipped for the napari-hosting workspace (an opacity
-        # effect on a live GL canvas is expensive and can flicker).
-        if key not in ("workspace",):
-            try:
-                from napari_app.motion import fade_in
-                fade_in(screen, 170)
-            except Exception:
-                pass
+        if key == "assistant":
+            self._toggle_drawer(self._assistant)
+            return
+        if key == "logs":
+            self._toggle_drawer(self._logs)
+            return
+        if key in self._screens:
+            screen = self._screens[key]
+            self._stack.setCurrentWidget(screen)
+            self._sidebar.set_active(key)
+            if key != "workspace":
+                try:
+                    from napari_app.motion import fade_in
+                    fade_in(screen, 170)
+                except Exception:
+                    pass
 
-    def open_project(self, project_id: str) -> None:
-        """Open a project into the Workspace (Segment) screen."""
-        self._active_project_id = project_id
-        ws = self._screens.get("workspace")
-        if ws is not None and hasattr(ws, "load_project"):
-            try:
-                ws.load_project(project_id)
-            except Exception:
-                pass
+    def _open_project(self, _idx: int) -> None:
         self.navigate("workspace")
 
-    def _new_project(self) -> None:
-        """Create a project and open it. (A rich dialog comes next; this keeps
-        the flow working end-to-end today.)"""
-        existing = len(self._store.list())
-        p = self._store.create(
-            name=f"New Project {existing + 1}",
-            description="Import images and pick an engine to begin.",
-        )
-        # refresh library views
-        for key in ("home", "projects"):
-            s = self._screens.get(key)
-            if s and hasattr(s, "refresh"):
-                s.refresh()
-        self.open_project(p.id)
+    def _toggle_drawer(self, drawer) -> None:
+        # isHidden() is the explicit flag (works even before the window is shown)
+        if not drawer.isHidden():
+            drawer.hide()
+        else:
+            drawer.place()
+            drawer.show()
+            drawer.raise_()
+
+    def _toggle_palette(self) -> None:
+        if not self._palette.isHidden():
+            self._palette.hide()
+        else:
+            self._palette.open()
+
+    def _close_overlays(self) -> None:
+        for o in (self._palette, self._assistant, self._logs):
+            o.hide()
 
     # ── theming ─────────────────────────────────────────────────────────────
     def apply_theme(self, theme_name: str) -> None:
         self._theme_name = theme_name
-        app = self.parent() or self
-        from PyQt6.QtWidgets import QApplication
         qapp = QApplication.instance()
         if qapp is not None:
             qapp.setStyleSheet(theme.build_qss(self.tokens))
 
     def toggle_theme(self) -> None:
         new = "light" if self._theme_name == "dark" else "dark"
-        # Rebuild the custom-styled chrome for the new palette, keep heavy
-        # screens (they carry their own dark styling) registered.
-        heavy = {k: v for k, v in self._screens.items()
-                 if k not in ("home", "projects")}
-        self._screens = {}
         self._theme_name = new
-        self._build_chrome()
-        self._build_titlebar()
-        for k, v in heavy.items():
-            self._screens[k] = v
-            self._stack.addWidget(v)
+        # Tear the old static UI down synchronously (setParent(None) removes it
+        # from the child tree now; deleteLater frees it) so nothing double-stacks.
+        old = self.takeCentralWidget()
+        if old is not None:
+            old.setParent(None)
+            old.deleteLater()
+        for o in getattr(self, "_overlays", []):
+            o.setParent(None)
+            o.deleteLater()
+        for g in getattr(self, "_grips", []):
+            g.setParent(None)
+            g.deleteLater()
+        self._build_ui()            # rebuild the static UI in the new palette
         self.apply_theme(new)
+        self._grips = install_corner_grips(self)
         self.navigate("home")
+        self._round()
 
+    # ── window shape ────────────────────────────────────────────────────────
+    def _round(self) -> None:
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, self.width(), self.height()),
+                            _CORNER_RADIUS, _CORNER_RADIUS)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
-# ── workspace embedding (only reached from main(), needs napari) ─────────────
-def build_workspace(viewer, predict_widget, t: dict) -> QWidget:
-    """Embed napari's canvas next to the existing Predict controls.
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._round()
+        grips = getattr(self, "_grips", None)
+        if grips:
+            layout_corner_grips(self, grips)
+        for o in (self._assistant, self._logs, self._palette, self._toast):
+            if o.isVisible():
+                o.place()
 
-    ``viewer`` is a ``napari.Viewer`` created with ``show=False``; we reparent
-    its ``_qt_viewer`` (a plain ``QWidget``) into our layout so the canvas
-    lives inside the Studio window. The proven ``PredictWidget`` provides the
-    full segment/results/GT/measurements controls unchanged — that is the
-    "preserve every existing feature" guarantee, achieved by reuse not rewrite.
-    """
-    host = QWidget()
-    lay = QHBoxLayout(host)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(0)
-
-    canvas = getattr(viewer.window, "_qt_viewer", None)
-    if canvas is not None:
-        canvas.setParent(host)
-        lay.addWidget(canvas, 1)
-    else:  # pragma: no cover - defensive; API drift
-        msg = QLabel("napari canvas unavailable")
-        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(msg, 1)
-
-    panel = QWidget()
-    panel.setFixedWidth(360)
-    panel.setStyleSheet(f"background:{t['surface']}; border-left:1px solid {t['border']};")
-    pl = QVBoxLayout(panel)
-    pl.setContentsMargins(0, 0, 0, 0)
-    pl.addWidget(predict_widget)
-    lay.addWidget(panel)
-    return host
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._round()
 
 
 def main() -> None:
-    """Launch CellSeg1 Studio (the standalone desktop app)."""
-    project_root = Path(__file__).resolve().parents[2]
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-
-    from PyQt6.QtCore import QCoreApplication, QLocale
-    # WebEngine (embedded Dashboard) needs this before any QApplication exists.
-    QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
-
-    import napari
-    from PyQt6.QtWidgets import QApplication
-    from napari_app.widgets.predict_widget import PredictWidget
-    from napari_app.widgets.train_widget import TrainWidget
-
-    QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
-
-    # napari owns the QApplication; create the viewer hidden so *our* window is
-    # the one the user sees.
-    viewer = napari.Viewer(show=False, title="CellSeg1 Studio")
-    app = QApplication.instance()
-
+    """Launch CellSeg1 Studio (pure-design skeleton — no napari/torch needed)."""
+    app = QApplication.instance() or QApplication(sys.argv)
     family = load_fonts()
-    if app is not None:
-        app.setFont(QFont(family, 10))
-        try:
-            from napari_app.ui_utils import install_wheel_guard
-            install_wheel_guard(app)
-        except Exception:
-            pass
-
-    store = ProjectStore(default_store_root())
-    _seed_samples_if_empty(store)
-
-    win = StudioWindow(store, theme_name="dark")
-
-    # Register the heavier screens (these need the viewer / existing widgets).
-    predict_widget = PredictWidget(viewer)
-    try:
-        win.register_screen("workspace", build_workspace(viewer, predict_widget, win.tokens))
-    except Exception as exc:  # pragma: no cover
-        win.register_screen("workspace", win.placeholder(
-            "Workspace", f"Could not embed the canvas: {exc}"))
-    try:
-        win.register_screen("train", TrainWidget(viewer))
-    except Exception as exc:  # pragma: no cover
-        win.register_screen("train", win.placeholder("Models & Train", str(exc)))
-
-    win.navigate("home")
+    app.setFont(QFont(family, 10))
+    win = StudioWindow(theme_name="dark")
     win.show()
     win.raise_()
     win.activateWindow()
-    napari.run()
-
-
-def _seed_samples_if_empty(store: ProjectStore) -> None:
-    """First-run nicety: populate a few sample projects so the library isn't
-    an empty void. Harmless JSON the user can delete; skipped once any project
-    exists."""
-    if store.list():
-        return
-    from napari_app.studio.project import ProjectSettings, ProjectStats
-    samples = [
-        ("Fluorescence Nuclei — DAPI", "384-well DAPI screen, one-shot LoRA fine-tuned.",
-         ["fluorescence", "nuclei"], ProjectSettings(engine="cellseg1"),
-         ProjectStats(n_images=128, n_cells=31400, last_f1=0.94, progress=96)),
-        ("H&E Tissue Cohort", "Whole-slide H&E biopsies, tiled at native resolution.",
-         ["histology", "H&E"], ProjectSettings(engine="cellpose", tiled=True),
-         ProjectStats(n_images=342, n_cells=188000, progress=41)),
-        ("Live-cell Mitosis", "Confocal z-stacks tracked across time with SAM 2.",
-         ["time-lapse", "3D"], ProjectSettings(engine="sam2", sam2_tracking_mode="propagate"),
-         ProjectStats(n_images=24, n_cells=9700, last_f1=0.90, progress=70)),
-    ]
-    for name, desc, tags, settings, stats in samples:
-        p = store.create(name, description=desc, tags=tags, settings=settings)
-        p.stats = stats
-        store.save(p)
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

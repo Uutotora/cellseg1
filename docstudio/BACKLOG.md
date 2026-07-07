@@ -1,0 +1,109 @@
+# Backlog — CellSeg1 Studio (tab by tab)
+
+The plan to take Studio from **design skeleton** to **full product**, one tab
+at a time. Each tab below is its own mini-backlog: a goal, the work, and a
+task list. Do a tab **end to end** (data + interactions + tests) before moving
+on, keeping the look pixel-stable. Legend: size S (hours) · M (day) · L (multi-day).
+
+When you finish a tab: log it in `CHANGELOG.md`, tick it here, update
+`ROADMAP.md` if a phase closed.
+
+---
+
+## ✅ Done (skeleton phase)
+
+- [x] **Window chrome** — frameless, rounded corners, own dark title bar (own
+  traffic lights, native move/resize), screen fade transitions.
+- [x] **Design system** — tokens (light+dark), the `components.py` UI kit,
+  `paint.py` nuclei art, `demo.py` static content.
+- [x] **All screens reproduced natively (static)** — Home, Projects, Segment
+  workspace (Images|Layers · canvas · Segment|Results), Models & Train,
+  Dashboard, + overlays (Assistant drawer, Logs console, ⌘K palette, toast).
+
+---
+
+## P0 — make the shell truly usable
+
+### Projects tab · M
+- **Goal:** real projects, not demo cards.
+- **Work:** reintroduce the `Project`/`ProjectStore` data model (in git history,
+  `napari_app/studio/project.py`); back Home "recent" + Projects grid with it;
+  wire search/filter/favourite; card click opens that project in the workspace.
+- **Tasks:** ☐ restore + adapt data model · ☐ store→screens binding ·
+  ☐ live search/filter/favourite · ☐ "active project" state shared to workspace ·
+  ☐ tests (store pure-logic + screen wiring).
+
+### New-project dialog · S
+- **Goal:** the "+ New Project" flow (name · description · import · engine),
+  the 3-step Label-Studio pattern, writing through the store.
+- **Tasks:** ☐ modal/stepper UI (reuse atoms) · ☐ file/drag import picker ·
+  ☐ persist + open · ☐ tests.
+
+### Segment (Workspace) tab · L  ← the flagship
+- **Goal:** the real segmentation surface; napari returns as an embedded
+  component, the custom Layers/Results UI stays.
+- **Work:** embed `napari.Viewer(show=False)` canvas into `WorkspaceScreen`
+  (replace `NucleiView`); drive the custom **Layers** panel from
+  `viewer.layers` (visibility, opacity, new labels/shapes/points, grid, 2D↔3D,
+  delete — real effects); wire Segment settings + Run to a predict controller
+  (reuse `napari_app/core/predict_controller.py`); populate Results (stats,
+  calibration, save/export/refine/measurements, colour-by heatmap, GT & eval,
+  batch, benchmark); toast on completion.
+- **Tasks:** ☐ embed canvas · ☐ Layers ↔ viewer.layers model · ☐ mode tools
+  (brush/eraser/fill/…) · ☐ engine/threshold controls → config · ☐ Run +
+  progress + results · ☐ GT overlay + eval metrics · ☐ colour-by heatmap ·
+  ☐ batch + benchmark · ☐ tests (controller pure + wiring).
+
+---
+
+## P1 — differentiation
+
+### Models & Train tab · M
+- **Goal:** real one-shot LoRA training + model management.
+- **Work:** wire the train form to `napari_app/core/train_model.py` /
+  `train_state_manager`; live run list + progress; model list from disk;
+  import/select a model for the workspace.
+- **Tasks:** ☐ train form → training entry · ☐ progress/run state · ☐ model
+  registry list · ☐ select-into-workspace · ☐ tests.
+
+### Assistant tab · M
+- **Goal:** the diagnostic Assistant as a real chat.
+- **Work:** back the drawer with `napari_app/advisor.py` (offline diagnostics +
+  optional Ollama); make "apply" chips actually change settings & re-run.
+- **Tasks:** ☐ advisor bridge · ☐ streaming replies · ☐ apply-suggestion
+  actions · ☐ tests.
+
+### Dashboard tab · M
+- **Goal:** real experiment tracking.
+- **Work:** replace static charts with the Aim integration
+  (`napari_app/core/experiment_tracking.py`) — embedded view or live data;
+  runs table from real runs.
+- **Tasks:** ☐ data source · ☐ charts from real metrics · ☐ runs table · ☐ open-in-Aim.
+
+### Logs tab · S
+- **Goal:** real app log stream in the console (reuse `widgets/log_window.py`
+  logic / a log handler), autoscroll, level filter.
+
+### Command palette (⌘K) · M
+- **Goal:** every action reachable — run, switch engine, apply preset, export,
+  navigate. Fuzzy search over a real action registry.
+
+---
+
+## P2 — polish & platform
+
+- [ ] Live theme repaint without a full rebuild; persist the choice.
+- [ ] Guide & Docs screen (currently a no-op sidebar item).
+- [ ] Onboarding / empty states for a fresh install.
+- [ ] Native macOS rounded corners + shadow via pyobjc (drop the mask) — optional.
+- [ ] Settings screen (device, storage, paths, defaults).
+- [ ] Packaging: a real `.app` bundle.
+
+---
+
+## House rules
+
+- Keep the classic app (`napari_app/main.py`) untouched.
+- Don't restyle when wiring — behaviour goes *under* the existing design.
+- Heavy deps (napari/torch) imported lazily inside the tab, never in shared modules.
+- Tests mandatory for new logic; note GUI/GPU as not-verified-here.
