@@ -18,14 +18,24 @@ project_controller.py  ProjectController (Qt-free): search/filter, favourites,
                   seeding. Home/Projects screens are bound to it.
 screens.py        HomeScreen, ProjectsScreen — bound to project_controller
                   (+ shared page_header/scroll helpers). Live data, not demo.
+                  Home's quick cards/resource links are all real actions now
+                  (New Project dialog, navigate, external open, "Open Sample").
+new_project_dialog.py  NewProjectDialog — the "+ New Project" modal (scrim +
+                  centred panel, same construction as overlays.CommandPalette):
+                  name+description → import (drag-drop or a file picker) →
+                  engine, writing through ProjectStore.create() on finish.
 workspace.py      WorkspaceScreen — the signature Segment screen
                   (Images|Layers panel · canvas · Segment|Results inspector).
                   Still static except the top-bar breadcrumb/engine chip,
                   which reflect the real active project (set_active_project).
 extra_screens.py  ModelsScreen (train), DashboardScreen (charts + runs table).
-overlays.py       AssistantDrawer, LogsConsole, CommandPalette, Toast.
+overlays.py       AssistantDrawer, LogsConsole, CommandPalette, Toast (now has
+                  a real announce() used by project creation, not just static).
 icons.py          Studio's OWN icon set (from the mockup) — self-contained.
-motion.py         Small motion helpers (fade). Self-contained.
+motion.py         Small motion helpers: fade_in (screen switches),
+                  install_hover_lift (animated shadow "elevation" on hover —
+                  QSS has no transform/transition, so this animates a
+                  QGraphicsDropShadowEffect instead). Self-contained.
 fonts/            Figtree (SIL OFL), registered at startup.
 tests/            Studio's own test suite (run `pytest studio/tests`).
 ```

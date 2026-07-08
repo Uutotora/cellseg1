@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QLineEdit, QToolButton,
     QScrollArea, QSizePolicy,
@@ -303,7 +303,7 @@ class CommandPalette(QWidget):
 
 
 class Toast(QFrame):
-    """Bottom-right success toast."""
+    """Bottom-right success toast. Static by default; ``announce()`` for real use."""
 
     def __init__(self, parent: QWidget, t: dict):
         super().__init__(parent)
@@ -322,9 +322,14 @@ class Toast(QFrame):
         row.addWidget(ic)
         col = QVBoxLayout()
         col.setSpacing(1)
-        col.addWidget(label("Segmentation complete", 13, t["text"], 600))
-        col.addWidget(label("247 cells · F1 0.94 vs ground truth · 3.2 s", 11.5, t["text_muted"]))
+        self._title = label("Segmentation complete", 13, t["text"], 600)
+        col.addWidget(self._title)
+        self._subtitle = label("247 cells · F1 0.94 vs ground truth · 3.2 s", 11.5, t["text_muted"])
+        col.addWidget(self._subtitle)
         row.addLayout(col)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.hide)
         self.hide()
 
     def place(self):
@@ -332,3 +337,12 @@ class Toast(QFrame):
         if p:
             self.adjustSize()
             self.move(p.width() - self.width() - 22, p.height() - self.height() - 22)
+
+    def announce(self, title: str, subtitle: str, duration_ms: int = 3200) -> None:
+        """Show a real, timed confirmation with the given text."""
+        self._title.setText(title)
+        self._subtitle.setText(subtitle)
+        self.place()
+        self.show()
+        self.raise_()
+        self._hide_timer.start(duration_ms)

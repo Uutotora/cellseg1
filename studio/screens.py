@@ -9,9 +9,11 @@ layers · canvas · inspector). See ``docstudio/`` for the per-tab wiring plan.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QGridLayout,
     QScrollArea, QLineEdit, QSizePolicy, QStackedWidget, QToolButton,
@@ -22,10 +24,44 @@ from studio import theme
 from studio import project_controller
 from studio.project import ENGINE_KIND
 from studio.paint import nuclei_pixmap, NucleiView
+from studio.motion import install_hover_lift
 from studio.components import (
     Chip, Badge, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
     SegControl, StatTile, FieldRow, GroupLabel, Accordion, hline, soft_shadow, label,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _open_local_doc(*relative_parts: str) -> None:
+    path = _REPO_ROOT.joinpath(*relative_parts)
+    if path.exists():
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+
+def _github_url() -> Optional[str]:
+    """The real origin remote, converted to an https:// web URL (or None)."""
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["git", "remote", "get-url", "origin"], capture_output=True,
+            text=True, timeout=2, cwd=str(_REPO_ROOT))
+        url = out.stdout.strip()
+    except Exception:
+        return None
+    if not url:
+        return None
+    if url.startswith("git@github.com:"):
+        url = "https://github.com/" + url[len("git@github.com:"):]
+    if url.endswith(".git"):
+        url = url[:-4]
+    return url
+
+
+def _open_github() -> None:
+    url = _github_url()
+    if url:
+        QDesktopServices.openUrl(QUrl(url))
 
 
 # ── shared helpers ───────────────────────────────────────────────────────────
@@ -65,21 +101,23 @@ def cover_label(seed: int, w: int, h: int, density: float, big: bool = False) ->
 # ── Home ─────────────────────────────────────────────────────────────────────
 class HomeScreen(QWidget):
     def __init__(self, t: dict, controller: "project_controller.ProjectController",
-                 on_navigate: Callable[[str], None], on_open: Callable[[str], None]):
+                 on_navigate: Callable[[str], None], on_open: Callable[[str], None],
+                 on_new_project: Callable[[], None]):
         super().__init__()
         self._t = t
         self._controller = controller
         self._nav = on_navigate
         self._open = on_open
+        self._new_project = on_new_project
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        cta = PillButton("New Project", t, "primary", "plus")
-        cta.clicked.connect(lambda: on_navigate("projects"))
+        self._new_project_cta = PillButton("New Project", t, "primary", "plus")
+        self._new_project_cta.clicked.connect(lambda: on_new_project())
         outer.addWidget(page_header("Welcome back  👋",
                                     "Segment, measure and compare cells across your projects.",
-                                    t, cta))
+                                    t, self._new_project_cta))
 
         body = QWidget()
         grid = QHBoxLayout(body)
@@ -88,7 +126,8 @@ class HomeScreen(QWidget):
 
         left = QVBoxLayout()
         left.setSpacing(24)
-        left.addLayout(self._quick())
+        self._quick_grid = self._quick()
+        left.addLayout(self._quick_grid)
         left.addWidget(self._recent_section())
         left.addStretch(1)
         grid.addLayout(left, 1)
@@ -101,16 +140,23 @@ class HomeScreen(QWidget):
         g = QGridLayout()
         g.setSpacing(14)
         cards = [
-            ("folder", "New Project", "Name it, import images, pick an engine.", "primary"),
-            ("image", "Import Images", "TIFF · OME-TIFF · ND2 · CZI · PNG. Drag & drop.", "signal"),
-            ("models", "Train a Model", "One-shot LoRA from a single annotated image.", "warning"),
-            ("chart", "Open Sample", "Nuclei, tissue & mitosis datasets to explore.", "success"),
+            ("folder", "New Project", "Name it, import images, pick an engine.", "primary", self._new_project),
+            ("image", "Import Images", "TIFF · OME-TIFF · ND2 · CZI · PNG. Drag & drop.", "signal", self._new_project),
+            ("models", "Train a Model", "One-shot LoRA from a single annotated image.", "warning", lambda: self._nav("train")),
+            ("chart", "Open Sample", "Nuclei, tissue & mitosis datasets to explore.", "success", self._open_sample),
         ]
         for i, c in enumerate(cards):
             g.addWidget(self._quick_card(*c), i // 2, i % 2)
         return g
 
-    def _quick_card(self, icon_name, title, sub, kind) -> QFrame:
+    def _open_sample(self) -> None:
+        projects = self._controller.list_projects()
+        if projects:
+            self._open(projects[0].id)
+        else:
+            self._new_project()
+
+    def _quick_card(self, icon_name, title, sub, kind, on_click: Callable[[], None]) -> QFrame:
         t = self._t
         card = QFrame()
         card.setObjectName("QCard")
@@ -119,7 +165,7 @@ class HomeScreen(QWidget):
         card.setStyleSheet(
             f"#QCard{{background:{t['surface']}; border:1px solid {t['border']}; border-radius:14px;}}"
             f"#QCard:hover{{border-color:{t['border_strong']};}}")
-        soft_shadow(card, 14, 22, 3)
+        install_hover_lift(card, base=(14, 22, 3), hover=(22, 34, 6))
         row = QHBoxLayout(card)
         row.setContentsMargins(18, 16, 18, 16)
         row.setSpacing(14)
@@ -138,6 +184,7 @@ class HomeScreen(QWidget):
         col.addWidget(s)
         row.addWidget(badge, alignment=Qt.AlignmentFlag.AlignTop)
         row.addLayout(col, 1)
+        card.mouseReleaseEvent = lambda e, cb=on_click: cb()
         return card
 
     def _recent_section(self) -> QWidget:
@@ -171,6 +218,7 @@ class HomeScreen(QWidget):
         row.setStyleSheet(
             f"#RRow{{background:{t['surface']}; border:1px solid {t['border']}; border-radius:10px;}}"
             f"#RRow:hover{{border-color:{t['border_strong']};}}")
+        install_hover_lift(row)
         lay = QHBoxLayout(row)
         lay.setContentsMargins(14, 11, 14, 11)
         lay.setSpacing(14)
@@ -207,10 +255,12 @@ class HomeScreen(QWidget):
         col.addWidget(tip)
 
         res = self._card("Resources")
-        for name, icon_name, ext in [
-            ("Documentation", "guide", True), ("Getting started guide", "guide", False),
-            ("Ask the Assistant", "assistant", False), ("GitHub", "settings", True)]:
-            res.layout().addWidget(self._res_link(name, icon_name, ext))
+        for name, icon_name, ext, on_click in [
+            ("Documentation", "guide", True, lambda: _open_local_doc("README.md")),
+            ("Getting started guide", "guide", False, lambda: _open_local_doc("docstudio", "OVERVIEW.md")),
+            ("Ask the Assistant", "assistant", False, lambda: self._nav("assistant")),
+            ("GitHub", "settings", True, _open_github)]:
+            res.layout().addWidget(self._res_link(name, icon_name, ext, on_click))
         col.addWidget(res)
 
         dev = self._card("This device")
@@ -234,7 +284,7 @@ class HomeScreen(QWidget):
         v.addWidget(label(title, 13.5, t["text"], 600))
         return c
 
-    def _res_link(self, name: str, icon_name: str, ext: bool) -> QFrame:
+    def _res_link(self, name: str, icon_name: str, ext: bool, on_click: Callable[[], None]) -> QFrame:
         t = self._t
         row = QFrame()
         row.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -251,6 +301,7 @@ class HomeScreen(QWidget):
             e = QLabel()
             e.setPixmap(icons.pixmap("settings", t["text_muted"], 12))
             lay.addWidget(e)
+        row.mouseReleaseEvent = lambda e, cb=on_click: cb()
         return row
 
 

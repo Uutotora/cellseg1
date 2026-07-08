@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 from studio import theme
 from studio.components import Sidebar
 from studio.project_controller import ProjectController
+from studio.new_project_dialog import NewProjectDialog
 from studio.screens import HomeScreen, ProjectsScreen
 from studio.workspace import WorkspaceScreen
 from studio.extra_screens import ModelsScreen, DashboardScreen
@@ -126,9 +127,13 @@ class StudioWindow(QMainWindow):
         self._sidebar.open_guide.connect(lambda: None)  # design skeleton: no-op
         row.addWidget(self._sidebar)
 
+        self._new_project_dialog = NewProjectDialog(
+            self, t, self._projects.store, on_created=self._on_project_created)
+
         self._stack = QStackedWidget()
         self._screens = {
-            "home": HomeScreen(t, self._projects, self.navigate, self._open_project),
+            "home": HomeScreen(t, self._projects, self.navigate, self._open_project,
+                               self._new_project_dialog.open),
             "projects": ProjectsScreen(t, self._projects, self.navigate, self._open_project),
             "workspace": WorkspaceScreen(t),
             "train": ModelsScreen(t),
@@ -146,7 +151,8 @@ class StudioWindow(QMainWindow):
         self._logs = LogsConsole(self, t)
         self._palette = CommandPalette(self, t)
         self._toast = Toast(self, t)
-        self._overlays = [self._assistant, self._logs, self._palette, self._toast]
+        self._overlays = [self._assistant, self._logs, self._palette, self._toast,
+                           self._new_project_dialog]
 
     # ── navigation ──────────────────────────────────────────────────────────
     def navigate(self, key: str) -> None:
@@ -172,6 +178,14 @@ class StudioWindow(QMainWindow):
         self._screens["workspace"].set_active_project(project)
         self.navigate("workspace")
 
+    def _on_project_created(self, project_id: str) -> None:
+        project = self._projects.store.load(project_id)
+        n = len(project.image_paths)
+        self._toast.announce(
+            "Project created",
+            f"“{project.name}” · {n} image{'s' if n != 1 else ''} · {project.settings.engine}")
+        self._open_project(project_id)
+
     def _toggle_drawer(self, drawer) -> None:
         # isHidden() is the explicit flag (works even before the window is shown)
         if not drawer.isHidden():
@@ -188,7 +202,7 @@ class StudioWindow(QMainWindow):
             self._palette.open()
 
     def _close_overlays(self) -> None:
-        for o in (self._palette, self._assistant, self._logs):
+        for o in (self._palette, self._assistant, self._logs, self._new_project_dialog):
             o.hide()
 
     # ── theming ─────────────────────────────────────────────────────────────
@@ -232,7 +246,7 @@ class StudioWindow(QMainWindow):
         grips = getattr(self, "_grips", None)
         if grips:
             layout_corner_grips(self, grips)
-        for o in (self._assistant, self._logs, self._palette, self._toast):
+        for o in (self._assistant, self._logs, self._palette, self._toast, self._new_project_dialog):
             if o.isVisible():
                 o.place()
 

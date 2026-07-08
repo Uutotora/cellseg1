@@ -32,15 +32,25 @@ When you finish a tab: log it in `CHANGELOG.md`, tick it here, update
 - **Tasks:** ☑ restore + adapt data model · ☑ store→screens binding ·
   ☑ live search/filter/favourite · ☑ "active project" state shared to workspace ·
   ☑ tests (store pure-logic + screen wiring).
-- Not done here (separate backlog items below): the "+ New Project" creation
-  flow itself (cards still open a blank workspace — no dialog yet), and the
-  workspace's own layers/canvas/predict wiring (Segment tab, unstarted).
+- Not done here (separate backlog item below, now also done): the
+  "+ New Project" creation flow itself. Still not done: the workspace's own
+  layers/canvas/predict wiring (Segment tab, unstarted).
 
-### New-project dialog · S
+### New-project dialog · S · ✅ done (2026-07-08)
 - **Goal:** the "+ New Project" flow (name · description · import · engine),
   the 3-step Label-Studio pattern, writing through the store.
-- **Tasks:** ☐ modal/stepper UI (reuse atoms) · ☐ file/drag import picker ·
-  ☐ persist + open · ☐ tests.
+- **Work:** `studio/new_project_dialog.py` — a scrim-backed modal (same
+  construction as `overlays.CommandPalette`) with 3 steps: name+description →
+  import (drag-and-drop + a native file picker, reusing existing atoms) →
+  engine (`SegControl`). Reachable from Home's "New Project"/"Import Images"
+  quick cards and top CTA; "Open Sample" opens an existing project or falls
+  back to this dialog when the store is empty. Creating a project writes
+  through `ProjectStore.create()` and opens straight into the workspace
+  (reusing the Projects tab's active-project flow), with a real toast
+  confirmation (`Toast.announce()` — previously built but never triggered
+  anywhere in the app).
+- **Tasks:** ☑ modal/stepper UI (reuse atoms) · ☑ file/drag import picker ·
+  ☑ persist + open · ☑ tests.
 
 ### Segment (Workspace) tab · L  ← the flagship
 - **Goal:** the real segmentation surface on **our own canvas** — NOT embedded

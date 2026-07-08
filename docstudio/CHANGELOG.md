@@ -5,6 +5,67 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-08 — Home screen: every element real, + the New Project modal
+
+Follow-up pass focused entirely on Home (Projects tab intentionally left
+alone this round):
+
+- **New `studio/new_project_dialog.py`** — the "+ New Project" flow ticked
+  off `BACKLOG.md`'s own item: a scrim-backed modal (identical construction
+  to `overlays.CommandPalette` — no native `QDialog` frame, stays consistent
+  with the app owning its own chrome) with the 3-step Label Studio pattern:
+  name + description → import images (a real drag-and-drop zone plus a
+  native file picker, both funnelling into the same add/remove-file state) →
+  engine (`SegControl` over the same three engines everywhere else in the
+  app). "Create Project" writes through the real `ProjectStore.create()` and
+  opens straight into the workspace, reusing the Projects tab's existing
+  active-project flow.
+- **Every Home element is now a real action**, not just the Projects grid:
+  the "New Project" CTA and quick card, and the "Import Images" quick card,
+  open the new dialog; "Train a Model" navigates to Models & Train; "Open
+  Sample" opens an existing project if one exists, or opens the dialog when
+  the store is empty; "Ask the Assistant" opens the Assistant drawer;
+  "Documentation"/"Getting started guide" open real local docs
+  (`README.md` / `docstudio/OVERVIEW.md`) and "GitHub" opens the real origin
+  remote (read from `git remote get-url origin` at runtime, converted to an
+  `https://` URL — never a hard-coded/guessed link, and it degrades to a
+  no-op if there's no remote).
+- **`Toast.announce()`** — the bottom-right success toast existed since the
+  design-skeleton phase but nothing had ever called `.show()` on it; project
+  creation is its first real trigger ("Project created · <name> · N images ·
+  engine"), auto-hiding on a timer.
+- **Hover "lift"** on Home's quick cards and recent-project rows, matching
+  the north-star mockup's `.qcard:hover`/`.rrow:hover` CSS
+  (`transform:translateY()` + a deeper shadow, ~160ms). QSS has no
+  `transform`/`transition`, so `motion.install_hover_lift()` animates a
+  `QGraphicsDropShadowEffect`'s blur/offset instead — same "the card is
+  rising toward you" read, without fighting Qt's layout engine.
+
+Verified: `studio/tests` green, 115 tests (28 new: a `test_new_project_dialog.py`
+covering the full step flow — validation, back/forward, persistence across
+steps, file add/remove, and a real end-to-end create-through-the-store; a
+`test_home_wiring.py` covering every quick-card/resource-link callback,
+`QDesktopServices.openUrl` mocked rather than actually invoked so tests never
+really open a browser). Two real bugs the new tests caught before shipping:
+`_go_next()` relied entirely on the Next button being disabled to block an
+empty project name (fixed with its own guard); a test asserting
+`isVisible()` on a dialog button needed the test's own parent widget shown
+first (`isHidden()` is the explicit per-widget flag; `isVisible()` needs the
+whole ancestor chain actually shown — same distinction already called out in
+`test_app_wiring.py`). Repo-root throwaway-venv check (`pip install --group
+test` only) still passes, 380 passed / 14 skipped, confirming nothing in
+this round leaked a heavy dependency into the light CI group.
+
+Offscreen screenshot verification this round (`QWidget.grab()` under
+`QT_QPA_PLATFORM=offscreen`, both themes, all 3 dialog steps, plus a hover
+state settled via `QTest.qWait`): layout, spacing, data and the dialog flow
+all matched the design intent. One rendering artifact showed up (thin outline
+boxes around label text inside scrim-backed panels) — traced to a pre-existing
+offscreen-QPA quirk by reproducing it identically in the untouched
+`CommandPalette`, so it isn't a real bug and isn't expected on a real display;
+not independently re-verified with a physical display. The Projects tab
+(left untouched this round) also rendered correctly in these screenshots.
+
 ## 2026-07-08 — Projects tab wired end to end (first real tab, skeleton → functional)
 
 The Projects tab is no longer demo cards — the first tab taken from

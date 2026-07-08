@@ -18,6 +18,8 @@ Modules (import direction is one-way, leaf → shell):
 - :mod:`~studio.screens` / :mod:`~.workspace` / :mod:`~.extra_screens`
   — the screens. Home/Projects are wired to ``project_controller``; the rest
   still render static ``demo`` content pending their own tab.
+- :mod:`~studio.new_project_dialog` — the "+ New Project" modal (name/
+  description → import → engine), writing through ``project.ProjectStore``.
 - :mod:`~studio.overlays` — assistant drawer, logs, ⌘K palette, toast.
 - :mod:`~studio.window_chrome` — the frameless title bar.
 - :mod:`~studio.app` — ``StudioWindow`` + ``main`` (the entry point).

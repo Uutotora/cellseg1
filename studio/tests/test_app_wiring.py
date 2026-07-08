@@ -98,7 +98,7 @@ def test_all_screens_construct(app, controller):
     from studio.workspace import WorkspaceScreen
     from studio.extra_screens import ModelsScreen, DashboardScreen
     t = theme.DARK
-    assert HomeScreen(t, controller, lambda k: None, lambda i: None) is not None
+    assert HomeScreen(t, controller, lambda k: None, lambda i: None, lambda: None) is not None
     assert ProjectsScreen(t, controller, lambda k: None, lambda i: None) is not None
     assert WorkspaceScreen(t) is not None
     assert ModelsScreen(t) is not None
@@ -107,13 +107,13 @@ def test_all_screens_construct(app, controller):
 
 def test_home_screen_lists_recent_real_projects(app, controller):
     from studio.screens import HomeScreen
-    home = HomeScreen(theme.DARK, controller, lambda k: None, lambda i: None)
+    home = HomeScreen(theme.DARK, controller, lambda k: None, lambda i: None, lambda: None)
     assert home._recent_section().layout().count() == 1 + 4  # header + 4 rows
 
 
 def test_home_screen_handles_empty_store(app, empty_controller):
     from studio.screens import HomeScreen
-    home = HomeScreen(theme.DARK, empty_controller, lambda k: None, lambda i: None)
+    home = HomeScreen(theme.DARK, empty_controller, lambda k: None, lambda i: None, lambda: None)
     assert home._recent_section() is not None
 
 
