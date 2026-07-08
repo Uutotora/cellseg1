@@ -36,6 +36,24 @@ def empty_controller(tmp_path):
     return ProjectController(ProjectStore(tmp_path), seed_if_empty=False)
 
 
+@pytest.fixture
+def styled_app(app):
+    """The shared QApplication with the real app-wide stylesheet applied.
+
+    ``studio.app.main()`` calls ``app.setStyleSheet(theme.build_qss(...))``
+    at startup — the bare-QWidget-inherits-bg hazard (see the tests below)
+    only cascades through that *app-wide* rule, so a test using the plain
+    ``app`` fixture alone would pass whether or not the code is actually
+    fixed. Reset afterward: ``app`` is a process-wide singleton shared with
+    every other test module in this session, and alphabetically this file
+    runs before test_home_wiring.py / test_motion.py / test_new_project_
+    dialog.py — a stylesheet left set here would otherwise leak into them.
+    """
+    app.setStyleSheet(theme.build_qss(theme.DARK))
+    yield app
+    app.setStyleSheet("")
+
+
 def _guide(app, controller, on_navigate=None, on_open=None, on_new_project=None):
     return guide_screen.GuideScreen(
         theme.DARK, controller,
@@ -174,3 +192,102 @@ def test_faq_block_renders_one_accordion_per_item(app, controller):
 def test_inline_bold_markup_becomes_html_bold():
     assert guide_screen._inline("a **bold** word") == "a <b>bold</b> word"
     assert guide_screen._inline("no markup here") == "no markup here"
+
+
+# ── regression: bare QWidget wrappers must not paint an opaque bg patch ──────
+# A plain QWidget() with no stylesheet of its own inherits the app-wide
+# `QWidget { background: <bg> }` rule (theme.build_qss) and paints an *opaque*
+# bg-coloured rectangle wherever it sits. Confirmed directly: it's invisible
+# on the page canvas itself, but a real user's screenshot showed it as
+# visibly banded/two-tone rows in the engine-comparison table and the
+# keyboard-shortcuts list, where these wrappers sit *inside* an
+# already-lighter surface2 card. _bare() (used for every plain grouping
+# widget in this module) fixes it by setting background:transparent
+# explicitly; these tests sample actual rendered pixels so a future re-
+# introduction of a raw QWidget() in this file fails a test, not just a
+# screenshot.
+def test_bare_widget_is_transparent_not_opaque(styled_app):
+    from PyQt6.QtWidgets import QLabel, QVBoxLayout
+
+    t = theme.DARK
+    card = guide_screen._callout(t, "x")  # any real #ObjectName-scoped card
+    # Re-parent a _bare() widget directly onto the callout's own surface so
+    # a bug would paint bg (near-black) instead of the callout's primary_weak
+    # tint underneath it.
+    probe = guide_screen._bare()
+    QVBoxLayout(probe).addWidget(QLabel("x"))
+    card.layout().addWidget(probe)
+    card.resize(240, 160)
+    card.show()
+    styled_app.processEvents()
+    img = card.grab().toImage()
+    # Sample just inside probe's left edge, away from the label glyph.
+    sample = img.pixelColor(4, card.height() - 8)
+    assert sample.name() != t["bg"]
+
+
+def test_table_block_row_fill_matches_the_card_not_the_page_bg(styled_app):
+    from PyQt6.QtCore import Qt as _Qt
+    from PyQt6.QtWidgets import QWidget
+
+    t = theme.DARK
+    card = guide_screen._table_block(
+        t, ["Engine", "Best for", "Setup"],
+        [["CellSeg1 · LoRA", "x", "y"], ["Cellpose-SAM", "x", "y"], ["SAM 2", "x", "y"]])
+    card.resize(500, 220)
+    card.show()
+    styled_app.processEvents()
+    img = card.grab().toImage()
+
+    # _bare() returns a plain QWidget, not a QFrame -- search broadly.
+    rows = [r for r in card.findChildren(QWidget, options=_Qt.FindChildOption.FindChildrenRecursively)
+            if r.objectName() == "GuideTableRow"]
+    assert len(rows) == 3
+    for row in rows:
+        # Row centre -- inside the card's own 16px left margin (immune to
+        # the bug regardless of a fix, since nothing paints there) is *not*
+        # a valid sample point; the row's own horizontal centre is
+        # guaranteed to fall within the widget actually under test.
+        pt = row.mapTo(card, row.rect().center())
+        sample = img.pixelColor(pt.x(), pt.y())
+        assert sample.name() == t["surface2"], (
+            f"row at {pt} sampled {sample.name()!r}, expected the card's own "
+            f"surface2 fill {t['surface2']!r} -- a bare QWidget() row wrapper "
+            f"is painting the page bg over it again")
+
+
+def test_shortcuts_block_keys_area_matches_row_fill_not_page_bg(styled_app):
+    from PyQt6.QtCore import Qt as _Qt
+    from PyQt6.QtWidgets import QFrame, QVBoxLayout, QWidget
+
+    t = theme.DARK
+    # Wrapped in a real, opaque bg-coloured parent -- exactly how this block
+    # is actually embedded in the app (an unparented, "transparent" _bare()
+    # top-level widget renders its OWN default window background when
+    # grabbed standalone, which isn't the thing under test here).
+    outer = QFrame()
+    outer.setStyleSheet(f"background:{t['bg']};")
+    QVBoxLayout(outer).setContentsMargins(0, 0, 0, 0)
+    w = guide_screen._shortcuts_block(t, guide_content.SHORTCUTS)
+    outer.layout().addWidget(w)
+    outer.resize(500, 200)
+    outer.show()
+    styled_app.processEvents()
+    img = outer.grab().toImage()
+
+    # keys_wrap (a _bare() QWidget, not a QFrame) holds the key pills + a
+    # trailing stretch. Its *row*'s own left padding (14px) is immune to the
+    # bug regardless of a fix (nothing paints there) -- same trap as the
+    # table-row test above. Sample near keys_wrap's own right edge instead,
+    # past the pills, in the stretch space that's actually part of it.
+    keys_wraps = [k for k in w.findChildren(QWidget, options=_Qt.FindChildOption.FindChildrenRecursively)
+                  if k.objectName() == "GuideShortcutKeys"]
+    assert len(keys_wraps) == len(guide_content.SHORTCUTS)
+    for kw in keys_wraps:
+        y = kw.mapTo(outer, kw.rect().center()).y()
+        x = kw.mapTo(outer, kw.rect().topRight()).x() - 5
+        sample = img.pixelColor(x, y)
+        assert sample.name() == t["surface2"], (
+            f"keys_wrap at ({x},{y}) sampled {sample.name()!r}, expected the "
+            f"row's own surface2 fill {t['surface2']!r} -- a bare QWidget() "
+            f"wrapper is painting the page bg over it again")

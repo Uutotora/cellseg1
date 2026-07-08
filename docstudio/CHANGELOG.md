@@ -5,6 +5,59 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-09 — A third rendering bug in the same family: bare QWidget() wrappers
+
+Third round of direct user feedback, pointing at two specific remaining
+spots: the engine-comparison table (banded rows) and the keyboard-shortcuts
+list (two-tone rows) still showed a dark patch. Related to, but distinct
+from, the previous two fixes (unqualified stylesheets cascading; `inset` vs
+`surface2`) — this was a *third* mechanism producing the same visual family
+of bug.
+
+Root cause: several plain `QWidget()` instances used purely to host a
+sub-layout (`_table_block`'s per-row wrapper, `_shortcuts_block`'s
+`keys_wrap`, and others) have no stylesheet of their own, so they inherit
+the **app-wide** `QWidget { background: <bg> }` rule
+(`theme.build_qss`, applied via `app.setStyleSheet()` at startup) and paint
+an *opaque* bg-coloured rectangle wherever they sit. Invisible when a bare
+wrapper sits directly on the page canvas (matches its surroundings exactly
+— true for most of them); a visible dark patch when it sits inside an
+already-lighter `surface2` card (true for these two). Confirmed with a
+pixel-level render test before touching any code.
+
+Fix: added `_bare()`, a small helper that returns a `QWidget` with
+`background: transparent` set explicitly, and replaced every plain
+`QWidget()` grouping wrapper in `guide_screen.py` with it (12 call sites) —
+not just the two currently-visible ones, since this is the third time this
+general class of mistake has shipped and a systematic fix is cheaper than
+finding the next instance by screenshot again.
+
+Also strengthened the test suite significantly: the first two regression
+tests written for this (`test_table_block_row_fill_...`,
+`test_shortcuts_block_keys_area_...`) *passed against the unfixed code* on
+first write — twice, for two different reasons — before being corrected:
+(1) they never applied the real app-wide stylesheet (`app.setStyleSheet
+(theme.build_qss(...))`, extracted into a new `styled_app` fixture with
+teardown, since the plain `app` fixture's `QApplication` is a
+process-wide singleton shared with every other test module — the bug is
+literally invisible without that stylesheet applied, so a test skipping it
+passes regardless of whether the code is fixed); (2) they sampled a pixel
+inside the *card's own margin* (or the *row's* own margin, for the
+shortcuts case) rather than inside the actual bare-widget-under-test's
+bounds — a coordinate immune to the bug either way, since nothing painted
+by the wrapper ever reaches it. Fixed by giving the wrappers themselves
+object names (`GuideTableRow`, `GuideShortcutKeys`) and sampling from their
+own real `.geometry()`, confirmed by running each test against the
+pre-fix code and watching it actually fail before trusting it.
+
+Verified: `studio/tests` green. Confirmed all three new regression tests
+fail against the pre-fix `guide_screen.py` and pass against the fix (this
+took three attempts to get the tests themselves right — see above).
+Confirmed visually via real offscreen screenshots across all 10 articles,
+both themes. Not verified: how this reads on the user's actual display.
+
+---
+
 ## 2026-07-09 — Guide & Docs: dropped the redundant outer "card" entirely
 
 A second round of direct user feedback on the previous day's contrast fix:

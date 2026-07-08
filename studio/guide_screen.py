@@ -37,6 +37,26 @@ def _inline(text: str) -> str:
     return _BOLD_RE.sub(r"<b>\1</b>", text)
 
 
+def _bare(layout=None) -> QWidget:
+    """A plain ``QWidget``, explicitly transparent, for grouping a layout.
+
+    A bare ``QWidget()`` with no stylesheet of its own still inherits the
+    app-wide ``QWidget { background: <bg> } `` rule (``theme.build_qss``)
+    and paints an *opaque* bg-coloured rectangle wherever it sits —
+    invisible when it's directly on the page canvas, but a stray dark
+    patch cut into any lighter card it's nested inside (confirmed by a
+    pixel-level render test — this is exactly what produced the banded
+    rows in the engine-comparison table and the two-tone shortcut rows).
+    Every plain grouping widget in this module goes through this instead
+    of a raw ``QWidget()`` so the mistake can't recur silently.
+    """
+    w = QWidget()
+    w.setStyleSheet("background: transparent;")
+    if layout is not None:
+        w.setLayout(layout)
+    return w
+
+
 def _prose_label(text: str, size: float, color: str, weight: int = 400) -> QLabel:
     lb = QLabel(_inline(text))
     lb.setTextFormat(Qt.TextFormat.RichText)
@@ -57,7 +77,7 @@ def _para(t: dict, text: str) -> QWidget:
 
 
 def _bullets(t: dict, items: list[str]) -> QWidget:
-    w = QWidget()
+    w = _bare()
     v = QVBoxLayout(w)
     v.setContentsMargins(0, 0, 0, 0)
     v.setSpacing(7)
@@ -69,9 +89,7 @@ def _bullets(t: dict, items: list[str]) -> QWidget:
         dot.setStyleSheet(f"color:{t['text_muted']}; font-size:13.5px;")
         row.addWidget(dot, alignment=Qt.AlignmentFlag.AlignTop)
         row.addWidget(_prose_label(item, 13.5, t["text_subtle"]), 1)
-        wrap = QWidget()
-        wrap.setLayout(row)
-        v.addWidget(wrap)
+        v.addWidget(_bare(row))
     return w
 
 
@@ -140,7 +158,7 @@ def _step_row(t: dict, index: int, step: guide_content.Step,
 
 def _steps(t: dict, steps: list[guide_content.Step],
            run_action: Callable[[Optional[str]], None]) -> QWidget:
-    w = QWidget()
+    w = _bare()
     v = QVBoxLayout(w)
     v.setContentsMargins(0, 0, 0, 0)
     v.setSpacing(10)
@@ -150,7 +168,7 @@ def _steps(t: dict, steps: list[guide_content.Step],
 
 
 def _shortcuts_block(t: dict, shortcuts: list[guide_content.Shortcut]) -> QWidget:
-    w = QWidget()
+    w = _bare()
     v = QVBoxLayout(w)
     v.setContentsMargins(0, 0, 0, 0)
     v.setSpacing(8)
@@ -171,8 +189,8 @@ def _shortcuts_block(t: dict, shortcuts: list[guide_content.Shortcut]) -> QWidge
                 f"border-radius:6px; padding:3px 8px; font-family:{theme.MONO}; font-size:12px; font-weight:600;")
             keys.addWidget(pill)
         keys.addStretch(1)
-        keys_wrap = QWidget()
-        keys_wrap.setLayout(keys)
+        keys_wrap = _bare(keys)
+        keys_wrap.setObjectName("GuideShortcutKeys")  # findable for the bare-widget regression test
         keys_wrap.setFixedWidth(150)
         h.addWidget(keys_wrap)
         h.addWidget(_prose_label(sc.desc, 12.5, t["text_subtle"]), 1)
@@ -181,7 +199,7 @@ def _shortcuts_block(t: dict, shortcuts: list[guide_content.Shortcut]) -> QWidge
 
 
 def _faq_block(t: dict, items: list[guide_content.FAQItem]) -> QWidget:
-    w = QWidget()
+    w = _bare()
     v = QVBoxLayout(w)
     v.setContentsMargins(0, 0, 0, 0)
     v.setSpacing(8)
@@ -215,10 +233,10 @@ def _table_block(t: dict, headers: list[str], rows: list[list[str]]) -> QFrame:
             else:
                 lb.setStyleSheet(f"color:{t['text_subtle']}; font-size:12.5px;")
             r.addWidget(lb, 1)
-        wrap = QWidget()
-        wrap.setLayout(r)
         r.setContentsMargins(0, 9, 0, 9)
-        v.addWidget(wrap)
+        row_wrap = _bare(r)
+        row_wrap.setObjectName("GuideTableRow")  # findable for the bare-widget regression test
+        v.addWidget(row_wrap)
         v.addWidget(hline(t))
     return card
 
@@ -246,7 +264,7 @@ def _render_block(t: dict, block: tuple, run_action: Callable[[Optional[str]], N
 
 def _render_article(t: dict, article: guide_content.Article,
                      run_action: Callable[[Optional[str]], None]) -> QWidget:
-    body = QWidget()
+    body = _bare()
     v = QVBoxLayout(body)
     v.setContentsMargins(0, 0, 0, 0)
     v.setSpacing(13)
@@ -300,7 +318,7 @@ class GuideScreen(QWidget):
         outer.addWidget(page_header(
             "Guide & Docs", f"{n_articles} articles across {n_topics} topics", t, self._close_btn))
 
-        body = QWidget()
+        body = _bare()
         row = QHBoxLayout(body)
         row.setContentsMargins(34, 4, 34, 40)
         row.setSpacing(20)
@@ -322,7 +340,7 @@ class GuideScreen(QWidget):
         # layout column: the search field and nav rows provide their own
         # (correct) visual structure without a container drawn around them.
         t = self._t
-        panel = QWidget()
+        panel = _bare()
         panel.setFixedWidth(self.NAV_WIDTH)
         v = QVBoxLayout(panel)
         v.setContentsMargins(0, 0, 0, 0)
@@ -335,7 +353,7 @@ class GuideScreen(QWidget):
         search.textChanged.connect(self._on_search)
         v.addWidget(search)
 
-        inner = QWidget()
+        inner = _bare()
         iv = QVBoxLayout(inner)
         iv.setContentsMargins(0, 4, 8, 8)
         iv.setSpacing(1)
@@ -414,7 +432,7 @@ class GuideScreen(QWidget):
         self._content_stack = QStackedWidget()
         for article in guide_content.ARTICLES:
             inner = _render_article(t, article, self._run_action)
-            wrap = QWidget()
+            wrap = _bare()
             wv = QVBoxLayout(wrap)
             wv.setContentsMargins(0, 4, 10, 0)  # top breathing room, scrollbar clearance
             wv.addWidget(inner)
