@@ -1,4 +1,4 @@
-"""Tests for the Studio design tokens (napari_app/studio/theme.py).
+"""Tests for the Studio design tokens (studio/theme.py).
 
 Pure strings — no Qt needed; runs under the light CI `test` group.
 """
@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from napari_app.studio import theme
+from studio import theme
 
 
 def test_light_and_dark_share_identical_token_keys():

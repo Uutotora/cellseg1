@@ -1,6 +1,6 @@
 # Architecture — CellSeg1 Studio
 
-## Module map (`napari_app/studio/`)
+## Module map (`studio/`)
 
 ```
 app.py            StudioWindow(QMainWindow) + main(). Frameless rounded window,
@@ -16,15 +16,21 @@ workspace.py      WorkspaceScreen — the signature Segment screen
                   (Images|Layers panel · canvas · Segment|Results inspector).
 extra_screens.py  ModelsScreen (train), DashboardScreen (charts + runs table).
 overlays.py       AssistantDrawer, LogsConsole, CommandPalette, Toast.
+icons.py          Studio's OWN icon set (from the mockup) — self-contained.
+motion.py         Small motion helpers (fade). Self-contained.
 fonts/            Figtree (SIL OFL), registered at startup.
+tests/            Studio's own test suite (run `pytest studio/tests`).
 ```
 
-Import direction is one-way, leaf → shell: `theme` ← `components`/`paint` ←
-`demo`/screens ← `app`. Nothing imports `app`.
+`studio/` is a **self-contained** top-level package — a sibling of the classic
+`napari_app/` (old app) and the shared ML-core modules. It has its own icons and
+motion and imports nothing from `napari_app` (the ML core is pulled in lazily,
+only inside a tab being wired). Import direction is one-way, leaf → shell:
+`theme`/`icons` ← `components`/`paint` ← `demo`/screens ← `app`.
 
 ## Entry points
 
-- **New:** `run_studio.sh` / `cellseg1-studio` → `napari_app.studio.app:main`.
+- **New:** `run_studio.sh` / `cellseg1-studio` → `studio.app:main`.
   Runs the file directly and self-bootstraps `sys.path` (works from any cwd —
   `python -m` would prepend the caller's cwd and import the wrong `napari_app`).
 - **Classic (untouched):** `run_napari.sh` / `cellseg1` →
@@ -45,7 +51,7 @@ General recipe:
 
 1. **Re-introduce the data it needs.** For Projects, that's the `Project` /
    `ProjectStore` data model (removed in the skeleton; it's in git history —
-   `git log -- napari_app/studio/project.py` — reintroduce and adapt).
+   `git log -- studio/project.py` — reintroduce and adapt).
 2. **Add a controller**, Qt-free where possible, that owns the logic and takes
    plain callbacks — mirror `napari_app/core/predict_controller.py`. Unit-test
    it without Qt.
@@ -53,30 +59,55 @@ General recipe:
    with live data; connect its buttons/toggles/sliders to controller calls;
    feed results back into the same widgets. **Do not restyle** — reuse the
    existing atoms.
-4. **Lazily import heavy deps** (napari, torch, engines) inside the controller
-   / handlers, never at module top.
+4. **Lazily import heavy deps** (torch, engines, ML-core modules — **not**
+   napari; we build our own canvas) inside the controller / handlers, never at
+   a shared module's top level.
 5. **Test:** pure controller logic in the light group; screen wiring
    headless (`pytest.importorskip("PyQt6")`, offscreen). Note GUI/GPU parts as
    not-verified-here.
 6. **Ship** per the repo's branch → PR → green-CI workflow; log it in this
    folder's `CHANGELOG.md` and tick the tab in `BACKLOG.md`.
 
-### The Segment tab specifically
+### The Segment tab specifically — our OWN canvas, not embedded napari
 
-This is where napari returns. Plan (see BACKLOG for the task list):
+**We are not embedding napari.** Studio gets its **own** image canvas — like
+Label Studio's and napari's viewers, but ours — so we own the look, the tool
+strip, the layer model and every interaction (that's why the mockup's canvas
+toolbar was redrawn from scratch). We reuse the *interaction patterns*
+(pan/zoom, layers, brush/polygon/point editing, 2D↔3D, grid) and, above all,
+the **segmentation logic** (engines, predict, morphometry) — we do not
+reimplement the ML, and we do not reimplement the UI napari-style either.
 
-- Embed napari's canvas (`napari.Viewer(show=False)`, reparent
-  `viewer.window._qt_viewer`) into `WorkspaceScreen`'s centre, replacing the
-  `NucleiView` stand-in.
-- Drive the **custom** Layers panel from `viewer.layers` events (it already
-  looks right — give the eye/opacity/visibility/new-layer/grid/2D-3D controls
-  real effects on the viewer). Do **not** show napari's own dock widgets.
-- Wire the Segment settings + Run to a predict controller (reuse
-  `napari_app/core/predict_controller.py`); feed the Results panel + toast.
+Plan (see BACKLOG for the task list):
+
+- Build a `Canvas` widget (start on `QGraphicsView`/`QGraphicsScene` or a
+  custom `QWidget` + `QPainter`; a GPU `QOpenGLWidget` path later) that renders
+  the image + label/shape/point layers with pan/zoom — replacing the
+  `NucleiView` stand-in. Own the viewer bar (2D↔3D, grid, home) + tool strip.
+- Give it our **own layer model** (an evented list of image/labels/shapes/points
+  layers) that the existing custom Layers panel drives — visibility, opacity,
+  new-layer, delete, colours. Interaction model *inspired by* napari; code ours.
+- Wire Segment settings + Run to a predict controller that **reuses the ML
+  core** — `napari_app/core/predict_controller.py`, `napari_app/engines*`,
+  morphometry in `napari_app/analysis.py` — imported lazily. Results (stats,
+  calibration, save/export, colour-by heatmap, GT & eval, batch, benchmark)
+  and the toast render into the existing widgets.
+
+The principle for every tab: **own the UI, the icons, the canvas, the settings;
+reuse the logic.** We wrap the classic app's proven functionality under the new
+design instead of rewriting it — and we build our own viewer instead of
+embedding napari's.
 
 ## Testing conventions
 
-- Pure logic → `tests/test_studio_*.py`, no Qt import, runs in the light group.
+Studio has its **own** suite in `studio/tests/`. When working on Studio, run
+just those (not the classic app's `tests/`):
+
+```
+QT_QPA_PLATFORM=offscreen <python> -m pytest studio/tests -q
+```
+
+- Pure logic → no Qt import, runs in CI's light `test` group.
 - Qt screens → offscreen construct/smoke with `pytest.importorskip("PyQt6")`.
 - Before committing, run the throwaway-venv light-group check from the repo
   `AGENTS.md` so nothing heavy leaks into CI.

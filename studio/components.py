@@ -8,7 +8,7 @@ Interactivity that's part of the *design* (nav, theme toggle, opening the
 command palette, expanding a section, flipping a toggle's look) is kept; real
 functionality is wired later, tab by tab (see ``docstudio/``).
 
-Every widget takes a token dict from :mod:`napari_app.studio.theme`, so it
+Every widget takes a token dict from :mod:`studio.theme`, so it
 renders in either theme. All constructible under ``QT_QPA_PLATFORM=offscreen``.
 """
 from __future__ import annotations
@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor
 
-from napari_app import icons
-from napari_app.studio import theme
+from studio import icons
+from studio import theme
 
 
 # ── primitives ───────────────────────────────────────────────────────────────

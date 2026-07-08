@@ -9,13 +9,13 @@ the standalone desktop app for cell segmentation. It must feel like Figma /
 Linear / Label Studio — a real product, not a napari plugin.
 
 **Read first, in order:** `docstudio/README.md`, `OVERVIEW.md`, `DESIGN.md`,
-`ARCHITECTURE.md`, `BACKLOG.md`. Then skim `napari_app/studio/` and the repo
+`ARCHITECTURE.md`, `BACKLOG.md`. Then skim `studio/` and the repo
 root `AGENTS.md`.
 
 ## Where things stand
 
 Studio is currently a **pure design skeleton**: every mockup screen reproduced
-in native PyQt6 (`napari_app/studio/`), looking right, with **no logic** — no
+in native PyQt6 (`studio/`), looking right, with **no logic** — no
 napari, no torch, no model or file IO. It launches with `bash run_studio.sh`.
 The classic app (`napari_app/main.py`, `cellseg1`) is separate and untouched.
 
@@ -26,7 +26,7 @@ and interactions — **without changing how it looks**. Follow "How to wire a
 tab" in `ARCHITECTURE.md`:
 
 1. Reintroduce/adopt the data it needs (e.g. the `Project` data model is in git
-   history: `git log --oneline -- napari_app/studio/project.py`).
+   history: `git log --oneline -- studio/project.py`).
 2. Add a Qt-free controller (mirror `napari_app/core/predict_controller.py`),
    unit-tested without Qt.
 3. Bind the existing screen to it — swap `demo.*` reads for live data, connect
@@ -37,26 +37,42 @@ tab" in `ARCHITECTURE.md`:
 
 ## Hard rules
 
+- **Own the UI, reuse the logic.** Build our own canvas (do **not** embed
+  napari), own icons, own settings; reuse the classic app's ML functionality
+  (engines/predict/train/morphometry) by wrapping it under the new design.
+- Studio is its **own** top-level package `studio/` (a sibling of the classic
+  `napari_app/` and the shared ML core) — keep it self-contained; don't import
+  from `napari_app` at a shared module's top level (lazy imports of the ML core
+  inside the tab you're wiring are fine).
 - Don't touch the classic app (`napari_app/main.py`, `run_napari.sh`, `cellseg1`).
 - Design fidelity can't regress — match `DESIGN.md`; behaviour goes *under* the look.
-- New logic needs tests: pure logic in `tests/test_studio_*.py` (light group,
-  no Qt import); Qt screens offscreen with `pytest.importorskip("PyQt6")`.
-  Run the throwaway-venv light-group check from `AGENTS.md` before committing.
 - You usually can't drive the GUI headless — verify what you can, and state
   plainly what you did **not** verify (live look, real rendering, GPU inference).
 
-## Workflow
+## Tests — Studio has its OWN suite
 
-Branch → implement + test → PR with a test plan + "not verified" note → green
-CI on py3.11 **and** py3.12 → merge (the repo pre-authorises auto-merge of your
-own green PRs; see `AGENTS.md`) → sync local. Log the tab in
-`docstudio/CHANGELOG.md`, tick it in `docstudio/BACKLOG.md`.
+- Studio's tests live in **`studio/tests/`**. When working on Studio, run **only
+  those** — not the classic app's `tests/`:
+  ```
+  QT_QPA_PLATFORM=offscreen <python> -m pytest studio/tests -q
+  ```
+- Pure logic (no Qt import) runs in CI's light `test` group; Qt screens use
+  `pytest.importorskip("PyQt6")` (offscreen). Run the throwaway-venv light-group
+  check from the repo `AGENTS.md` before committing so nothing heavy leaks into CI.
+
+## Git — keep local and remote in sync
+
+- Work on a branch; **push it** before you stop (never leave work only local).
+- Branch → implement + test → PR (test plan + "not verified" note) → green CI on
+  **py3.11 and py3.12** → merge (the repo pre-authorises auto-merge of your own
+  green PRs; see `AGENTS.md`).
+- **After merging, sync local immediately** so it never drifts:
+  `git checkout main && git merge --ff-only origin/main && git branch -d <branch>`.
+- Log the tab in `docstudio/CHANGELOG.md`, tick it in `docstudio/BACKLOG.md`.
 
 ## Environment
 
 - Python with all deps: `/opt/homebrew/Caskroom/miniforge/base/envs/cellseg1/bin/python`.
-- Tests: `<that python> -m pytest tests/test_studio_*.py -q` (offscreen:
-  `QT_QPA_PLATFORM=offscreen`).
-- Run the app: `bash run_studio.sh`.
+- Run the app: `bash run_studio.sh`  (pure PyQt6 — no GPU/napari/torch needed).
 
 Start by telling me which tab you're taking and your task list for it.

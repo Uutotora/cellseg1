@@ -10,15 +10,26 @@ in a product that owns its window and is organised around **Projects**.
 The design was set by an interactive HTML north-star mockup, agreed with the
 product owner, and then reproduced natively.
 
+**Primary design reference: Label Studio.** We borrow its *product structure* —
+projects, the workspace, the modern sidebar, spacious clean panels, the visual
+hierarchy — **not** its exact look (our palette, type and icons are our own).
+See `DESIGN.md`.
+
+**Own the UI, reuse the logic.** We build our **own** everything on the surface
+— our own canvas (we are **not** embedding napari), our own icons, our own
+settings, our own tools — and reuse the classic app's proven **functionality**
+(the ML core: engines, predict, train, morphometry) by wrapping it under the
+new design, so we don't rewrite the hard parts from scratch.
+
 ## The current phase: **design skeleton**
 
 Right now this branch is deliberately **all design, no logic**:
 
 - Every mockup screen is reproduced in **native PyQt6** — Home, Projects, the
-  Segment workspace (adapted-napari layers · canvas · inspector), Models &
+  Segment workspace (our **own** layers panel · canvas · inspector), Models &
   Train, Dashboard — plus the overlays (Assistant drawer, Logs console, ⌘K
   command palette, toast).
-- It renders **static demo content** (`napari_app/studio/demo.py`) and gives
+- It renders **static demo content** (`studio/demo.py`) and gives
   only light visual feedback. There is **no** napari, torch, model inference,
   file IO, or project persistence. `import napari` / `import torch` never runs.
 - The window is **frameless with rounded corners** and our own dark title bar
@@ -48,10 +59,9 @@ against — then each tab is wired properly, in isolation, with its own plan.
 ## Run & verify
 
 ```bash
-bash run_studio.sh                     # launch (pure design, no deps beyond PyQt6)
-<cellseg1-python> -m pytest tests/test_studio_*.py -q   # headless tests
-QT_QPA_PLATFORM=offscreen PYTHONPATH=. <python> -c \
-  "import napari_app.studio.app"       # import check
+bash run_studio.sh                                     # launch (pure PyQt6)
+QT_QPA_PLATFORM=offscreen <cellseg1-python> -m pytest studio/tests -q   # Studio's own tests
+QT_QPA_PLATFORM=offscreen PYTHONPATH=. <python> -c "import studio.app"   # import check
 ```
 
 GUI behaviour (the live look, animations, real rendering) can't be verified in

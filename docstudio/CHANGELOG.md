@@ -5,6 +5,33 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-08 — Studio is now its own top-level project + docs pivot to "own canvas"
+
+Structural + directional clarity, no behaviour change:
+
+- **Studio promoted to a top-level `studio/` package** (`git mv` from
+  `napari_app/studio/`, history preserved), a **sibling** of the classic
+  `napari_app/` (old app) and the shared ML core — the standard monorepo
+  "old app + new app + shared core" shape, so the branch reads as its own
+  project. Studio is now **self-contained**: its own `icons.py` (the mockup's
+  icons, not the classic app's) and `motion.py`; it imports nothing from
+  `napari_app`. The classic `napari_app/icons.py` was reverted to pristine.
+- **Studio has its own test suite** in `studio/tests/` (run `pytest
+  studio/tests`); `pytest.ini` includes it; packaging/entry point updated
+  (`cellseg1-studio = studio.app:main`, `studio/` packaged, tests excluded).
+- **Docs pivot — we are NOT embedding napari.** The Segment tab will get our
+  **own** canvas (like Label Studio's / napari's viewers, but ours: own tool
+  strip, own layer model, own interactions), reusing only the **ML logic**
+  (engines/predict/morphometry). New guiding principle across the docs: *own
+  the UI, the icons, the canvas, the settings; reuse the logic.* Label Studio
+  reaffirmed as the primary **structure** reference (not look). AGENT_PROMPT
+  gained explicit git-sync (keep local↔remote in sync) and "run only
+  `studio/tests`" guidance.
+
+Verified: full suite 473 passed; Studio's suite green from its new location;
+the app imports and boots from the top-level `studio` package offscreen,
+importing neither napari nor torch.
+
 ## 2026-07-07 — Design skeleton: the mockup, reproduced natively (no logic)
 
 Reset Studio to a pure **design skeleton** — a faithful, static, native-Qt

@@ -175,11 +175,13 @@ for a credible product · P1 differentiation · P2 later.
 ### CellSeg1 Studio — standalone desktop app  · XL (epic, multi-PR)
 The headline UX bet: stop being "a napari plugin in a dock" and become a
 self-contained product that owns its window (Home · Projects · Workspace),
-with napari's canvas embedded as one component. Design language derived from
-Label Studio, retuned for microscopy. Agreed against an interactive HTML
-north-star mockup. **Additive + opt-in**: classic `napari_app/main.py` /
+with its **own** canvas (**not** embedded napari — own viewer, tools, layer
+model), reusing only the ML *logic*. Structure derived from Label Studio,
+retuned for microscopy. **Additive + opt-in**: classic `napari_app/main.py` /
 `run_napari.sh` / `cellseg1` stays byte-for-byte unchanged; Studio ships behind
-`run_studio.sh` / `cellseg1-studio`. Lives in `napari_app/studio/`.
+`run_studio.sh` / `cellseg1-studio`. Now a **top-level `studio/` package** with
+its own docs + tab-by-tab plan in **`docstudio/`** (that's the live source of
+truth; the bullets below are a historical summary).
 
 - [x] **Own window chrome + transitions** (2026-07-07) — frameless window with
   a custom dark title bar (own traffic lights, native move/resize via
@@ -195,8 +197,8 @@ north-star mockup. **Additive + opt-in**: classic `napari_app/main.py` /
   layer controls driven by `viewer.layers` events (napari-fidelity: new
   labels/shapes/points, visibility, opacity/blending/contour/brush/eraser,
   contiguous/preserve/show-selected, bigger colour palette, 2D↔3D + grid +
-  home), replacing the embedded napari docks so the workspace stops looking
-  like napari. Ground-truth overlay toggle lives here.
+  home) on our **own** canvas + layer model (not embedded napari), so the
+  workspace is ours end to end. Ground-truth overlay toggle lives here.
 - [ ] **Results panel parity** · M — port the full Results surface into the
   Studio inspector (cells detected, median Ø/mean area/coverage, pixel
   calibration, Save masks/Export CSV/Refine/Measurements, "Colour cells by"

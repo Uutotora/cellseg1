@@ -8,12 +8,12 @@ from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QGridLayout, QScrollArea,
 )
 
-from napari_app import icons
-from napari_app.studio import theme, demo
-from napari_app.studio.components import (
+from studio import icons
+from studio import theme, demo
+from studio.components import (
     Chip, Badge, PillButton, SelectBox, GroupLabel, hline, soft_shadow, label,
 )
-from napari_app.studio.screens import page_header, scroll
+from studio.screens import page_header, scroll
 
 
 # ── Models & Train ───────────────────────────────────────────────────────────

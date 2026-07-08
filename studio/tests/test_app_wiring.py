@@ -11,14 +11,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 
 pytest.importorskip("PyQt6")
-components = pytest.importorskip("napari_app.studio.components")
-app_mod = pytest.importorskip("napari_app.studio.app")
-paint = pytest.importorskip("napari_app.studio.paint")
+components = pytest.importorskip("studio.components")
+app_mod = pytest.importorskip("studio.app")
+paint = pytest.importorskip("studio.paint")
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 
-from napari_app.studio import theme
+from studio import theme
 
 
 @pytest.fixture
@@ -78,9 +78,9 @@ def test_nuclei_pixmap_renders(app):
 
 # ── screens ──────────────────────────────────────────────────────────────────
 def test_all_screens_construct(app):
-    from napari_app.studio.screens import HomeScreen, ProjectsScreen
-    from napari_app.studio.workspace import WorkspaceScreen
-    from napari_app.studio.extra_screens import ModelsScreen, DashboardScreen
+    from studio.screens import HomeScreen, ProjectsScreen
+    from studio.workspace import WorkspaceScreen
+    from studio.extra_screens import ModelsScreen, DashboardScreen
     t = theme.DARK
     assert HomeScreen(t, lambda k: None, lambda i: None) is not None
     assert ProjectsScreen(t, lambda k: None, lambda i: None) is not None
@@ -91,7 +91,7 @@ def test_all_screens_construct(app):
 
 # ── window ───────────────────────────────────────────────────────────────────
 def test_window_is_frameless_with_titlebar_and_grips(app):
-    from napari_app.studio import window_chrome
+    from studio import window_chrome
     win = app_mod.StudioWindow(theme_name="dark")
     assert win.windowFlags() & Qt.WindowType.FramelessWindowHint
     assert len(win.findChildren(window_chrome.TitleBar)) == 1
@@ -133,7 +133,7 @@ def test_command_palette_opens_and_escape_closes(app):
 
 
 def test_theme_toggle_rebuilds(app):
-    from napari_app.studio import window_chrome
+    from studio import window_chrome
     win = app_mod.StudioWindow(theme_name="dark")
     win.toggle_theme()
     assert win._theme_name == "light"

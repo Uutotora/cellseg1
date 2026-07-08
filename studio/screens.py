@@ -16,10 +16,10 @@ from PyQt6.QtWidgets import (
     QScrollArea, QLineEdit, QSizePolicy, QStackedWidget, QToolButton,
 )
 
-from napari_app import icons
-from napari_app.studio import theme, demo
-from napari_app.studio.paint import nuclei_pixmap, NucleiView
-from napari_app.studio.components import (
+from studio import icons
+from studio import theme, demo
+from studio.paint import nuclei_pixmap, NucleiView
+from studio.components import (
     Chip, Badge, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
     SegControl, StatTile, FieldRow, GroupLabel, Accordion, hline, soft_shadow, label,
 )
@@ -405,5 +405,5 @@ class ProjectsScreen(QWidget):
         return card
 
 
-from napari_app.studio.workspace import WorkspaceScreen  # noqa: E402
-from napari_app.studio.extra_screens import ModelsScreen, DashboardScreen  # noqa: E402
+from studio.workspace import WorkspaceScreen  # noqa: E402
+from studio.extra_screens import ModelsScreen, DashboardScreen  # noqa: E402

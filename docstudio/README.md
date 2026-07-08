@@ -35,7 +35,7 @@ This folder is Studio's own doc set — separate from the repo-wide `docs/`
 ## Run it
 
 ```bash
-bash run_studio.sh          # or:  python -m napari_app.studio.app
+bash run_studio.sh          # or:  python -m studio.app
 ```
 
 No GPU, no weights, no napari needed — it's design only.

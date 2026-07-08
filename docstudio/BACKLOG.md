@@ -27,7 +27,7 @@ When you finish a tab: log it in `CHANGELOG.md`, tick it here, update
 ### Projects tab · M
 - **Goal:** real projects, not demo cards.
 - **Work:** reintroduce the `Project`/`ProjectStore` data model (in git history,
-  `napari_app/studio/project.py`); back Home "recent" + Projects grid with it;
+  `studio/project.py`); back Home "recent" + Projects grid with it;
   wire search/filter/favourite; card click opens that project in the workspace.
 - **Tasks:** ☐ restore + adapt data model · ☐ store→screens binding ·
   ☐ live search/filter/favourite · ☐ "active project" state shared to workspace ·
@@ -40,19 +40,23 @@ When you finish a tab: log it in `CHANGELOG.md`, tick it here, update
   ☐ persist + open · ☐ tests.
 
 ### Segment (Workspace) tab · L  ← the flagship
-- **Goal:** the real segmentation surface; napari returns as an embedded
-  component, the custom Layers/Results UI stays.
-- **Work:** embed `napari.Viewer(show=False)` canvas into `WorkspaceScreen`
-  (replace `NucleiView`); drive the custom **Layers** panel from
-  `viewer.layers` (visibility, opacity, new labels/shapes/points, grid, 2D↔3D,
-  delete — real effects); wire Segment settings + Run to a predict controller
-  (reuse `napari_app/core/predict_controller.py`); populate Results (stats,
+- **Goal:** the real segmentation surface on **our own canvas** — NOT embedded
+  napari. Own viewer + layer model + tools; reuse only the ML logic.
+- **Work:** build a `Canvas` widget (QGraphicsView / QPainter; GPU later) that
+  renders image + label/shape/point layers with pan/zoom, replacing
+  `NucleiView`; build our own evented **layer model** the existing custom
+  Layers panel drives (visibility, opacity, new labels/shapes/points, delete,
+  grid, 2D↔3D — real effects); wire Segment settings + Run to a predict
+  controller that **reuses the ML core** (`napari_app/core/predict_controller.py`,
+  `engines*`, `analysis.py`), imported lazily; populate Results (stats,
   calibration, save/export/refine/measurements, colour-by heatmap, GT & eval,
   batch, benchmark); toast on completion.
-- **Tasks:** ☐ embed canvas · ☐ Layers ↔ viewer.layers model · ☐ mode tools
-  (brush/eraser/fill/…) · ☐ engine/threshold controls → config · ☐ Run +
-  progress + results · ☐ GT overlay + eval metrics · ☐ colour-by heatmap ·
-  ☐ batch + benchmark · ☐ tests (controller pure + wiring).
+- **Tasks:** ☐ Canvas widget (image + pan/zoom) · ☐ own layer model ↔ Layers
+  panel · ☐ label/shape/point rendering + editing (brush/eraser/fill/polygon/
+  point) · ☐ viewer bar (2D↔3D/grid/home) real · ☐ engine/threshold controls →
+  config · ☐ Run + progress + results (reuse predict core) · ☐ GT overlay +
+  eval metrics · ☐ colour-by heatmap · ☐ batch + benchmark · ☐ tests
+  (controller pure + canvas/wiring).
 
 ---
 

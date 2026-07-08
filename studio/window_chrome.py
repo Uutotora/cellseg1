@@ -20,8 +20,8 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QToolButton, QSizeGrip, QSizePolicy,
 )
 
-from napari_app import icons
-from napari_app.studio import theme
+from studio import icons
+from studio import theme
 
 # The macOS traffic-light trio, in the native order + colours.
 _LIGHTS = [

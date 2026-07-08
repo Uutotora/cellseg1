@@ -113,8 +113,8 @@ dev = [
 # Console launcher: `cellseg1` starts the classic napari-plugin app (== run_napari.sh).
 cellseg1 = "napari_app.main:main"
 # `cellseg1-studio` starts the standalone Studio desktop app (== run_studio.sh).
-# Additive and opt-in; the classic entry point above is unchanged.
-cellseg1-studio = "napari_app.studio.app:main"
+# Studio is its own top-level package, separate from the classic app.
+cellseg1-studio = "studio.app:main"
 
 [project.entry-points."napari.manifest"]
 # napari plugin discovery: exposes the Predict dock widget under Plugins ▸ CellSeg1.
@@ -136,10 +136,13 @@ py-modules = [
 
 [tool.setuptools.packages.find]
 # namespaces=true so peft/ and data/ (no __init__.py) are packaged too.
-include = ["napari_app*", "segment_anything*", "peft*", "data*"]
+# `studio*` is the new standalone app package (sibling of the classic app);
+# its tests are excluded from the wheel.
+include = ["napari_app*", "studio*", "segment_anything*", "peft*", "data*"]
+exclude = ["studio.tests*"]
 namespaces = true
 
 [tool.setuptools.package-data]
 napari_app = ["napari.yaml"]
 # Studio bundles the Figtree UI typeface (SIL OFL) — ship the font files.
-"napari_app.studio" = ["fonts/*.ttf", "fonts/*.md"]
+studio = ["fonts/*.ttf", "fonts/*.md"]

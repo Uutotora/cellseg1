@@ -18,6 +18,17 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-08 — Studio promoted to its own top-level `studio/` package
+
+Restructured so the branch reads as a separate project: the Studio app moved
+from `napari_app/studio/` to a top-level **`studio/`** package (history
+preserved), a sibling of the classic `napari_app/` and the shared ML core — the
+standard "old app + new app + shared core" monorepo shape. Studio is now
+self-contained (its own `icons.py`/`motion.py`; `napari_app/icons.py` reverted
+to pristine) with its own test suite in `studio/tests/`. Docs direction
+clarified: Studio builds its **own** canvas (not embedded napari) and reuses
+only the ML *logic*. Detail: `docstudio/CHANGELOG.md`.
+
 ## 2026-07-07 — Studio reset to a pure design skeleton + `docstudio/`
 
 Reset CellSeg1 Studio to an all-design, **no-logic** skeleton: a faithful

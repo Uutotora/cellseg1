@@ -8,15 +8,15 @@ backlog all live in the repo's ``docstudio/`` folder.
 
 Modules (import direction is one-way, leaf → shell):
 
-- :mod:`~napari_app.studio.theme` — design tokens (light + dark) + QSS.
-- :mod:`~napari_app.studio.components` — the static UI kit + sidebar.
-- :mod:`~napari_app.studio.paint` — the nuclei canvas stand-in art.
-- :mod:`~napari_app.studio.demo` — static demo content.
-- :mod:`~napari_app.studio.screens` / :mod:`~.workspace` / :mod:`~.extra_screens`
+- :mod:`~studio.theme` — design tokens (light + dark) + QSS.
+- :mod:`~studio.components` — the static UI kit + sidebar.
+- :mod:`~studio.paint` — the nuclei canvas stand-in art.
+- :mod:`~studio.demo` — static demo content.
+- :mod:`~studio.screens` / :mod:`~.workspace` / :mod:`~.extra_screens`
   — the screens.
-- :mod:`~napari_app.studio.overlays` — assistant drawer, logs, ⌘K palette, toast.
-- :mod:`~napari_app.studio.window_chrome` — the frameless title bar.
-- :mod:`~napari_app.studio.app` — ``StudioWindow`` + ``main`` (the entry point).
+- :mod:`~studio.overlays` — assistant drawer, logs, ⌘K palette, toast.
+- :mod:`~studio.window_chrome` — the frameless title bar.
+- :mod:`~studio.app` — ``StudioWindow`` + ``main`` (the entry point).
 
 The data model that briefly lived here (``project.py``, carrying every
 predict/train setting) was removed with the rest of the logic for this phase;

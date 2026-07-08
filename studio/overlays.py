@@ -15,9 +15,9 @@ from PyQt6.QtWidgets import (
     QScrollArea, QSizePolicy,
 )
 
-from napari_app import icons
-from napari_app.studio import theme, demo
-from napari_app.studio.components import IconButton, hline, label
+from studio import icons
+from studio import theme, demo
+from studio.components import IconButton, hline, label
 
 
 def _scroll(inner: QWidget) -> QScrollArea:
@@ -167,7 +167,7 @@ class LogsConsole(QFrame):
         hr.setContentsMargins(14, 9, 12, 9)
         hr.setSpacing(10)
         hr.addWidget(label("LOGS", 11.5, t["text_subtle"], 600, 0.6))
-        from napari_app.studio.components import Badge
+        from studio.components import Badge
         hr.addWidget(Badge("run · nuclei-dapi-r8", t))
         hr.addStretch(1)
         hr.addWidget(IconButton("close", t, 27, "Close", self.hide))
@@ -195,7 +195,7 @@ class LogsConsole(QFrame):
     def place(self):
         p = self.parentWidget()
         if p:
-            from napari_app.studio.components import Sidebar
+            from studio.components import Sidebar
             x = Sidebar.WIDTH
             self.setGeometry(x, p.height() - self.HEIGHT, p.width() - x, self.HEIGHT)
 

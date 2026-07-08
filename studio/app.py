@@ -18,9 +18,11 @@ import os
 import sys
 from pathlib import Path
 
-# Make the repo root importable before the napari_app imports (see the note in
-# the git history) so ``python .../studio/app.py`` works from any cwd.
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Make the repo root importable before the ``studio`` imports below, so
+# ``python studio/app.py`` works from any cwd (``python -m`` would prepend the
+# caller's cwd ahead of PYTHONPATH and import the wrong package). studio/app.py
+# lives at <root>/studio/app.py → the repo root is two levels up.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
@@ -30,13 +32,13 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QApplication,
 )
 
-from napari_app.studio import theme
-from napari_app.studio.components import Sidebar
-from napari_app.studio.screens import HomeScreen, ProjectsScreen
-from napari_app.studio.workspace import WorkspaceScreen
-from napari_app.studio.extra_screens import ModelsScreen, DashboardScreen
-from napari_app.studio.overlays import AssistantDrawer, LogsConsole, CommandPalette, Toast
-from napari_app.studio.window_chrome import (
+from studio import theme
+from studio.components import Sidebar
+from studio.screens import HomeScreen, ProjectsScreen
+from studio.workspace import WorkspaceScreen
+from studio.extra_screens import ModelsScreen, DashboardScreen
+from studio.overlays import AssistantDrawer, LogsConsole, CommandPalette, Toast
+from studio.window_chrome import (
     TitleBar, install_corner_grips, layout_corner_grips,
 )
 
@@ -153,7 +155,7 @@ class StudioWindow(QMainWindow):
             self._sidebar.set_active(key)
             if key != "workspace":
                 try:
-                    from napari_app.motion import fade_in
+                    from studio.motion import fade_in
                     fade_in(screen, 170)
                 except Exception:
                     pass

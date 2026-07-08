@@ -14,10 +14,10 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QToolButton, QLineEdit, QSizePolicy, QScrollArea,
 )
 
-from napari_app import icons
-from napari_app.studio import theme, demo
-from napari_app.studio.paint import nuclei_pixmap, NucleiView
-from napari_app.studio.components import (
+from studio import icons
+from studio import theme, demo
+from studio.paint import nuclei_pixmap, NucleiView
+from studio.components import (
     Chip, Badge, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
     SegControl, StatTile, FieldRow, GroupLabel, Accordion, hline, label,
 )

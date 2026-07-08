@@ -2,7 +2,7 @@
 
 Derived from the Label Studio design system, retuned for a scientific
 microscopy tool. The authoritative values live in
-`napari_app/studio/theme.py`; this doc explains the intent so choices stay
+`studio/theme.py`; this doc explains the intent so choices stay
 coherent as new UI is added.
 
 ## Concept — "the bench & the scope"
@@ -37,7 +37,7 @@ distinct. Heatmap ramp = **viridis** (`theme.viridis_rgb`), used by
 
 ## Type
 
-- **Figtree** for all UI (bundled at `napari_app/studio/fonts/`, SIL OFL,
+- **Figtree** for all UI (bundled at `studio/fonts/`, SIL OFL,
   registered at startup). Chain falls back to `-apple-system`.
 - A mono (`SF Mono` → fallbacks) for data, IDs, metrics, logs.
 - Scale in use: 26 (page title) · 19 (wordmark) · 16 · 15 · 14.5 · 13.5 · 13 ·

@@ -17,7 +17,7 @@ export PYTHONPATH="$DIR"
 # the repo root itself, so this works from any cwd. `-m` would prepend the
 # caller's cwd to sys.path ahead of PYTHONPATH and import the wrong napari_app
 # when launched from another checkout. (Same pattern as run_napari.sh.)
-APP="$DIR/napari_app/studio/app.py"
+APP="$DIR/studio/app.py"
 if [ -n "$CELLSEG1_PYTHON" ]; then
     exec "$CELLSEG1_PYTHON" "$APP"
 elif command -v conda >/dev/null 2>&1 && conda env list | grep -qE '[/ ]cellseg1$'; then
