@@ -93,6 +93,50 @@ def test_nuclei_pixmap_renders(app):
     assert paint.NucleiView(seed=7) is not None
 
 
+def test_nuclei_pixmap_top_only_radius_rounds_top_not_bottom(app):
+    """Regression test: QSS border-radius doesn't clip a QLabel's own pixmap
+
+    (only its background/border), so the rounding has to be baked into the
+    pixmap itself. Assert the actual corner pixels: transparent where a
+    ``top_only`` round-rect clip should have cut the corner off, opaque where
+    the bottom should stay square.
+    """
+    px = paint.nuclei_pixmap(120, 90, seed=7, radius=14, top_only=True, dpr=1.0)
+    img = px.toImage()
+    assert img.pixelColor(0, 0).alpha() == 0  # top-left: clipped by the round corner
+    assert img.pixelColor(119, 0).alpha() == 0  # top-right: same
+    assert img.pixelColor(0, 89).alpha() > 0  # bottom-left: square, not clipped
+    assert img.pixelColor(119, 89).alpha() > 0  # bottom-right: square, not clipped
+
+
+def test_nuclei_pixmap_full_radius_rounds_every_corner(app):
+    px = paint.nuclei_pixmap(120, 90, seed=7, radius=14, top_only=False, dpr=1.0)
+    img = px.toImage()
+    for x, y in [(0, 0), (119, 0), (0, 89), (119, 89)]:
+        assert img.pixelColor(x, y).alpha() == 0, f"corner ({x},{y}) should be clipped"
+
+
+def test_nucleiview_geometry_can_be_synced_to_a_raw_parent(app):
+    """Regression test: a NucleiView set as a plain (non-layout) child via
+
+    ``setParent()`` does not automatically track its parent's size — it's
+    born with whatever geometry an unparented top-level widget happens to
+    get, which has nothing to do with the eventual parent. This is exactly
+    the project card's cover-art wiring; assert the pattern it relies on
+    (an explicit resize callback) actually keeps the two in sync.
+    """
+    from PyQt6.QtWidgets import QFrame
+    view = paint.NucleiView(seed=1, radius=14, top_only=True, min_size=(0, 0))
+    wrap = QFrame()
+    view.setParent(wrap)
+    view.setGeometry(0, 0, wrap.width(), wrap.height())
+    wrap.resizeEvent = lambda e: view.setGeometry(0, 0, wrap.width(), wrap.height())
+    wrap.show()  # resizeEvent isn't reliably dispatched before a widget is shown
+    for w, h in [(450, 132), (305, 132), (620, 132)]:
+        wrap.resize(w, h)
+        assert view.size().width() == w and view.size().height() == h
+
+
 # ── screens ──────────────────────────────────────────────────────────────────
 def test_all_screens_construct(app, controller):
     from studio.screens import HomeScreen, ProjectsScreen
@@ -216,6 +260,33 @@ def test_projects_screen_view_toggle_switches_grid_and_list(app, controller):
     assert scr._view == "list"
     assert scr._grid_host.isHidden()
     assert not scr._list_host.isHidden()
+
+
+def test_projects_screen_toolbar_controls_share_one_height(app, controller):
+    """Regression test: the search box, the All/Favorites/Shared segmented
+
+    control, the Filter button and the grid/list toggle each computed their
+    own height from padding + font metrics, and drifted apart under the
+    real bundled Figtree font even though they matched in an offscreen dev
+    run — exactly the kind of per-widget drift a shared, explicit height is
+    supposed to rule out regardless of font/platform.
+    """
+    scr = _projects_screen(controller)
+    H = scr._TOOLBAR_H
+    assert scr._scope_seg.height() == H
+    assert scr._filter_btn.height() == H
+    assert scr._view_seg.height() == H
+
+
+def test_projects_screen_engine_chip_has_the_right_dot_per_engine(app, controller):
+    from PyQt6.QtWidgets import QFrame
+    from studio.screens import _ENGINE_DOT
+    p = next(pr for pr in controller.list_projects() if pr.engine == "sam2")
+    card = _projects_screen(controller)._card(project_controller.to_card(p))
+    chip = card.findChild(components.EngineChip)
+    assert chip is not None
+    dot = chip.findChildren(QFrame)[0]  # the dot is the chip's one QFrame child
+    assert _ENGINE_DOT["sam2"] in dot.styleSheet()
 
 
 def test_projects_screen_open_callback_uses_project_id(app, controller):

@@ -14,7 +14,9 @@ from __future__ import annotations
 import math
 
 from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import QPainter, QPixmap, QColor, QRadialGradient, QPolygonF, QPen
+from PyQt6.QtGui import (
+    QPainter, QPixmap, QColor, QRadialGradient, QPolygonF, QPen, QPainterPath,
+)
 from PyQt6.QtWidgets import QWidget
 
 
@@ -96,30 +98,73 @@ def paint_nuclei(p: QPainter, w: int, h: int, seed: int,
         p.drawPolygon(poly)
 
 
+def _round_rect_path(w: float, h: float, radius: float, top_only: bool) -> QPainterPath:
+    """A rounded-rect clip path — all four corners, or only the top two.
+
+    Qt's stylesheet ``border-radius`` only shapes a widget's own background/
+    border, never a child ``QLabel``'s pixmap — so cover art must be clipped
+    to its rounded corners *in the pixmap itself* (this is that clip shape).
+    ``top_only`` unions the fully-rounded rect with a plain bottom strip,
+    squaring the bottom two corners back off (for cover art that's the top
+    slice of a card whose body continues below, unrounded).
+    """
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, w, h), radius, radius)
+    if top_only:
+        bottom = QPainterPath()
+        bottom.addRect(QRectF(0, h - radius, w, radius))
+        path = path.united(bottom)
+    return path
+
+
 def nuclei_pixmap(w: int, h: int, seed: int, density: float = 1.15,
-                  outline: bool = True, big: bool = False, dpr: float = 2.0) -> QPixmap:
+                  outline: bool = True, big: bool = False, dpr: float = 2.0,
+                  radius: float = 0, top_only: bool = False) -> QPixmap:
     px = QPixmap(int(w * dpr), int(h * dpr))
     px.setDevicePixelRatio(dpr)
     px.fill(Qt.GlobalColor.transparent)
     p = QPainter(px)
+    if radius:
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setClipPath(_round_rect_path(w, h, radius, top_only))
     paint_nuclei(p, w, h, seed, density, outline, big)
     p.end()
     return px
 
 
 class NucleiView(QWidget):
-    """A widget that fills itself with the nuclei field (the viewport canvas)."""
+    """A widget that fills itself with the nuclei field (the viewport canvas).
 
-    def __init__(self, seed: int = 7, density: float = 0.85, big: bool = True):
+    ``radius``/``top_only``: an optional rounded-corner clip, recomputed from
+    the widget's *live* size on every paint — unlike a pre-baked pixmap
+    (``nuclei_pixmap``) stretched to fit, this never distorts when the
+    widget's actual size differs from some fixed reference (e.g. a
+    responsive grid card whose column width tracks the window). Used for
+    project-card covers, which must round only their top two corners and
+    can be any width; ``nuclei_pixmap`` stays right for fixed-size
+    thumbnails, where baking the radius into a pixmap is cheaper and never
+    stretches. ``min_size`` overrides the (200, 160) default sized for the
+    workspace viewport — a card cover fixes its own height externally and
+    shouldn't be forced taller than that.
+    """
+
+    def __init__(self, seed: int = 7, density: float = 0.85, big: bool = True,
+                 radius: float = 0, top_only: bool = False,
+                 min_size: tuple[int, int] = (200, 160)):
         super().__init__()
         self._seed = seed
         self._density = density
         self._big = big
-        self.setMinimumSize(200, 160)
+        self._radius = radius
+        self._top_only = top_only
+        self.setMinimumSize(*min_size)
         self.setStyleSheet("background:#07090c;")
 
     def paintEvent(self, e):
         p = QPainter(self)
+        if self._radius:
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            p.setClipPath(_round_rect_path(self.width(), self.height(), self._radius, self._top_only))
         paint_nuclei(p, self.width(), self.height(), self._seed,
                      self._density, True, self._big)
         p.end()

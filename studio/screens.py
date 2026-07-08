@@ -22,11 +22,11 @@ from PyQt6.QtWidgets import (
 from studio import icons
 from studio import theme
 from studio import project_controller
-from studio.project import ENGINE_KIND, ENGINE_LABELS, ENGINES
+from studio.project import ENGINE_LABELS, ENGINES
 from studio.paint import nuclei_pixmap, NucleiView
 from studio.motion import install_hover_lift
 from studio.components import (
-    Chip, Badge, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
+    Chip, Badge, EngineChip, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
     SegControl, StatTile, FieldRow, GroupLabel, Accordion, hline, soft_shadow, label,
 )
 
@@ -93,7 +93,11 @@ def page_header(title: str, subtitle: str, t: dict, action: Optional[QWidget] = 
 def cover_label(seed: int, w: int, h: int, density: float, big: bool = False) -> QLabel:
     lb = QLabel()
     lb.setFixedSize(w, h)
-    lb.setPixmap(nuclei_pixmap(w, h, seed, density=density, big=big))
+    # radius=7 (--r-sm), all four corners: a standalone rounded thumbnail
+    # (mockup's `.thumb{border-radius:7px}`), not a card-cover's top slice —
+    # baked into the pixmap itself since QSS border-radius doesn't clip a
+    # QLabel's own pixmap (see paint.nuclei_pixmap's docstring).
+    lb.setPixmap(nuclei_pixmap(w, h, seed, density=density, big=big, radius=7))
     lb.setScaledContents(True)
     return lb
 
@@ -327,6 +331,14 @@ class HomeScreen(QWidget):
 # ── Projects ─────────────────────────────────────────────────────────────────
 _SCOPES = ("all", "favorites", "shared")
 
+# The engine-chip dot colour on a project card cover — the mockup gives each
+# engine its own hue (iris / teal / fig) distinct from ENGINE_KIND's fg/bg
+# "kind" (primary/signal), which only carries two families. Reuses theme.VIZ,
+# the app's one stable categorical palette, rather than inventing new tokens;
+# fixed (not per-theme) since the chip always sits on the same dark cover
+# overlay regardless of app theme, same as its text/background already are.
+_ENGINE_DOT = {"cellseg1": theme.VIZ[0], "cellpose": theme.VIZ[1], "sam2": theme.VIZ[5]}
+
 
 class ProjectsScreen(QWidget):
     def __init__(self, t: dict, controller: "project_controller.ProjectController",
@@ -404,8 +416,18 @@ class ProjectsScreen(QWidget):
         old.deleteLater()
         self._populate()
 
+    # Every toolbar control except the page header's primary "New Project"
+    # CTA sits at this one height — the mockup's own CSS gets All/Favorites/
+    # Shared, Filter, the view toggle and the search box to line up "for
+    # free" from near-identical padding/font-size across simple CSS boxes,
+    # but Qt's per-widget sizeHint (padding + real Figtree font metrics) does
+    # not converge on its own the same way; pinning every control to the
+    # same explicit height is what actually guarantees they line up.
+    _TOOLBAR_H = 34
+
     def _toolbar(self) -> QWidget:
         t = self._t
+        H = self._TOOLBAR_H
         bar = QWidget()
         row = QHBoxLayout(bar)
         row.setContentsMargins(34, 2, 34, 20)
@@ -414,12 +436,14 @@ class ProjectsScreen(QWidget):
         search = QLineEdit()
         search.setPlaceholderText("Search projects, tags, engines…")
         search.setClearButtonEnabled(True)
-        search.setMaximumWidth(420)
+        search.setFixedHeight(H)
+        search.setMaximumWidth(560)
         search.addAction(icons.icon("search", t["text_muted"], 15), QLineEdit.ActionPosition.LeadingPosition)
         search.textChanged.connect(self._on_search)
-        row.addWidget(search)
+        row.addWidget(search, 1)
 
         self._scope_seg = SegControl(["All", "Favorites", "Shared"], t, 0)
+        self._scope_seg.setFixedHeight(H)
         self._scope_seg.changed.connect(self._on_scope_changed)
         row.addWidget(self._scope_seg)
 
@@ -427,10 +451,12 @@ class ProjectsScreen(QWidget):
 
         self._filter_btn = PillButton("Filter", t, "ghost", "filter", small=True)
         self._filter_btn.setToolTip("Filter by engine")
+        self._filter_btn.setFixedHeight(H)
         self._filter_btn.clicked.connect(self._open_filter_menu)
         row.addWidget(self._filter_btn)
 
         self._view_seg = SegControl(["", ""], t, 0, icons_=["grid", "list"])
+        self._view_seg.setFixedHeight(H)
         self._view_seg.changed.connect(self._on_view_changed)
         row.addWidget(self._view_seg)
         return bar
@@ -554,17 +580,24 @@ class ProjectsScreen(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
-        # cover
-        cover = QLabel()
-        cover.setFixedHeight(132)
-        cover.setPixmap(nuclei_pixmap(360, 132, p.seed, density=1.1, big=False))
-        cover.setScaledContents(True)
-        cover.setStyleSheet("border-top-left-radius:14px; border-top-right-radius:14px;")
+        # cover — a live-painting NucleiView, not a pixmap: this card sits in a
+        # 3-equal-stretch grid, so its real width tracks the window rather
+        # than any fixed reference, and a stretched pre-baked pixmap would
+        # distort the rounded corners. It's a raw (non-layout) child of
+        # cwrap, same as the mockup's cover art sitting *behind* the star/
+        # engine-chip/progress overlay rather than stacked above it in a
+        # column — so its geometry is synced to cwrap explicitly, both now
+        # and on every future resize (cwrap's own resize alone wouldn't
+        # otherwise touch a child it doesn't manage via layout).
+        cover = NucleiView(seed=p.seed, density=1.1, big=False,
+                          radius=14, top_only=True, min_size=(0, 0))
         cwrap = QFrame()
         cwrap.setFixedHeight(132)
         cwl = QVBoxLayout(cwrap)
         cwl.setContentsMargins(0, 0, 0, 0)
         cover.setParent(cwrap)
+        cover.setGeometry(0, 0, cwrap.width(), cwrap.height())
+        cwrap.resizeEvent = lambda e: cover.setGeometry(0, 0, cwrap.width(), cwrap.height())
 
         top = QHBoxLayout()
         top.setContentsMargins(0, 10, 10, 0)
@@ -586,8 +619,8 @@ class ProjectsScreen(QWidget):
 
         overlay = QHBoxLayout()
         overlay.setContentsMargins(10, 0, 10, 10)
-        eng = Chip(p.engine_label, t, ENGINE_KIND.get(p.engine_key, "primary"))
-        eng.setStyleSheet(eng.styleSheet() + "background:rgba(8,12,16,0.55);color:#eaf0f8;border-color:rgba(255,255,255,0.15);")
+        eng = EngineChip(p.engine_label, _ENGINE_DOT.get(p.engine_key, theme.VIZ[0]),
+                        bg="rgba(8,12,16,0.6)", fg="#eaf0f8", border="rgba(255,255,255,0.12)")
         overlay.addWidget(eng, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft)
         overlay.addStretch(1)
         prog = QLabel(f"{p.progress}%")

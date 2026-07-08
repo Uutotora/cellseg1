@@ -79,6 +79,33 @@ class Badge(QLabel):
             f"padding:2px 7px; font-size:11px; font-weight:600; font-family:{theme.MONO};")
 
 
+class EngineChip(QFrame):
+    """A pill chip with a leading colour dot — the mockup's engine badge on a
+    project-card cover (``.chip.vchip`` + a ``.cd`` swatch dot), one dot hue
+    per engine so CellSeg1/Cellpose/SAM2 stay visually distinct at a glance.
+    A plain ``Chip`` has no way to embed this second colour, hence its own
+    small atom rather than an option bolted onto ``Chip``.
+    """
+
+    def __init__(self, text: str, dot_color: str, bg: str, fg: str, border: str):
+        super().__init__()
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setStyleSheet(
+            f"QFrame{{background:{bg}; border:1px solid {border}; border-radius:999px;}}")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(9, 3, 9, 3)
+        row.setSpacing(6)
+        dot = QFrame()
+        dot.setFixedSize(7, 7)
+        dot.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        dot.setStyleSheet(f"background:{dot_color}; border-radius:3px;")
+        row.addWidget(dot)
+        lb = QLabel(text)
+        lb.setStyleSheet(f"color:{fg}; font-size:11px; font-weight:600; background:transparent;")
+        row.addWidget(lb)
+
+
 class PillButton(QPushButton):
     """Button in a design ``kind`` (primary | ghost | success | danger), optional icon."""
 

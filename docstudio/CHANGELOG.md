@@ -5,6 +5,65 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-08 — Projects tab: three more real rendering bugs, from a live screenshot
+
+A same-day follow-up after a real (non-offscreen) screenshot of the running
+app showed the Projects toolbar/cards weren't actually matching the mockup
+the way the previous pass's own offscreen renders had suggested. Three
+underlying causes, all fixed at the source rather than patched around:
+
+- **Card cover art wasn't rounded, and the engine label had no colour dot.**
+  Root cause: `cover` (the nuclei-art `QLabel`) was a *raw, non-layout* child
+  of `cwrap` (`cover.setParent(cwrap)`, never `cwl.addWidget(cover)` —
+  needed so the star/engine-chip/progress overlay could stack *on top of*
+  it rather than below it in a column) with no code keeping its geometry in
+  sync — it kept whatever size an unparented `QLabel` happens to start with
+  (640×480 in this environment; nothing to do with the card), stretched
+  over the real card via `setScaledContents`. Any `border-radius` on that
+  `QLabel`'s stylesheet was always a no-op too — Qt's QSS `border-radius`
+  shapes a widget's own background/border, never a child's pixmap. Fixed
+  properly, not patched: the cover is now a live-painting `NucleiView`
+  (already existed for the workspace canvas) that recomputes a rounded-
+  corner clip path from its own *current* size every paint — no distortion
+  regardless of actual width — with an explicit `resizeEvent` on `cwrap`
+  keeping it in sync (a raw child never gets this for free). Thumbnails
+  (`cover_label`, Home's recent rows + the Projects list view) get the
+  fixed-size equivalent: the radius baked straight into `nuclei_pixmap`
+  (new `radius`/`top_only` params). New `components.EngineChip` adds the
+  mockup's missing per-engine colour dot (`.chip` + `.cd`) — reusing
+  `theme.VIZ` for the three engine hues rather than inventing new tokens.
+- **The toolbar's controls didn't line up.** The search box, the All/
+  Favorites/Shared segmented control, Filter, and the grid/list toggle each
+  computed their own height from padding + real Figtree font metrics
+  instead of a shared explicit one — converging closely enough in an
+  offscreen dev render to look fine, but visibly drifting apart under the
+  bundled font on a real display (reported directly: "Filter renders
+  shorter than its neighbour"). Every control but the page header's primary
+  "New Project" CTA (deliberately excluded — it's a bigger, separate call
+  to action by design, matching the mockup's own distinct `.btn` vs
+  `.btn-sm`) now shares one explicit height (`ProjectsScreen._TOOLBAR_H`).
+  Also widened the search box (max-width 420→560, plus a stretch factor so
+  it actually grows to use the room) — at this window's real width the
+  card grid runs meaningfully wider than the mockup's fixed 1300px hero
+  shot ever needed to plan for, and 420px reads as cramped next to it.
+- Repo-root throwaway-venv check still exits 0 clean, so none of this pulled
+  in a heavy dependency.
+
+Verified: `studio/tests` green (144 tests, 8 new — the rounded-corner clip
+path top-only vs. all-four-corners, the raw-child geometry-sync pattern in
+isolation, toolbar-height equality, and the engine chip's dot colour);
+offscreen-screenshot-reconfirmed end to end (both themes, grid + list +
+every scope/filter state) that covers now clip correctly at every card
+width tested (305/450/620px, not just the one size a single screenshot
+happens to catch), the dot renders in each engine's own hue, and the
+toolbar sits flush. Not verified here (no physical display): the exact
+Figtree-rendered pixel heights on a real screen — fixing every control to
+one explicit height sidesteps needing to reproduce that mismatch exactly,
+but the *original* reported drift was only ever visible on a real display,
+not this offscreen setup.
+
+---
+
 ## 2026-07-08 — Projects tab: full toolbar fidelity + real grid/list views
 
 A design-fidelity + functionality pass on the Projects tab against the
