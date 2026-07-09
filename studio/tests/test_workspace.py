@@ -1,0 +1,475 @@
+"""Tests for the Segment workspace screen, wired for real (studio/workspace.py).
+
+Offscreen Qt. Every predict/batch/benchmark test monkeypatches
+napari_app.inference_cache.predict_cached (same seam as
+test_segment_controller.py) so the real UI -> controller -> engine chain
+runs end to end without a GPU/SAM weights/torch actually loading anything.
+"""
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import time
+from pathlib import Path
+
+import cv2
+import numpy as np
+import pytest
+
+pytest.importorskip("PyQt6")
+workspace = pytest.importorskip("studio.workspace")
+
+from PyQt6.QtWidgets import QApplication, QFileDialog
+
+from studio import theme
+from studio.layer_model import ImageLayer, LabelsLayer, PAINT, PAN_ZOOM, PointsLayer, ShapesLayer
+from studio.project import Project, ProjectSettings, ProjectStore
+from studio.project_controller import ProjectController
+from studio.segment_controller import SegmentController
+from studio.workspace import WorkspaceScreen
+
+
+@pytest.fixture
+def app():
+    return QApplication.instance() or QApplication([])
+
+
+def _write_image(path: Path, size=48, seed=0) -> None:
+    rng = np.random.default_rng(seed)
+    cv2.imwrite(str(path), (rng.random((size, size, 3)) * 255).astype(np.uint8))
+
+
+def _write_mask(path: Path, *labels_and_boxes, size=48) -> None:
+    mask = np.zeros((size, size), dtype=np.uint16)
+    for lbl, (y0, y1, x0, x1) in labels_and_boxes:
+        mask[y0:y1, x0:x1] = lbl
+    cv2.imwrite(str(path), mask)
+
+
+def _fake_predict_cached(config, image_rgb):
+    h, w = image_rgb.shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint16)
+    mask[h // 8: h // 2, w // 8: w // 2] = 1
+    mask[h // 2: h - h // 8, w // 2: w - w // 8] = 2
+    return mask
+
+
+@pytest.fixture(autouse=True)
+def _fake_engine(monkeypatch):
+    monkeypatch.setattr("napari_app.inference_cache.predict_cached", _fake_predict_cached)
+    # cellpose may be genuinely installed in whatever env runs these tests —
+    # without this, the benchmark test sees it as available and actually
+    # runs real Cellpose inference instead of treating it as absent (see the
+    # identical note in test_segment_controller.py's own _fake_engine).
+    monkeypatch.setattr("napari_app.engines.cellpose_available", lambda: False)
+
+
+@pytest.fixture
+def storage(tmp_path):
+    d = tmp_path / "storage"
+    (d / "sam_backbone").mkdir(parents=True)
+    (d / "sam_backbone" / "sam_vit_h_4b8939.pth").write_bytes(b"fake")
+    (d / "loras").mkdir(parents=True)
+    (d / "loras" / "nuclei-dapi-r8.pth").write_bytes(b"fake-lora")
+    return d
+
+
+@pytest.fixture
+def segment(storage):
+    return SegmentController(storage_dir=storage)
+
+
+@pytest.fixture
+def projects(tmp_path):
+    return ProjectController(ProjectStore(tmp_path / "projects"), seed_if_empty=False)
+
+
+@pytest.fixture
+def toasts():
+    return []
+
+
+def _ws(app, segment, projects, toasts, on_toggle_logs=None):
+    return WorkspaceScreen(theme.DARK, segment, projects,
+                           lambda title, sub: toasts.append((title, sub)), on_toggle_logs)
+
+
+def _make_project(tmp_path, projects, storage, *, n_images=1, with_gt=False, size=48):
+    imgs = []
+    for i in range(n_images):
+        p = tmp_path / f"img_{i}.png"
+        _write_image(p, size=size, seed=i)
+        imgs.append(str(p))
+    if with_gt:
+        _write_mask(tmp_path / "img_0_mask.png", (1, (2, 10, 2, 10)), (2, (20, 30, 20, 30)), size=size)
+    lora = storage / "loras" / "nuclei-dapi-r8.pth"
+    project = projects.store.create(
+        "Test Project", "x", image_paths=imgs,
+        settings=ProjectSettings(engine="cellseg1", model_name=str(lora)))
+    return project
+
+
+def _pump(app, ws, timeout=10):
+    t0 = time.monotonic()
+    while (ws._predicting or ws._batching or ws._benching) and time.monotonic() - t0 < timeout:
+        app.processEvents()
+        time.sleep(0.01)
+    for _ in range(5):
+        app.processEvents()
+
+
+# ── construction / empty state ────────────────────────────────────────────────
+def test_construct_with_no_project_shows_empty_states(app, segment, projects, toasts):
+    ws = _ws(app, segment, projects, toasts)
+    assert ws._project is None
+    assert ws._canvas._base_shape() is None
+
+
+def test_refresh_is_a_noop_when_no_active_project(app, segment, projects, toasts):
+    ws = _ws(app, segment, projects, toasts)
+    ws.refresh()  # should not raise
+    assert ws._project is None
+
+
+# ── project / image loading ──────────────────────────────────────────────────
+def test_load_project_selects_first_image_and_builds_layers(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, n_images=2)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    assert ws._current_image_path == project.image_paths[0]
+    kinds = [l.kind for l in ws._layers]
+    assert kinds == ["image", "labels"]
+    assert ws._layers.selected.kind == "labels"  # Segmentation layer selected by default
+
+
+def test_load_project_auto_discovers_ground_truth(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, n_images=1, with_gt=True)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    gt = ws._layers.find("Ground truth")
+    assert gt is not None
+    assert gt.visible is False  # auto-discovered GT starts hidden
+
+
+def test_refresh_reloads_only_on_project_switch(app, segment, projects, toasts, tmp_path, storage):
+    p1 = _make_project(tmp_path, projects, storage, n_images=1)
+    p2_dir = tmp_path / "p2"
+    p2_dir.mkdir()
+    p2 = _make_project(p2_dir, projects, storage, n_images=1)
+    ws = _ws(app, segment, projects, toasts)
+
+    projects.set_active(p1.id)
+    ws.refresh()
+    assert ws._project.id == p1.id
+    seg = ws._layers.find("Segmentation")
+    seg.data[0, 0] = 77  # simulate in-progress unsaved work
+
+    ws.refresh()  # same project still active -> must NOT reset layers
+    assert ws._layers.find("Segmentation").data[0, 0] == 77
+
+    projects.set_active(p2.id)
+    ws.refresh()
+    assert ws._project.id == p2.id
+    assert ws._layers.find("Segmentation").data[0, 0] == 0  # fresh layers for the new project
+
+
+def test_select_image_switches_layers(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, n_images=2)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._select_image(project.image_paths[1])
+    assert ws._current_image_path == project.image_paths[1]
+    assert ws._last_result is None
+
+
+# ── layer panel actions ───────────────────────────────────────────────────────
+def test_add_points_and_shapes_layers(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._add_points_layer()
+    ws._add_shapes_layer()
+    kinds = [l.kind for l in ws._layers]
+    assert kinds.count("points") == 1
+    assert kinds.count("shapes") == 1
+    assert ws._layers.selected.kind == "shapes"  # most-recently-added is selected
+
+
+def test_add_labels_layer_needs_a_loaded_image(app, segment, projects, toasts):
+    ws = _ws(app, segment, projects, toasts)
+    ws._add_labels_layer()
+    assert not any(l.kind == "labels" for l in ws._layers)
+    assert toasts and "No image loaded" in toasts[-1][0]
+
+
+def test_delete_selected_layer(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    n_before = len(ws._layers)
+    ws._delete_selected_layer()
+    assert len(ws._layers) == n_before - 1
+
+
+def test_toggle_layer_visible(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    seg = ws._layers.find("Segmentation")
+    assert seg.visible is True
+    ws._toggle_layer_visible(ws._layers.index_of(seg))
+    assert seg.visible is False
+
+
+def test_select_layer_rebuilds_controls_for_the_right_kind(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    image_layer = ws._layers.find(Path(project.image_paths[0]).stem)
+    ws._select_layer(ws._layers.index_of(image_layer))
+    assert ws._layers.selected is image_layer
+
+
+def test_set_canvas_mode_updates_target_layer_mode(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._set_canvas_mode(PAINT)
+    assert ws._canvas.mode == PAINT
+    assert ws._layers.find("Segmentation").mode == PAINT
+
+
+def test_shuffle_colors_changes_seed(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    seg = ws._layers.find("Segmentation")
+    before = seg.color_seed
+    ws._shuffle_colors()
+    assert seg.color_seed != before
+
+
+# ── Segment settings pane ─────────────────────────────────────────────────────
+def test_engine_select_switches_engine_and_rebuilds_model_field(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    # this file's _fake_engine fixture reports cellpose as unavailable (see
+    # its docstring), so its option text carries the "(not installed)" note
+    ws._on_engine_select("Cellpose-SAM (zero-shot, generalist)  (not installed)")
+    assert project.settings.engine == "cellpose"
+
+
+def test_quality_preset_updates_thresholds(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._on_quality_preset(2)  # Accurate
+    assert project.settings.quality_preset == "Accurate"
+    assert project.settings.points_per_side == 48
+
+
+def test_manual_threshold_change_marks_preset_custom(app, segment, projects, toasts, tmp_path, storage):
+    from studio.components import Badge
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    badge = Badge("0.80", theme.DARK)
+    ws._on_threshold_change("pred_iou_thresh", 0.91, badge)
+    assert project.settings.pred_iou_thresh == pytest.approx(0.91)
+    assert project.settings.quality_preset == "Custom"
+    assert badge.text() == "0.91"
+
+
+def test_pixel_size_edit_recomputes_results(app, segment, projects, toasts, tmp_path, storage):
+    from PyQt6.QtWidgets import QLineEdit
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._last_result = segment.compute_measurements(np.zeros((10, 10), dtype=np.int32))
+    edit = QLineEdit("0.5")
+    ws._on_pixel_size_edited(edit)
+    assert project.settings.pixel_size_um == pytest.approx(0.5)
+
+
+# ── predict flow ─────────────────────────────────────────────────────────────
+def test_start_predict_without_project_toasts(app, segment, projects, toasts):
+    ws = _ws(app, segment, projects, toasts)
+    ws._start_predict()
+    assert toasts and "No project open" in toasts[-1][0]
+
+
+def test_start_predict_runs_and_populates_results(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_predict()
+    assert ws._predicting is True
+    _pump(app, ws)
+    assert ws._predicting is False
+    assert ws._last_result is not None
+    assert ws._last_result["n_cells"] == 2
+    seg = ws._layers.find("Segmentation")
+    assert seg.max_label == 2
+    reloaded = projects.store.load(project.id)
+    assert reloaded.stats.n_cells == 2
+    assert any("Segmentation complete" in t[0] for t in toasts)
+
+
+def test_start_predict_bad_config_toasts_synchronously(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    project.settings.model_name = ""  # no LoRA -> build_config raises
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_predict()
+    assert ws._predicting is False
+    assert any("Can't run segmentation" in t[0] for t in toasts)
+
+
+# ── ground truth evaluation ───────────────────────────────────────────────────
+def test_load_gt_and_evaluate_updates_metrics_and_dashboard_stats(
+        app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, with_gt=False)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_predict()
+    _pump(app, ws)
+
+    gt_path = tmp_path / "gt.png"
+    _write_mask(gt_path, (1, (6, 24, 6, 24)), (2, (24, 42, 24, 42)))
+    ws._load_gt(str(gt_path))
+    assert ws._gt_metrics is not None
+    reloaded = projects.store.load(project.id)
+    assert reloaded.stats.last_f1 == ws._gt_metrics["f1"]
+
+
+def test_color_by_recolors_segmentation(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_predict()
+    _pump(app, ws)
+    seg = ws._layers.find("Segmentation")
+    ws._on_color_by("Area (heatmap)")
+    assert seg.color_overrides
+    ws._on_color_by("Instance ID (default)")
+    assert seg.color_overrides == {}
+
+
+# ── save / export (QFileDialog monkeypatched) ────────────────────────────────
+def test_save_masks_without_a_result_toasts(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._save_masks()
+    assert toasts and "Nothing to save" in toasts[-1][0]
+
+
+def test_save_masks_writes_a_file(app, segment, projects, toasts, tmp_path, storage, monkeypatch):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_predict()
+    _pump(app, ws)
+    out = tmp_path / "out_mask.png"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(out), "")))
+    ws._save_masks()
+    assert out.exists()
+    assert toasts[-1][0] == "Masks saved"
+
+
+def test_export_csv_writes_a_file(app, segment, projects, toasts, tmp_path, storage, monkeypatch):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_predict()
+    _pump(app, ws)
+    out = tmp_path / "out.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(out), "")))
+    ws._export_csv()
+    assert out.exists()
+    assert "Area" in out.read_text()
+
+
+# ── batch ─────────────────────────────────────────────────────────────────────
+def test_start_batch_runs_and_updates_dashboard_stats(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, n_images=3)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_batch()
+    assert ws._batching is True
+    _pump(app, ws)
+    assert ws._batching is False
+    reloaded = projects.store.load(project.id)
+    assert reloaded.stats.n_cells == 3 * 2
+    assert reloaded.stats.progress == 100
+    assert any("Batch complete" in t[0] for t in toasts)
+
+
+def test_start_batch_empty_project_toasts(app, segment, projects, toasts, tmp_path, storage):
+    project = projects.store.create("Empty", "", settings=ProjectSettings(
+        engine="cellseg1", model_name=str(storage / "loras" / "nuclei-dapi-r8.pth")))
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_batch()
+    assert toasts and "Can't start batch" in toasts[-1][0]
+
+
+# ── benchmark ─────────────────────────────────────────────────────────────────
+def test_start_benchmark_without_gt_toasts(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, with_gt=False)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_benchmark()
+    assert toasts and "Can't run benchmark" in toasts[-1][0]
+
+
+def test_start_benchmark_scores_engines(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, with_gt=True)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_benchmark()
+    assert ws._benching is True
+    _pump(app, ws)
+    assert ws._benching is False
+    assert ws._bench_rows
+    assert any("Benchmark complete" in t[0] for t in toasts)
+
+
+# ── viewer bar actions ─────────────────────────────────────────────────────────
+def test_toggle_mip_without_volume_toasts(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._toggle_mip()
+    assert toasts and "No z-stack loaded" in toasts[-1][0]
+    assert ws._canvas.mip is False
+
+
+def test_toggle_grid_and_transpose(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._toggle_grid()
+    assert ws._canvas.grid is True
+    ws._toggle_transpose()
+    assert ws._canvas.transposed is True
+
+
+def test_toggle_logs_console_calls_the_injected_callback(app, segment, projects, toasts):
+    calls = []
+    ws = _ws(app, segment, projects, toasts, on_toggle_logs=lambda: calls.append(True))
+    ws._toggle_logs_console()
+    assert calls == [True]
+
+
+def test_floating_add_point_selects_or_creates_a_points_layer(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._on_floating_tool("__add_point__")
+    assert isinstance(ws._layers.selected, PointsLayer)
+    assert ws._canvas.mode == PAINT
+
+    ws._on_floating_tool(PAN_ZOOM)
+    assert ws._canvas.mode == PAN_ZOOM

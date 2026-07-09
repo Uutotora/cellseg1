@@ -1,34 +1,71 @@
-"""CellSeg1 Studio — the Workspace (Segment) screen (static design skeleton).
+"""CellSeg1 Studio — the Workspace (Segment) screen, wired for real.
 
-The signature screen: an adapted-napari **Layers** panel (list + full controls),
-the image **canvas** (nuclei stand-in with overlays and a napari-style viewer
-bar), and the **inspector** (Segment settings · Results). Still static — the
-tab-by-tab wiring (real napari layers, real predict/results) is tracked in
-``docstudio/BACKLOG.md`` — except the top-bar breadcrumb + engine chip, which
-reflect the real "active project" shared from the Projects tab
-(``set_active_project``).
+The signature screen: an evented **Layers** panel (list + full controls,
+napari-Labels-faithful) driving our own **Canvas** (``studio/canvas.py`` —
+not embedded napari), and the **inspector** (Segment settings · Results).
+Real segmentation is reused from the classic app via ``SegmentController``
+(``studio/segment_controller.py``), which wraps
+``napari_app.core.predict_controller.PredictController`` unmodified.
+
+Every reactive region rebuilds its own small container on demand rather than
+tearing down the whole screen (unlike ``ModelsScreen``/``DashboardScreen``,
+which cheaply rebuild everything on every tab visit) — the Canvas's pan/zoom
+and the Layers' in-progress edits must survive a tab switch. A `Slider`
+mid-drag must never have its own container rebuilt (that would sever the
+mouse grab mid-gesture): value-only changes update an inline `Badge`
+directly and never call the container rebuild; only a *structural* change
+(add/remove/select a layer, switch engine, switch project/image) rebuilds a
+container. See ``docstudio/ARCHITECTURE.md``'s "Segment tab specifically".
 """
 from __future__ import annotations
 
 import html
+import time
+from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QSize
+import numpy as np
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QGridLayout,
-    QStackedWidget, QToolButton, QLineEdit, QSizePolicy, QScrollArea,
+    QStackedWidget, QToolButton, QLineEdit, QSizePolicy, QScrollArea, QFileDialog,
 )
 
 from studio import icons
 from studio import theme, demo
 from studio.project import ENGINE_LABELS, ENGINE_KIND, Project
-from studio.paint import nuclei_pixmap, NucleiView
+from studio.paint import nuclei_pixmap
 from studio.components import (
     Chip, Badge, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
-    SegControl, StatTile, FieldRow, GroupLabel, Accordion, hline, label,
+    SegControl, StatTile, FieldRow, GroupLabel, Accordion, hline, label, bare_widget,
 )
+from studio.canvas import Canvas
+from studio.layer_model import (
+    BLENDING_MODES, ImageLayer, IMAGE_COLORMAPS, LabelsLayer, LayerList,
+    PAN_ZOOM, TRANSFORM, PAINT, ERASE, FILL, POLYGON, PICK, PointsLayer, ShapesLayer,
+)
+from studio.segment_controller import SegmentController, apply_quality_preset
 
 LAYER_TYPE_ICON = {"labels": "layers", "shapes": "shapes", "points": "points", "image": "image"}
+# (icon, tooltip, mode) for the Labels layer's 8-icon tool row. "__shuffle__"
+# is an action, not a mode — mirrors napari's Mode enum plus that one action.
+MODE_ICONS = [
+    ("target", "Pan / zoom", PAN_ZOOM),
+    ("measure", "Transform", TRANSFORM),
+    ("brush", "Paint brush", PAINT),
+    ("eraser", "Eraser", ERASE),
+    ("fill", "Fill bucket", FILL),
+    ("polygon", "Polygon", POLYGON),
+    ("pick", "Pick label colour", PICK),
+    ("shuffle", "Shuffle colours", "__shuffle__"),
+]
+QUALITY_PRESET_NAMES = ["Fast", "Balanced", "Accurate"]
+COLOR_BY_OPTIONS = ["Instance ID (default)", "Area (heatmap)", "Diameter (heatmap)",
+                    "Solidity (heatmap)", "Mean intensity (heatmap)"]
+_COLOR_BY_KEYS = {"Area (heatmap)": "area", "Diameter (heatmap)": "diameter",
+                  "Solidity (heatmap)": "solidity", "Mean intensity (heatmap)": "mean_intensity"}
+_DLG = QFileDialog.Option.DontUseNativeDialog
 
 
 def _scroll(inner: QWidget) -> QScrollArea:
@@ -40,15 +77,56 @@ def _scroll(inner: QWidget) -> QScrollArea:
     return sa
 
 
+def _clear_layout(layout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        w = item.widget()
+        if w is not None:
+            w.setParent(None)
+            w.deleteLater()
+
+
 class WorkspaceScreen(QWidget):
-    def __init__(self, t: dict):
+    _predict_result_signal = pyqtSignal(object, object, object)
+    _predict_log_signal = pyqtSignal(str)
+    _predict_finish_signal = pyqtSignal()
+
+    _batch_progress_signal = pyqtSignal(int, int)
+    _batch_log_signal = pyqtSignal(str)
+    _batch_cohort_signal = pyqtSignal(object, object)
+    _batch_finish_signal = pyqtSignal()
+
+    _bench_row_signal = pyqtSignal(str)
+    _bench_log_signal = pyqtSignal(str)
+    _bench_done_signal = pyqtSignal(object, object)
+
+    def __init__(self, t: dict, segment: SegmentController, projects, on_toast,
+                on_toggle_logs=None):
         super().__init__()
         self._t = t
+        self._segment = segment
+        self._projects = projects
+        self._toast = on_toast
+        self._on_toggle_logs = on_toggle_logs
+
+        self._project: Optional[Project] = None
+        self._layers = LayerList()
+        self._current_image_path: Optional[str] = None
+        self._current_image_array: Optional[np.ndarray] = None
+        self._last_result: Optional[dict] = None
+        self._gt_metrics: Optional[dict] = None
+        self._bench_rows: list[tuple[str, str]] = []
+        self._predicting = False
+        self._batching = False
+        self._benching = False
+        self._run_started_at: Optional[float] = None
+
+        self._layers.on_change(self._on_layers_changed)
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         outer.addWidget(self._topbar())
-        self.set_active_project(None)
 
         main = QWidget()
         row = QHBoxLayout(main)
@@ -59,38 +137,39 @@ class WorkspaceScreen(QWidget):
         row.addWidget(self._inspector())
         outer.addWidget(main, 1)
 
-    # ── top bar ──────────────────────────────────────────────────────────────
-    def _topbar(self) -> QWidget:
-        t = self._t
-        bar = QWidget()
-        bar.setStyleSheet(f"background:{t['surface']};")
-        bar.setFixedHeight(52)
-        row = QHBoxLayout(bar)
-        row.setContentsMargins(18, 0, 18, 0)
-        row.setSpacing(12)
-        self._crumb = QLabel()
-        self._crumb.setStyleSheet("font-size:13px; font-weight:600;")
-        row.addWidget(self._crumb)
-        self._chip_row = row
-        self._engine_chip = Chip("", t, "muted")
-        row.addWidget(self._engine_chip)
-        row.addStretch(1)
-        row.addWidget(PillButton("Export", t, "ghost", "export", small=True))
-        row.addWidget(PillButton("Run", t, "primary", "run", small=True))
-        bottom = QFrame()
-        bottom.setFixedHeight(1)
-        bottom.setStyleSheet(f"background:{t['border']};")
-        wrap = QWidget()
-        wl = QVBoxLayout(wrap)
-        wl.setContentsMargins(0, 0, 0, 0)
-        wl.setSpacing(0)
-        wl.addWidget(bar)
-        wl.addWidget(bottom)
-        return wrap
+        self._predict_result_signal.connect(self._on_predict_result)
+        self._predict_log_signal.connect(self._on_predict_log)
+        self._predict_finish_signal.connect(self._on_predict_finished)
+        self._batch_progress_signal.connect(self._on_batch_progress)
+        self._batch_log_signal.connect(self._on_predict_log)
+        self._batch_cohort_signal.connect(self._on_batch_cohort_ready)
+        self._batch_finish_signal.connect(self._on_batch_finished)
+        self._bench_row_signal.connect(self._on_bench_row)
+        self._bench_log_signal.connect(self._on_predict_log)
+        self._bench_done_signal.connect(self._on_bench_done)
 
-    # ── active project (shared from the Projects tab) ──────────────────────────
+        self._load_project(None)  # establish the empty state now everything exists
+
+    # ── project lifecycle ────────────────────────────────────────────────────
+    def refresh(self) -> None:
+        """Called by app.navigate() on every visit to this tab. Only a real
+        project *switch* resets the session (layers/canvas/settings); simply
+        revisiting the tab with the same project leaves in-progress work —
+        including unsaved settings tweaks — alone. A cross-tab settings
+        change to the *same, already-open* project (e.g. selecting a model
+        in Models & Train) needs reopening the project to pick up — a known,
+        deliberate simplification, not a bug."""
+        project = self._projects.get_active() if self._projects else None
+        current_id = self._project.id if self._project else None
+        new_id = project.id if project else None
+        if new_id != current_id:
+            self._load_project(project)
+
     def set_active_project(self, project: Optional[Project]) -> None:
-        """Reflect the real active project in the breadcrumb + engine chip."""
+        """Reflect the active project in the breadcrumb + engine chip only —
+        cheap and safe to call anytime, including from app.py before the
+        rest of this screen is built. The heavier "switch projects" reset
+        is _load_project's job, triggered from refresh()."""
         t = self._t
         if project is None:
             name, engine_key, engine_label = "No project selected", None, "No project"
@@ -108,6 +187,57 @@ class WorkspaceScreen(QWidget):
         self._engine_chip.deleteLater()
         self._engine_chip = Chip(engine_label, t, kind)
         self._chip_row.insertWidget(idx, self._engine_chip)
+
+    def _load_project(self, project: Optional[Project]) -> None:
+        self._project = project
+        self.set_active_project(project)
+        self._layers.clear()
+        self._current_image_path = None
+        self._current_image_array = None
+        self._last_result = None
+        self._gt_metrics = None
+        self._bench_rows = []
+        if project and project.image_paths:
+            self._select_image(project.image_paths[0])
+        self._refresh_images_pane()
+        self._rebuild_layer_controls()
+        self._rebuild_segment_pane()
+        self._rebuild_results_pane()
+        if self._canvas is not None:
+            self._canvas.home()
+
+    # ── top bar ──────────────────────────────────────────────────────────────
+    def _topbar(self) -> QWidget:
+        t = self._t
+        bar = QWidget()
+        bar.setStyleSheet(f"background:{t['surface']};")
+        bar.setFixedHeight(52)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(18, 0, 18, 0)
+        row.setSpacing(12)
+        self._crumb = QLabel()
+        self._crumb.setStyleSheet("font-size:13px; font-weight:600;")
+        row.addWidget(self._crumb)
+        self._chip_row = row
+        self._engine_chip = Chip("", t, "muted")
+        row.addWidget(self._engine_chip)
+        row.addStretch(1)
+        export_btn = PillButton("Export", t, "ghost", "export", small=True)
+        export_btn.clicked.connect(self._export_csv)
+        row.addWidget(export_btn)
+        self._run_btn_topbar = PillButton("Run", t, "primary", "run", small=True)
+        self._run_btn_topbar.clicked.connect(self._start_predict)
+        row.addWidget(self._run_btn_topbar)
+        bottom = QFrame()
+        bottom.setFixedHeight(1)
+        bottom.setStyleSheet(f"background:{t['border']};")
+        wrap = QWidget()
+        wl = QVBoxLayout(wrap)
+        wl.setContentsMargins(0, 0, 0, 0)
+        wl.setSpacing(0)
+        wl.addWidget(bar)
+        wl.addWidget(bottom)
+        return wrap
 
     # ── left: Images | Layers ────────────────────────────────────────────────
     def _left_panel(self) -> QWidget:
@@ -134,29 +264,56 @@ class WorkspaceScreen(QWidget):
         v.addWidget(stack, 1)
         return panel
 
+    # ── Images pane ──────────────────────────────────────────────────────────
     def _images_pane(self) -> QWidget:
         t = self._t
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(8, 2, 8, 8)
         v.setSpacing(4)
-        search = QLineEdit()
-        search.setPlaceholderText("Filter images…")
-        search.addAction(icons.icon("diagnose", t["text_muted"], 14), QLineEdit.ActionPosition.LeadingPosition)
-        v.addWidget(search)
-        lst = QWidget()
-        ll = QVBoxLayout(lst)
-        ll.setContentsMargins(0, 4, 0, 0)
-        ll.setSpacing(2)
-        for i, (fn, st) in enumerate(demo.TASKS):
-            ll.addWidget(self._task_row(i, fn, st))
-        ll.addStretch(1)
-        v.addWidget(_scroll(lst), 1)
+        self._image_search = QLineEdit()
+        self._image_search.setPlaceholderText("Filter images…")
+        self._image_search.addAction(icons.icon("diagnose", t["text_muted"], 14),
+                                     QLineEdit.ActionPosition.LeadingPosition)
+        self._image_search.textChanged.connect(lambda _=None: self._refresh_images_pane())
+        v.addWidget(self._image_search)
+        self._images_list_container = bare_widget()
+        self._images_list_layout = QVBoxLayout(self._images_list_container)
+        self._images_list_layout.setContentsMargins(0, 4, 0, 0)
+        self._images_list_layout.setSpacing(2)
+        v.addWidget(_scroll(self._images_list_container), 1)
         return w
 
-    def _task_row(self, i: int, fn: str, st: str) -> QFrame:
+    def _refresh_images_pane(self) -> None:
+        layout = self._images_list_layout
+        _clear_layout(layout)
         t = self._t
-        sel = i == 1
+        if self._project is None:
+            empty = label("No project open.", 12, t["text_muted"])
+            empty.setWordWrap(True)
+            layout.addWidget(empty)
+            return
+        query = (self._image_search.text() or "").strip().lower()
+        paths = [p for p in self._project.image_paths if not query or query in Path(p).name.lower()]
+        if not paths:
+            msg = "No images match." if query else "This project has no images yet."
+            empty = label(msg, 12, t["text_muted"])
+            empty.setWordWrap(True)
+            layout.addWidget(empty)
+        for p in paths:
+            layout.addWidget(self._image_row(p))
+        layout.addStretch(1)
+
+    def _image_row(self, path: str) -> QFrame:
+        t = self._t
+        sel = path == self._current_image_path
+        has_gt = self._segment.find_gt_for_image(path) is not None
+        if sel and self._last_result is not None:
+            status, dcol = "predicted", t["signal"]
+        elif has_gt:
+            status, dcol = "annotated", t["success"]
+        else:
+            status, dcol = "new", t["border_strong"]
         row = QFrame()
         row.setCursor(Qt.CursorShape.PointingHandCursor)
         row.setStyleSheet(
@@ -169,23 +326,68 @@ class WorkspaceScreen(QWidget):
         lay.setSpacing(10)
         thumb = QLabel()
         thumb.setFixedSize(38, 30)
-        thumb.setPixmap(nuclei_pixmap(38, 30, 10 + i * 13, density=2.0, outline=st != "none"))
+        thumb.setPixmap(self._thumbnail(path))
         thumb.setScaledContents(True)
         lay.addWidget(thumb)
         col = QVBoxLayout()
         col.setSpacing(1)
-        fnl = QLabel(fn)
+        fnl = QLabel(Path(path).name)
         fnl.setStyleSheet(f"color:{t['text']}; font-family:{theme.MONO}; font-size:12px; font-weight:600;")
         col.addWidget(fnl)
-        col.addWidget(label(demo.STATUS_LABEL[st], 10.5, t["text_muted"]))
+        col.addWidget(label(status, 10.5, t["text_muted"]))
         lay.addLayout(col, 1)
         dot = QLabel()
-        dcol = {"ok": t["success"], "pred": t["signal"], "none": t["border_strong"]}[st]
         dot.setFixedSize(8, 8)
         dot.setStyleSheet(f"background:{dcol}; border-radius:4px;")
         lay.addWidget(dot)
+        row.mouseReleaseEvent = lambda e, p=path: self._select_image(p)
         return row
 
+    def _thumbnail(self, path: str) -> QPixmap:
+        try:
+            import cv2
+            img = cv2.imread(path, cv2.IMREAD_COLOR)
+            if img is None:
+                raise ValueError("unreadable")
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = cv2.resize(img, (38, 30), interpolation=cv2.INTER_AREA)
+            img = np.ascontiguousarray(img)
+            qimg = QImage(img.data, 38, 30, 38 * 3, QImage.Format.Format_RGB888).copy()
+            return QPixmap.fromImage(qimg)
+        except Exception:
+            return nuclei_pixmap(38, 30, abs(hash(path)) % 1000, density=2.0)
+
+    def _select_image(self, path: str) -> None:
+        if path == self._current_image_path:
+            return
+        try:
+            img = self._segment.load_preview_image(path)
+        except Exception as e:
+            self._toast("Can't load image", str(e))
+            return
+        self._current_image_path = path
+        self._current_image_array = img
+        self._last_result = None
+        self._gt_metrics = None
+        self._layers.clear()
+        self._layers.add(ImageLayer(Path(path).stem or "Image", img), select=False)
+        self._layers.add(LabelsLayer("Segmentation", np.zeros(img.shape[:2], dtype=np.int32)))
+        gt_path = self._segment.find_gt_for_image(path)
+        if gt_path is not None:
+            try:
+                gt = self._segment.load_gt_mask(gt_path, img.shape[:2])
+                gt_layer = LabelsLayer("Ground truth", gt)
+                gt_layer.visible = False
+                self._layers.add(gt_layer, select=False)
+            except Exception:
+                pass
+        if self._canvas is not None:
+            self._canvas.home()
+        self._refresh_images_pane()
+        self._rebuild_layer_controls()
+        self._rebuild_results_pane()
+
+    # ── Layers pane ──────────────────────────────────────────────────────────
     def _layers_pane(self) -> QWidget:
         t = self._t
         w = QWidget()
@@ -193,37 +395,51 @@ class WorkspaceScreen(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        # toolbar
         tb = QWidget()
         tbl = QHBoxLayout(tb)
         tbl.setContentsMargins(10, 8, 10, 6)
         tbl.setSpacing(3)
-        for icon_name, tip in [("points", "New points layer"), ("shapes", "New shapes layer"),
-                               ("new_labels", "New labels layer")]:
-            tbl.addWidget(IconButton(icon_name, t, 30, tip))
+        tbl.addWidget(IconButton("points", t, 30, "New points layer", self._add_points_layer))
+        tbl.addWidget(IconButton("shapes", t, 30, "New shapes layer", self._add_shapes_layer))
+        tbl.addWidget(IconButton("new_labels", t, 30, "New labels layer", self._add_labels_layer))
         tbl.addStretch(1)
-        tbl.addWidget(IconButton("shuffle", t, 30, "Shuffle label colours"))
-        del_btn = IconButton("trash", t, 30, "Delete selected layer")
-        del_btn.setStyleSheet(del_btn.styleSheet() +
-                              f"QToolButton:hover{{background:{t['danger_weak']};}}")
+        tbl.addWidget(IconButton("shuffle", t, 30, "Shuffle label colours", self._shuffle_colors))
+        del_btn = IconButton("trash", t, 30, "Delete selected layer", self._delete_selected_layer)
+        del_btn.setStyleSheet(del_btn.styleSheet() + f"QToolButton:hover{{background:{t['danger_weak']};}}")
         tbl.addWidget(del_btn)
         v.addWidget(tb)
 
-        # list
-        lst = QWidget()
-        ll = QVBoxLayout(lst)
-        ll.setContentsMargins(8, 0, 8, 8)
-        ll.setSpacing(2)
-        for i, (name, typ, count, vis) in enumerate(demo.LAYERS):
-            ll.addWidget(self._layer_row(i, name, typ, count, vis))
-        v.addWidget(lst)
+        self._layers_list_container = bare_widget()
+        self._layers_list_layout = QVBoxLayout(self._layers_list_container)
+        self._layers_list_layout.setContentsMargins(8, 0, 8, 8)
+        self._layers_list_layout.setSpacing(2)
+        v.addWidget(self._layers_list_container)
 
-        v.addWidget(self._layer_controls(), 1)
+        self._layer_controls_container = bare_widget()
+        self._layer_controls_layout = QVBoxLayout(self._layer_controls_container)
+        self._layer_controls_layout.setContentsMargins(0, 0, 0, 0)
+        self._layer_controls_layout.setSpacing(0)
+        v.addWidget(_scroll(self._layer_controls_container), 1)
         return w
 
-    def _layer_row(self, i: int, name: str, typ: str, count: str, vis: bool) -> QFrame:
+    def _on_layers_changed(self) -> None:
+        """The one generic subscriber to every LayerList mutation — kept
+        cheap (row text/labels only) so it's safe to fire on every value
+        tick of a drag, not just structural changes. Never rebuilds
+        _layer_controls_container: that would sever an in-progress Slider
+        drag whose Slider lives inside that very container."""
+        self._refresh_layers_list()
+        self._update_legend()
+
+    def _refresh_layers_list(self) -> None:
+        layout = self._layers_list_layout
+        _clear_layout(layout)
+        for i, layer in enumerate(self._layers):
+            layout.addWidget(self._layer_row(i, layer))
+
+    def _layer_row(self, i: int, layer) -> QFrame:
         t = self._t
-        sel = i == 0
+        sel = i == self._layers.selected_index
         row = QFrame()
         row.setCursor(Qt.CursorShape.PointingHandCursor)
         row.setStyleSheet(
@@ -234,56 +450,106 @@ class WorkspaceScreen(QWidget):
         lay = QHBoxLayout(row)
         lay.setContentsMargins(8, 7, 8, 7)
         lay.setSpacing(9)
-        eye = IconButton("eye" if vis else "eye_off", t, 22, "Toggle visibility")
-        eye._on = vis
-        def _flip(btn=eye):
-            btn._on = not getattr(btn, "_on", True)
-            btn.setIcon(icons.icon("eye" if btn._on else "eye_off",
-                                   self._t["signal"] if btn._on else self._t["text_muted"], 14))
-        if vis:
+        eye = IconButton("eye" if layer.visible else "eye_off", t, 22, "Toggle visibility",
+                        lambda idx=i: self._toggle_layer_visible(idx))
+        if layer.visible:
             eye.setIcon(icons.icon("eye", t["signal"], 14))
-        eye.clicked.connect(_flip)
         lay.addWidget(eye)
-        kind = demo.LAYER_TYPE_KIND.get(typ, "muted")
+        kind = demo.LAYER_TYPE_KIND.get(layer.kind, "muted")
         colm = {"signal": t["signal"], "primary": t["primary"], "warning": t["warning"], "muted": t["text_subtle"]}
         weakm = {"signal": t["signal_weak"], "primary": t["primary_weak"], "warning": t["warning_weak"], "muted": t["surface2"]}
         ty = QLabel()
         ty.setFixedSize(24, 24)
-        ty.setPixmap(icons.pixmap(LAYER_TYPE_ICON[typ], colm[kind], 14))
+        ty.setPixmap(icons.pixmap(LAYER_TYPE_ICON[layer.kind], colm[kind], 14))
         ty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ty.setStyleSheet(f"background:{weakm[kind]}; border-radius:6px;")
         lay.addWidget(ty)
+        name, count, _visible = layer.to_summary()
         nm = QLabel(name)
         nm.setStyleSheet(f"color:{t['text']}; font-size:12.5px; font-weight:600;")
         lay.addWidget(nm, 1)
         lay.addWidget(label(count, 10.5, t["text_muted"]))
+        row.mouseReleaseEvent = lambda e, idx=i: self._select_layer(idx)
         return row
 
-    def _layer_controls(self) -> QWidget:
+    def _select_layer(self, idx: int) -> None:
+        self._layers.select(idx)
+        self._rebuild_layer_controls()
+
+    def _toggle_layer_visible(self, idx: int) -> None:
+        self._layers.toggle_visible(idx)
+
+    def _add_points_layer(self) -> None:
+        self._layers.add(PointsLayer(self._layers.unique_name("Points")))
+        self._rebuild_layer_controls()
+
+    def _add_shapes_layer(self) -> None:
+        self._layers.add(ShapesLayer(self._layers.unique_name("Shapes")))
+        self._rebuild_layer_controls()
+
+    def _add_labels_layer(self) -> None:
+        shape = self._canvas._base_shape() if self._canvas is not None else None
+        if shape is None:
+            self._toast("No image loaded", "Load an image before adding a labels layer.")
+            return
+        self._layers.add(LabelsLayer(self._layers.unique_name("Labels"), np.zeros(shape, dtype=np.int32)))
+        self._rebuild_layer_controls()
+
+    def _delete_selected_layer(self) -> None:
+        if self._layers.selected is not None:
+            self._layers.remove_selected()
+            self._rebuild_layer_controls()
+
+    def _shuffle_colors(self) -> None:
+        target = self._canvas.edit_target() if self._canvas is not None else None
+        if target is not None:
+            target.shuffle_colors()
+            self._layers.notify()
+
+    # ── layer controls (dispatch by kind) ────────────────────────────────────
+    def _rebuild_layer_controls(self) -> None:
+        layout = self._layer_controls_layout
+        _clear_layout(layout)
         t = self._t
-        w = QFrame()
-        w.setStyleSheet(f"background:{t['inset']}; border-top:1px solid {t['border']};")
+        layer = self._layers.selected
+        if layer is None:
+            empty = label("Select a layer to see its settings.", 12, t["text_muted"])
+            empty.setWordWrap(True)
+            wrap = QWidget()
+            wv = QVBoxLayout(wrap)
+            wv.setContentsMargins(12, 12, 12, 12)
+            wv.addWidget(empty)
+            layout.addWidget(wrap)
+            return
+        if isinstance(layer, LabelsLayer):
+            layout.addWidget(self._labels_controls(layer))
+        elif isinstance(layer, ImageLayer):
+            layout.addWidget(self._image_controls(layer))
+        elif isinstance(layer, PointsLayer):
+            layout.addWidget(self._points_controls(layer))
+        elif isinstance(layer, ShapesLayer):
+            layout.addWidget(self._shapes_controls(layer))
+
+    def _labels_controls(self, layer: LabelsLayer) -> QWidget:
+        t = self._t
+        w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(12, 12, 12, 12)
         v.setSpacing(11)
 
-        title = QLabel("● Segmentation · labels")
+        title = QLabel(f"● {html.escape(layer.name)} · labels")
         title.setStyleSheet(f"color:{t['text_muted']}; font-size:10.5px; font-weight:600; letter-spacing:0.6px;")
         v.addWidget(title)
 
-        # mode tools (8)
         tools = QGridLayout()
         tools.setSpacing(3)
-        mode_icons = [("target", "Pan / zoom", True), ("measure", "Transform", False),
-                      ("brush", "Paint brush", False), ("eraser", "Eraser (1 or E)", False),
-                      ("fill", "Fill bucket", False), ("polygon", "Polygon", False),
-                      ("pick", "Pick label colour", False), ("shuffle", "Shuffle colours", False)]
-        for i, (icon_name, tip, on) in enumerate(mode_icons):
+        for i, (icon_name, tip, mode) in enumerate(MODE_ICONS):
             b = QToolButton()
             b.setToolTip(tip)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setFixedHeight(30)
             b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            on = mode != "__shuffle__" and self._canvas is not None and self._canvas.mode == mode
             b.setIcon(icons.icon(icon_name, "#fff" if on else t["text_subtle"], 15))
             b.setIconSize(QSize(15, 15))
             if on:
@@ -292,20 +558,34 @@ class WorkspaceScreen(QWidget):
                 b.setStyleSheet(
                     f"QToolButton{{background:{t['surface2']}; border:1px solid transparent; border-radius:7px;}}"
                     f"QToolButton:hover{{background:{t['surface']}; border-color:{t['border']};}}")
+            if mode == "__shuffle__":
+                b.clicked.connect(self._shuffle_colors)
+            else:
+                b.clicked.connect(lambda _=False, m=mode: self._set_canvas_mode(m))
             tools.addWidget(b, 0, i)
         v.addLayout(tools)
 
-        v.addWidget(FieldRow("opacity", Badge("0.70", t), t))
-        v.addWidget(Slider(t, 0.70, t["signal"]))
-        v.addWidget(FieldRow("blending", SelectBox("translucent", t), t))
+        opacity_badge = Badge(f"{layer.opacity:.2f}", t)
+        v.addWidget(FieldRow("opacity", opacity_badge, t))
+        opacity_slider = Slider(t, layer.opacity, t["signal"])
+        opacity_slider.changed.connect(
+            lambda val, ly=layer, bd=opacity_badge: self._set_layer_opacity(ly, val, bd))
+        v.addWidget(opacity_slider)
+
+        v.addWidget(FieldRow("blending", SelectBox(
+            layer.blending, t, options=list(BLENDING_MODES),
+            on_select=lambda choice, ly=layer: self._set_layer_blending(ly, choice)), t))
 
         labelrow = QHBoxLayout()
         labelrow.setSpacing(8)
         chip = QFrame()
         chip.setFixedSize(22, 22)
-        chip.setStyleSheet(f"background:#b23b1e; border:1px solid {t['border_strong']}; border-radius:5px;")
+        r, g, b = layer.get_color(layer.selected_label if layer.selected_label > 0 else 1)
+        chip.setStyleSheet(f"background:rgb({r},{g},{b}); border:1px solid {t['border_strong']}; border-radius:5px;")
         labelrow.addWidget(chip)
-        labelrow.addWidget(Stepper("1", t))
+        label_stepper = Stepper(layer.selected_label, t, step=1, minimum=0, maximum=100000)
+        label_stepper.changed.connect(lambda val, ly=layer: self._set_selected_label(ly, val))
+        labelrow.addWidget(label_stepper)
         v.addWidget(FieldRow("label", self._wrap(labelrow), t))
 
         v.addWidget(GroupLabel("label colours · more choices", t))
@@ -315,22 +595,130 @@ class WorkspaceScreen(QWidget):
             sw = QFrame()
             sw.setFixedHeight(16)
             sw.setCursor(Qt.CursorShape.PointingHandCursor)
-            border = f"2px solid {t['text']}" if i == 0 else f"1px solid rgba(128,128,128,0.3)"
+            border = f"1px solid rgba(128,128,128,0.3)"
             sw.setStyleSheet(f"background:{col}; border:{border}; border-radius:4px;")
+            sw.mouseReleaseEvent = lambda e, c=col, ly=layer: self._pick_label_color(ly, c)
             pal.addWidget(sw, i // 9, i % 9)
         v.addLayout(pal)
 
-        v.addWidget(FieldRow("brush size", Badge("10", t), t))
-        v.addWidget(Slider(t, 0.32))
-        v.addWidget(FieldRow("colour mode", SelectBox("auto", t), t))
-        v.addWidget(FieldRow("contour", Stepper("1", t), t))
-        v.addWidget(FieldRow("n edit dim", Stepper("2", t), t))
-        for name, on in [("contiguous", True), ("preserve labels", False), ("show selected", False)]:
-            v.addWidget(self._check(name, on))
-        v.addStretch(1)
-        return _scroll(w)
+        brush_badge = Badge(str(layer.brush_size), t)
+        v.addWidget(FieldRow("brush size", brush_badge, t))
+        brush_slider = Slider(t, min(1.0, layer.brush_size / 100.0))
+        brush_slider.changed.connect(lambda val, ly=layer, bd=brush_badge: self._set_brush_size(ly, val, bd))
+        v.addWidget(brush_slider)
 
-    def _check(self, name: str, on: bool) -> QWidget:
+        v.addWidget(FieldRow("colour mode", SelectBox(
+            "direct" if layer.color_overrides else "auto", t, options=["auto", "direct"],
+            on_select=lambda c, ly=layer: self._set_color_mode(ly, c)), t))
+
+        contour_stepper = Stepper(layer.contour, t, step=1, minimum=0, maximum=20)
+        contour_stepper.changed.connect(lambda val, ly=layer: self._set_layer_int_attr(ly, "contour", val))
+        v.addWidget(FieldRow("contour", contour_stepper, t))
+
+        dim_stepper = Stepper(layer.n_edit_dimensions, t, step=1, minimum=2, maximum=3)
+        dim_stepper.changed.connect(lambda val, ly=layer: self._set_layer_int_attr(ly, "n_edit_dimensions", val))
+        v.addWidget(FieldRow("n edit dim", dim_stepper, t))
+
+        for name, attr in [("contiguous", "contiguous"), ("preserve labels", "preserve_labels"),
+                           ("show selected", "show_selected_label")]:
+            v.addWidget(self._check(name, getattr(layer, attr),
+                                    lambda ly=layer, a=attr: self._toggle_layer_bool(ly, a)))
+        v.addStretch(1)
+        return w
+
+    def _image_controls(self, layer: ImageLayer) -> QWidget:
+        t = self._t
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(11)
+        title = QLabel(f"● {html.escape(layer.name)} · image")
+        title.setStyleSheet(f"color:{t['text_muted']}; font-size:10.5px; font-weight:600; letter-spacing:0.6px;")
+        v.addWidget(title)
+
+        opacity_badge = Badge(f"{layer.opacity:.2f}", t)
+        v.addWidget(FieldRow("opacity", opacity_badge, t))
+        sl = Slider(t, layer.opacity, t["primary"])
+        sl.changed.connect(lambda val, ly=layer, bd=opacity_badge: self._set_layer_opacity(ly, val, bd))
+        v.addWidget(sl)
+
+        v.addWidget(FieldRow("blending", SelectBox(
+            layer.blending, t, options=list(BLENDING_MODES),
+            on_select=lambda c, ly=layer: self._set_layer_blending(ly, c)), t))
+        v.addWidget(FieldRow("colormap", SelectBox(
+            layer.colormap, t, options=list(IMAGE_COLORMAPS),
+            on_select=lambda c, ly=layer: self._set_image_colormap(ly, c)), t))
+
+        gamma_badge = Badge(f"{layer.gamma:.2f}", t)
+        v.addWidget(FieldRow("gamma", gamma_badge, t))
+        gsl = Slider(t, min(1.0, layer.gamma / 3.0))
+        gsl.changed.connect(lambda val, ly=layer, bd=gamma_badge: self._set_image_gamma(ly, val, bd))
+        v.addWidget(gsl)
+
+        lo, hi = layer.contrast_limits
+        v.addWidget(FieldRow("contrast", Badge(f"{lo:.0f} – {hi:.0f}", t), t))
+        v.addStretch(1)
+        return w
+
+    def _points_controls(self, layer: PointsLayer) -> QWidget:
+        t = self._t
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(11)
+        title = QLabel(f"● {html.escape(layer.name)} · points")
+        title.setStyleSheet(f"color:{t['text_muted']}; font-size:10.5px; font-weight:600; letter-spacing:0.6px;")
+        v.addWidget(title)
+        v.addWidget(FieldRow("count", Badge(str(len(layer.points)), t), t))
+
+        opacity_badge = Badge(f"{layer.opacity:.2f}", t)
+        v.addWidget(FieldRow("opacity", opacity_badge, t))
+        sl = Slider(t, layer.opacity, t["warning"])
+        sl.changed.connect(lambda val, ly=layer, bd=opacity_badge: self._set_layer_opacity(ly, val, bd))
+        v.addWidget(sl)
+
+        size_badge = Badge(str(int(layer.size)), t)
+        v.addWidget(FieldRow("point size", size_badge, t))
+        ssl = Slider(t, min(1.0, layer.size / 40.0))
+        ssl.changed.connect(lambda val, ly=layer, bd=size_badge: self._set_point_size(ly, val, bd))
+        v.addWidget(ssl)
+
+        clear_btn = PillButton("Clear all points", t, "ghost", "trash", small=True)
+        clear_btn.clicked.connect(lambda ly=layer: self._clear_points(ly))
+        v.addWidget(clear_btn)
+        v.addStretch(1)
+        return w
+
+    def _shapes_controls(self, layer: ShapesLayer) -> QWidget:
+        t = self._t
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(11)
+        title = QLabel(f"● {html.escape(layer.name)} · shapes")
+        title.setStyleSheet(f"color:{t['text_muted']}; font-size:10.5px; font-weight:600; letter-spacing:0.6px;")
+        v.addWidget(title)
+        v.addWidget(FieldRow("count", Badge(str(len(layer.shapes)), t), t))
+
+        opacity_badge = Badge(f"{layer.opacity:.2f}", t)
+        v.addWidget(FieldRow("opacity", opacity_badge, t))
+        sl = Slider(t, layer.opacity, t["primary"])
+        sl.changed.connect(lambda val, ly=layer, bd=opacity_badge: self._set_layer_opacity(ly, val, bd))
+        v.addWidget(sl)
+
+        width_badge = Badge(f"{layer.edge_width:.1f}", t)
+        v.addWidget(FieldRow("edge width", width_badge, t))
+        wsl = Slider(t, min(1.0, layer.edge_width / 10.0))
+        wsl.changed.connect(lambda val, ly=layer, bd=width_badge: self._set_edge_width(ly, val, bd))
+        v.addWidget(wsl)
+
+        clear_btn = PillButton("Clear all shapes", t, "ghost", "trash", small=True)
+        clear_btn.clicked.connect(lambda ly=layer: self._clear_shapes(ly))
+        v.addWidget(clear_btn)
+        v.addStretch(1)
+        return w
+
+    def _check(self, name: str, on: bool, on_toggle=None) -> QWidget:
         t = self._t
         row = QFrame()
         row.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -348,6 +736,8 @@ class WorkspaceScreen(QWidget):
         lay.addWidget(box)
         lay.addWidget(label(name, 12, t["text_subtle"]))
         lay.addStretch(1)
+        if on_toggle is not None:
+            row.mouseReleaseEvent = lambda e: (on_toggle(), self._rebuild_layer_controls())
         return row
 
     def _wrap(self, layout) -> QWidget:
@@ -356,82 +746,217 @@ class WorkspaceScreen(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         return w
 
+    # ── layer-control handlers ───────────────────────────────────────────────
+    def _set_canvas_mode(self, mode: str) -> None:
+        self._canvas.set_mode(mode)
+        self._rebuild_layer_controls()
+
+    def _set_layer_opacity(self, layer, value: float, badge: Badge) -> None:
+        layer.opacity = value
+        badge.setText(f"{value:.2f}")
+        self._layers.notify()
+
+    def _set_layer_blending(self, layer, choice: str) -> None:
+        layer.blending = choice
+        self._layers.notify()
+
+    def _set_selected_label(self, layer: LabelsLayer, value: float) -> None:
+        layer.selected_label = int(value)
+        self._layers.notify()
+        self._rebuild_layer_controls()  # updates the colour-chip swatch
+
+    def _pick_label_color(self, layer: LabelsLayer, hex_color: str) -> None:
+        h = hex_color.lstrip("#")
+        rgb = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+        overrides = dict(layer.color_overrides)
+        overrides[layer.selected_label if layer.selected_label > 0 else 1] = rgb
+        layer.set_color_overrides(overrides)
+        self._layers.notify()
+        self._rebuild_layer_controls()
+
+    def _set_brush_size(self, layer: LabelsLayer, value: float, badge: Badge) -> None:
+        size = max(1, round(value * 100))
+        layer.brush_size = size
+        badge.setText(str(size))
+        self._layers.notify()
+
+    def _set_color_mode(self, layer: LabelsLayer, choice: str) -> None:
+        if choice == "auto":
+            layer.clear_color_overrides()
+            self._layers.notify()
+
+    def _set_layer_int_attr(self, layer, attr: str, value: float) -> None:
+        setattr(layer, attr, int(value))
+        self._layers.notify()
+
+    def _toggle_layer_bool(self, layer, attr: str) -> None:
+        setattr(layer, attr, not getattr(layer, attr))
+        self._layers.notify()
+
+    def _set_image_colormap(self, layer: ImageLayer, choice: str) -> None:
+        layer.colormap = choice
+        self._layers.notify()
+
+    def _set_image_gamma(self, layer: ImageLayer, value: float, badge: Badge) -> None:
+        gamma = max(0.05, value * 3.0)
+        layer.gamma = gamma
+        badge.setText(f"{gamma:.2f}")
+        self._layers.notify()
+
+    def _set_point_size(self, layer: PointsLayer, value: float, badge: Badge) -> None:
+        size = max(2, round(value * 40))
+        layer.size = size
+        badge.setText(str(size))
+        self._layers.notify()
+
+    def _set_edge_width(self, layer: ShapesLayer, value: float, badge: Badge) -> None:
+        width = max(0.5, round(value * 10, 1))
+        layer.edge_width = width
+        badge.setText(f"{width:.1f}")
+        self._layers.notify()
+
+    def _clear_points(self, layer: PointsLayer) -> None:
+        layer.points = []
+        self._layers.notify()
+        self._rebuild_layer_controls()
+
+    def _clear_shapes(self, layer: ShapesLayer) -> None:
+        layer.shapes = []
+        self._layers.notify()
+        self._rebuild_layer_controls()
+
     # ── centre: viewport ─────────────────────────────────────────────────────
     def _viewport(self) -> QWidget:
         t = self._t
         vp = QFrame()
         vp.setStyleSheet("background:#07090c;")
-        canvas = NucleiView(seed=7, density=0.85, big=True)
+        self._canvas = Canvas(t, self._layers, on_status=self._on_canvas_status,
+                             on_label_picked=self._on_label_picked)
         lay = QVBoxLayout(vp)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(canvas)
+        lay.addWidget(self._canvas)
 
-        # legend (top-left)
         legend = QWidget(vp)
         leg = QHBoxLayout(legend)
         leg.setContentsMargins(0, 0, 0, 0)
         leg.setSpacing(7)
-        for text, col, rad in [("247 detected", t["signal"], 4), ("3 selected", "#8b9bf4", 2)]:
-            c = QLabel(f"● {text}")
-            c.setStyleSheet(
-                f"color:#eaf7f5; background:rgba(8,12,16,0.6); border:1px solid rgba(255,255,255,0.1);"
-                f"border-radius:999px; padding:3px 9px; font-size:11px; font-weight:600;")
-            leg.addWidget(c)
+        self._legend_detected = QLabel()
+        self._legend_label = QLabel()
+        for lbl in (self._legend_detected, self._legend_label):
+            lbl.setStyleSheet(
+                "color:#eaf7f5; background:rgba(8,12,16,0.6); border:1px solid rgba(255,255,255,0.1);"
+                "border-radius:999px; padding:3px 9px; font-size:11px; font-weight:600;")
+            leg.addWidget(lbl)
         legend.move(14, 14)
-        legend.adjustSize()
+        self._legend = legend
 
-        # tools column (right)
         tools = QFrame(vp)
-        tools.setStyleSheet(
-            f"background:rgba(21,24,30,0.86); border:1px solid {t['border']}; border-radius:11px;")
+        tools.setStyleSheet(f"background:rgba(21,24,30,0.86); border:1px solid {t['border']}; border-radius:11px;")
         tl = QVBoxLayout(tools)
         tl.setContentsMargins(5, 5, 5, 5)
         tl.setSpacing(4)
-        for icon_name, on in [("target", True), ("brush", False), ("points", False), ("target", False)]:
+        for icon_name, action in [("target", PAN_ZOOM), ("brush", PAINT),
+                                   ("points", "__add_point__"), ("target", "__home__")]:
             b = IconButton(icon_name, t, 30)
-            if on:
-                b.setStyleSheet(f"QToolButton{{background:{t['signal_weak']}; border-radius:7px;}}")
-                b.setIcon(icons.icon(icon_name, t["signal"], 16))
+            b.clicked.connect(lambda _=False, a=action: self._on_floating_tool(a))
             tl.addWidget(b)
         self._vp_tools = tools
 
-        # viewer bar (bottom-left): console, 2D/3D, roll, transpose, grid, home
         vbar = QFrame(vp)
-        vbar.setStyleSheet(
-            f"background:rgba(21,24,30,0.86); border:1px solid {t['border']}; border-radius:11px;")
+        vbar.setStyleSheet(f"background:rgba(21,24,30,0.86); border:1px solid {t['border']}; border-radius:11px;")
         vl = QHBoxLayout(vbar)
         vl.setContentsMargins(5, 5, 5, 5)
         vl.setSpacing(3)
-        for icon_name, on, tip in [("console", False, "Toggle console"), ("cube3d", True, "Toggle 2D / 3D"),
-                                   ("refresh", False, "Roll dimensions"), ("shuffle", False, "Transpose"),
-                                   ("grid", False, "Grid mode"), ("home", False, "Reset view")]:
-            b = IconButton(icon_name, t, 30, tip)
-            if on:
-                b.setStyleSheet(f"QToolButton{{background:{t['signal_weak']}; border-radius:7px;}}")
-                b.setIcon(icons.icon(icon_name, t["signal"], 16))
+        vbar_defs = [
+            ("console", "Toggle console", self._toggle_logs_console),
+            ("cube3d", "Toggle 2D / 3D", self._toggle_mip),
+            ("refresh", "Roll dimensions", self._roll_channel),
+            ("shuffle", "Transpose", self._toggle_transpose),
+            ("grid", "Grid mode", self._toggle_grid),
+            ("home", "Reset view", self._canvas.home),
+        ]
+        for icon_name, tip, handler in vbar_defs:
+            b = IconButton(icon_name, t, 30, tip, handler)
             vl.addWidget(b)
         self._vp_bar = vbar
 
-        # status (bottom-right)
-        status = QLabel("● Segmented in 3.2 s", vp)
-        status.setStyleSheet(
-            f"color:#dbe6ee; background:rgba(8,12,16,0.6); border:1px solid rgba(255,255,255,0.1);"
-            f"border-radius:999px; padding:5px 11px; font-size:11.5px; font-weight:600;")
-        self._vp_status = status
+        self._vp_status = QLabel("", vp)
+        self._vp_status.setStyleSheet(
+            "color:#dbe6ee; background:rgba(8,12,16,0.6); border:1px solid rgba(255,255,255,0.1);"
+            "border-radius:999px; padding:5px 11px; font-size:11.5px; font-weight:600;")
 
-        vp._overlays = (legend, tools, vbar, status)
+        vp._overlays = (legend, tools, vbar, self._vp_status)
         vp.resizeEvent = lambda e: self._place_overlays(vp)
+        self._update_legend()
         return vp
 
-    def _place_overlays(self, vp):
+    def _place_overlays(self, vp) -> None:
         legend, tools, vbar, status = vp._overlays
         w, h = vp.width(), vp.height()
+        legend.adjustSize()
         tools.adjustSize()
         vbar.adjustSize()
         status.adjustSize()
         tools.move(w - tools.width() - 14, 14)
         vbar.move(14, h - vbar.height() - 14)
         status.move(w - status.width() - 14, h - status.height() - 14)
+
+    def _on_canvas_status(self, text: str) -> None:
+        self._vp_status.setText(f"●  {text}")
+        self._vp_status.adjustSize()
+        if self._vp_status.parentWidget():
+            self._place_overlays(self._vp_status.parentWidget())
+
+    def _on_label_picked(self, label_id: int) -> None:
+        self._update_legend()
+        if isinstance(self._layers.selected, LabelsLayer):
+            self._rebuild_layer_controls()
+
+    def _update_legend(self) -> None:
+        labels_layers = self._layers.by_kind("labels")
+        primary = labels_layers[0] if labels_layers else None
+        n = primary.max_label if primary else 0
+        self._legend_detected.setText(f"● {n} detected")
+        target = self._canvas.edit_target() if self._canvas is not None else None
+        self._legend_label.setText(f"● label {target.selected_label if target else 0}")
+        self._legend_detected.adjustSize()
+        self._legend_label.adjustSize()
+        self._legend.adjustSize()
+
+    def _on_floating_tool(self, action: str) -> None:
+        if action == "__home__":
+            self._canvas.home()
+            return
+        if action == "__add_point__":
+            points = self._layers.by_kind("points")
+            if points:
+                self._layers.select(self._layers.index_of(points[0]))
+            else:
+                self._layers.add(PointsLayer(self._layers.unique_name("Prompts")))
+            self._canvas.set_mode(PAINT)  # any non-pan_zoom mode routes clicks to the selected layer
+            self._rebuild_layer_controls()
+            return
+        self._canvas.set_mode(action)
+        self._rebuild_layer_controls()
+
+    def _toggle_logs_console(self) -> None:
+        if self._on_toggle_logs:
+            self._on_toggle_logs()
+
+    def _toggle_mip(self) -> None:
+        if self._canvas.layers.n_planes <= 1:
+            self._toast("No z-stack loaded", "2D / 3D projection needs a loaded z-stack/time-lapse.")
+            return
+        self._canvas.toggle_mip()
+
+    def _roll_channel(self) -> None:
+        self._canvas.roll_channel()
+
+    def _toggle_transpose(self) -> None:
+        self._canvas.toggle_transpose()
+
+    def _toggle_grid(self) -> None:
+        self._canvas.toggle_grid()
 
     # ── right: inspector ─────────────────────────────────────────────────────
     def _inspector(self) -> QWidget:
@@ -451,140 +976,262 @@ class WorkspaceScreen(QWidget):
         v.addWidget(tw)
 
         stack = QStackedWidget()
-        stack.addWidget(_scroll(self._segment_pane()))
-        stack.addWidget(_scroll(self._results_pane()))
+        self._segment_container = bare_widget()
+        self._segment_container_layout = QVBoxLayout(self._segment_container)
+        self._segment_container_layout.setContentsMargins(14, 12, 14, 14)
+        self._segment_container_layout.setSpacing(14)
+        stack.addWidget(_scroll(self._segment_container))
+
+        self._results_container = bare_widget()
+        self._results_container_layout = QVBoxLayout(self._results_container)
+        self._results_container_layout.setContentsMargins(14, 12, 14, 14)
+        self._results_container_layout.setSpacing(14)
+        stack.addWidget(_scroll(self._results_container))
+
         tabs.changed.connect(stack.setCurrentIndex)
         v.addWidget(stack, 1)
-
         v.addWidget(self._runbar())
         return panel
 
-    def _segment_pane(self) -> QWidget:
+    # ── Segment settings pane ────────────────────────────────────────────────
+    def _rebuild_segment_pane(self) -> None:
+        layout = self._segment_container_layout
+        _clear_layout(layout)
         t = self._t
-        w = QWidget()
-        v = QVBoxLayout(w)
-        v.setContentsMargins(14, 12, 14, 14)
-        v.setSpacing(14)
+        if self._project is None:
+            empty = label("Open or create a project to configure segmentation.", 12, t["text_muted"])
+            empty.setWordWrap(True)
+            layout.addWidget(empty)
+            return
+        s = self._project.settings
 
-        v.addWidget(GroupLabel("Engine", t))
-        v.addWidget(SelectBox("CellSeg1 · SAM + LoRA", t, "models", t["primary"]))
-        v.addWidget(FieldRow("Model", SelectBox("nuclei-dapi-r8", t), t))
+        layout.addWidget(GroupLabel("Engine", t))
+        engines = self._segment.list_available_engines()
+        self._engine_label_to_key = {}
+        options = []
+        current_text = ENGINE_LABELS.get(s.engine, s.engine)
+        for key, elabel, available in engines:
+            text = elabel if available else f"{elabel}  (not installed)"
+            self._engine_label_to_key[text] = key
+            options.append(text)
+            if key == s.engine:
+                current_text = text
+        layout.addWidget(SelectBox(current_text, t, "models", t["primary"],
+                                   options=options, on_select=self._on_engine_select))
 
-        v.addWidget(GroupLabel("Quality preset", t))
-        v.addWidget(SegControl(["Fast", "Balanced", "Accurate"], t, 1, compact=True))
+        model_row = self._model_field(s)
+        if model_row is not None:
+            layout.addWidget(model_row)
 
-        v.addWidget(hline(t))
-        v.addWidget(GroupLabel("Detection thresholds", t))
-        v.addWidget(FieldRow("Points / side", Stepper("32", t), t))
-        v.addWidget(FieldRow("IoU threshold", Badge("0.80", t), t))
-        v.addWidget(Slider(t, 0.80))
-        v.addWidget(FieldRow("Stability score", Badge("0.60", t), t))
-        v.addWidget(Slider(t, 0.60))
-        v.addWidget(FieldRow("Min mask area", Stepper("20", t), t))
+        layout.addWidget(GroupLabel("Quality preset", t))
+        active_idx = (QUALITY_PRESET_NAMES.index(s.quality_preset)
+                     if s.quality_preset in QUALITY_PRESET_NAMES else 1)
+        preset_ctrl = SegControl(QUALITY_PRESET_NAMES, t, active_idx, compact=True)
+        preset_ctrl.changed.connect(self._on_quality_preset)
+        layout.addWidget(preset_ctrl)
 
-        v.addWidget(hline(t))
-        v.addWidget(GroupLabel("Image", t))
-        v.addWidget(FieldRow("Resize", SelectBox("512 px", t), t))
-        v.addWidget(FieldRow("Pixel size", Badge("0.65 µm/px", t), t))
-        v.addWidget(FieldRow("Channels", Badge("DAPI · Memb", t), t))
-        v.addWidget(FieldRow("CLAHE contrast", Toggle(t, False), t))
-        v.addWidget(FieldRow("Large image (tiling)", Toggle(t, False), t))
+        layout.addWidget(hline(t))
+        layout.addWidget(GroupLabel("Detection thresholds", t))
+        pps_stepper = Stepper(s.points_per_side, t, step=4, minimum=4, maximum=128)
+        pps_stepper.changed.connect(lambda v: self._set_setting_custom("points_per_side", int(v)))
+        layout.addWidget(FieldRow("Points / side", pps_stepper, t))
 
-        v.addWidget(hline(t))
-        v.addWidget(GroupLabel("Overlays", t))
-        v.addWidget(FieldRow("Show predictions", Toggle(t, True), t))
-        v.addWidget(FieldRow("Show ground truth", Toggle(t, False), t))
+        iou_badge = Badge(f"{s.pred_iou_thresh:.2f}", t)
+        layout.addWidget(FieldRow("IoU threshold", iou_badge, t))
+        iou_slider = Slider(t, s.pred_iou_thresh)
+        iou_slider.changed.connect(
+            lambda v, bd=iou_badge: self._on_threshold_change("pred_iou_thresh", v, bd))
+        layout.addWidget(iou_slider)
 
-        eng = Accordion("Engine settings · CellSeg1", t, lead="settings", open_=False)
-        eng.add(FieldRow("SAM backbone", SelectBox("ViT-H", t), t))
-        eng.add(FieldRow("LoRA rank", Stepper("8", t), t))
-        eng.add(FieldRow("Box NMS", Badge("0.05", t), t))
-        v.addWidget(eng)
-        v.addStretch(1)
-        return w
+        stab_badge = Badge(f"{s.stability_score_thresh:.2f}", t)
+        layout.addWidget(FieldRow("Stability score", stab_badge, t))
+        stab_slider = Slider(t, s.stability_score_thresh)
+        stab_slider.changed.connect(
+            lambda v, bd=stab_badge: self._on_threshold_change("stability_score_thresh", v, bd))
+        layout.addWidget(stab_slider)
 
-    def _results_pane(self) -> QWidget:
+        area_stepper = Stepper(s.min_mask_area, t, step=5, minimum=0, maximum=5000)
+        area_stepper.changed.connect(lambda v: self._set_setting_custom("min_mask_area", int(v)))
+        layout.addWidget(FieldRow("Min mask area", area_stepper, t))
+
+        layout.addWidget(hline(t))
+        layout.addWidget(GroupLabel("Image", t))
+        resize_opts = ["256 px", "384 px", "512 px", "768 px", "1024 px"]
+        layout.addWidget(FieldRow("Resize", SelectBox(
+            f"{s.resize_size} px", t, options=resize_opts,
+            on_select=lambda choice: self._set_setting("resize_size", int(choice.split()[0]))), t))
+        pixel_edit = QLineEdit(f"{s.pixel_size_um:.3f}")
+        pixel_edit.setFixedWidth(90)
+        pixel_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        pixel_edit.editingFinished.connect(lambda le=pixel_edit: self._on_pixel_size_edited(le))
+        layout.addWidget(FieldRow("Pixel size (µm/px)", pixel_edit, t))
+        n_ch = len(s.channels) if s.channels else "RGB"
+        layout.addWidget(FieldRow("Channels", Badge(str(n_ch), t), t))
+
+        clahe_toggle = Toggle(t, s.clahe)
+        clahe_toggle.toggled.connect(lambda on: self._set_setting("clahe", on))
+        layout.addWidget(FieldRow("CLAHE contrast", clahe_toggle, t))
+
+        tiled_toggle = Toggle(t, s.tiled)
+        tiled_toggle.toggled.connect(lambda on: self._set_setting("tiled", on))
+        layout.addWidget(FieldRow("Large image (tiling)", tiled_toggle, t))
+
+        layout.addWidget(hline(t))
+        layout.addWidget(GroupLabel("Overlays", t))
+        seg_layers = self._layers.by_kind("labels")
+        pred_visible = any(l.visible for l in seg_layers if l.name != "Ground truth")
+        pred_toggle = Toggle(t, pred_visible)
+        pred_toggle.toggled.connect(self._toggle_show_predictions)
+        layout.addWidget(FieldRow("Show predictions", pred_toggle, t))
+        gt_layer = self._layers.find("Ground truth")
+        gt_toggle = Toggle(t, gt_layer.visible if gt_layer else False)
+        gt_toggle.toggled.connect(self._toggle_show_gt)
+        layout.addWidget(FieldRow("Show ground truth", gt_toggle, t))
+
+        layout.addWidget(self._engine_settings_accordion(s))
+        layout.addStretch(1)
+
+    def _model_field(self, s) -> Optional[QWidget]:
         t = self._t
-        r = demo.RESULTS
-        w = QWidget()
-        v = QVBoxLayout(w)
-        v.setContentsMargins(14, 12, 14, 14)
-        v.setSpacing(14)
+        if s.engine == "cellseg1":
+            models = self._segment.list_lora_models()
+            current = Path(s.model_name).stem if s.model_name else "Choose model…"
+            options = [m.name for m in models] + ["Browse…"]
+            box = SelectBox(current, t, options=options, on_select=self._on_model_select)
+            return FieldRow("Model", box, t)
+        if s.engine == "sam2":
+            labels = {"tiny": "Tiny", "small": "Small", "base_plus": "Base+", "large": "Large"}
+            box = SelectBox(labels.get(s.sam2_model, "Large"), t, options=list(labels.values()),
+                            on_select=self._on_sam2_model_select)
+            return FieldRow("Model size", box, t)
+        return None  # cellpose is zero-shot — no model field
 
-        hero = QHBoxLayout()
-        hero.setSpacing(14)
-        num = QLabel(str(r["cells"]))
-        num.setStyleSheet(f"color:{t['success']}; font-family:{theme.MONO}; font-size:40px; font-weight:600; letter-spacing:-1.5px;")
-        hero.addWidget(num)
-        hero.addWidget(label("cells\ndetected", 13, t["text_muted"], 600))
-        hero.addStretch(1)
-        v.addLayout(hero)
+    def _engine_settings_accordion(self, s) -> Accordion:
+        t = self._t
+        title = f"Engine settings · {ENGINE_LABELS.get(s.engine, s.engine)}"
+        acc = Accordion(title, t, lead="settings", open_=False)
+        if s.engine == "cellseg1":
+            from studio.train_controller import available_backbones
+            backbones = available_backbones(self._segment.storage_dir / "sam_backbone")
+            labels = {"vit_h": "ViT-H", "vit_l": "ViT-L", "vit_b": "ViT-B"}
+            options = [lbl for _key, lbl in backbones] or list(labels.values())
+            box = SelectBox(labels.get(s.vit_name, s.vit_name), t, options=options,
+                            on_select=self._on_backbone_select)
+            acc.add(FieldRow("SAM backbone", box, t))
+            rank_stepper = Stepper(s.lora_rank, t, step=4, minimum=4, maximum=64)
+            rank_stepper.changed.connect(lambda v: self._set_setting("lora_rank", int(v)))
+            acc.add(FieldRow("LoRA rank", rank_stepper, t))
+            nms_stepper = Stepper(s.box_nms_thresh, t, step=0.01, minimum=0, maximum=1, decimals=2)
+            nms_stepper.changed.connect(lambda v: self._set_setting("box_nms_thresh", round(v, 3)))
+            acc.add(FieldRow("Box NMS", nms_stepper, t))
+        elif s.engine == "cellpose":
+            diam_stepper = Stepper(s.cp_diameter, t, step=1, minimum=0, maximum=500)
+            diam_stepper.changed.connect(lambda v: self._set_setting("cp_diameter", float(v)))
+            acc.add(FieldRow("Diameter (0=auto)", diam_stepper, t))
+            flow_stepper = Stepper(s.cp_flow_threshold, t, step=0.05, minimum=0, maximum=3, decimals=2)
+            flow_stepper.changed.connect(lambda v: self._set_setting("cp_flow_threshold", round(v, 3)))
+            acc.add(FieldRow("Flow threshold", flow_stepper, t))
+            prob_stepper = Stepper(s.cp_cellprob_threshold, t, step=0.1, minimum=-6, maximum=6, decimals=1)
+            prob_stepper.changed.connect(lambda v: self._set_setting("cp_cellprob_threshold", round(v, 2)))
+            acc.add(FieldRow("Cell probability threshold", prob_stepper, t))
+        elif s.engine == "sam2":
+            mode_ctrl = SegControl(["Independent", "Propagate"], t,
+                                   1 if s.sam2_tracking_mode == "propagate" else 0, compact=True)
+            mode_ctrl.changed.connect(self._on_sam2_tracking_mode)
+            acc.add(FieldRow("Z-stack tracking", mode_ctrl, t))
+            stitch_stepper = Stepper(s.stitch_iou, t, step=0.05, minimum=0, maximum=1, decimals=2)
+            stitch_stepper.changed.connect(lambda v: self._set_setting("stitch_iou", round(v, 3)))
+            acc.add(FieldRow("Stitch IoU", stitch_stepper, t))
+        return acc
 
-        tiles = QHBoxLayout()
-        tiles.setSpacing(9)
-        tiles.addWidget(StatTile(r["median_d"], "px", "MEDIAN Ø", t))
-        tiles.addWidget(StatTile(r["mean_area"], "px²", "MEAN AREA", t))
-        tiles.addWidget(StatTile(r["coverage"], "%", "COVERAGE", t))
-        v.addLayout(tiles)
+    def _on_engine_select(self, text: str) -> None:
+        key = self._engine_label_to_key.get(text)
+        if key is None or self._project is None:
+            return
+        self._project.settings.engine = key
+        self._rebuild_segment_pane()
 
-        v.addWidget(GroupLabel("Pixel calibration", t))
-        cal = SelectBox("0.65 µm/px — real-world units", t)
-        v.addWidget(cal)
-        hint = label("Enter your microscope's µm-per-pixel to get real-world units. 0 = pixels.", 11, t["text_muted"])
-        hint.setWordWrap(True)
-        v.addWidget(hint)
+    def _on_model_select(self, text: str) -> None:
+        if self._project is None:
+            return
+        if text == "Browse…":
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Choose a LoRA checkpoint", "", "PyTorch (*.pth);;All files (*)", options=_DLG)
+            if path:
+                self._project.settings.model_name = path
+                self._rebuild_segment_pane()
+            return
+        for m in self._segment.list_lora_models():
+            if m.name == text:
+                self._project.settings.model_name = str(m.checkpoint)
+                break
+        self._rebuild_segment_pane()
 
-        btns = QGridLayout()
-        btns.setSpacing(8)
-        for i, (text, icon_name) in enumerate([("Save masks", "save"), ("Export CSV", "csv"),
-                                               ("Refine…", "spark"), ("Measurements", "measure")]):
-            btns.addWidget(PillButton(text, t, "ghost", icon_name, small=True), i // 2, i % 2)
-        v.addLayout(btns)
+    def _on_sam2_model_select(self, text: str) -> None:
+        inverse = {"Tiny": "tiny", "Small": "small", "Base+": "base_plus", "Large": "large"}
+        if self._project is not None:
+            self._project.settings.sam2_model = inverse.get(text, "large")
 
-        v.addWidget(hline(t))
-        v.addWidget(GroupLabel("Display · colour cells by", t))
-        v.addWidget(SelectBox("Instance ID (default)", t))
-        heat = QFrame()
-        hv = QVBoxLayout(heat)
-        hv.setContentsMargins(0, 4, 0, 0)
-        hv.setSpacing(3)
-        grad = QFrame()
-        grad.setFixedHeight(10)
-        grad.setStyleSheet("background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-                           "stop:0 #440154, stop:0.25 #3b528b, stop:0.5 #21918c, stop:0.75 #5ec962, stop:1 #fde725);"
-                           "border-radius:5px;")
-        hv.addWidget(grad)
-        v.addWidget(heat)
+    def _on_backbone_select(self, text: str) -> None:
+        inverse = {"ViT-H": "vit_h", "ViT-L": "vit_l", "ViT-B": "vit_b"}
+        if self._project is not None and text in inverse:
+            self._project.settings.vit_name = inverse[text]
 
-        gt = Accordion("Ground truth & evaluation", t, lead="check", open_=False)
-        gt.add(FieldRow("Ground-truth mask", Badge("phantom_gt.png", t), t))
-        gt.add(FieldRow("Show ground truth", Toggle(t, False), t))
-        for name, val in [("F1 score", r["f1"]), ("Precision", r["precision"]),
-                          ("Recall", r["recall"]), ("AP @ 0.50", r["ap50"])]:
-            mv = QLabel(val)
-            mv.setStyleSheet(f"color:{t['success']}; font-family:{theme.MONO}; font-size:12.5px; font-weight:600;")
-            gt.add(FieldRow(name, mv, t))
-        v.addWidget(gt)
+    def _on_sam2_tracking_mode(self, idx: int) -> None:
+        if self._project is not None:
+            self._project.settings.sam2_tracking_mode = "propagate" if idx == 1 else "independent"
 
-        batch = Accordion("Batch prediction", t, lead="batch", open_=False)
-        note = label("Run the current engine & settings across all 128 images in this project, "
-                     "then aggregate cohort statistics.", 11.5, t["text_muted"])
-        note.setWordWrap(True)
-        batch.add(note)
-        batch.add(PillButton("Run batch (128 images)", t, "ghost", "run", small=True))
-        v.addWidget(batch)
+    def _on_quality_preset(self, idx: int) -> None:
+        if self._project is None or not (0 <= idx < len(QUALITY_PRESET_NAMES)):
+            return
+        apply_quality_preset(self._project.settings, QUALITY_PRESET_NAMES[idx])
+        self._rebuild_segment_pane()
 
-        bench = Accordion("Benchmark engines vs GT", t, lead="chart", open_=False)
-        for name, val, ok in [("CellSeg1 · LoRA", "0.94", True), ("Cellpose-SAM", "0.86", False),
-                              ("SAM 2", "0.90", False)]:
-            mv = QLabel(val)
-            col = t["success"] if ok else t["text_subtle"]
-            mv.setStyleSheet(f"color:{col}; font-family:{theme.MONO}; font-size:12.5px; font-weight:600;")
-            bench.add(FieldRow(name, mv, t))
-        v.addWidget(bench)
-        v.addStretch(1)
-        return w
+    def _set_setting(self, attr: str, value) -> None:
+        if self._project is not None:
+            setattr(self._project.settings, attr, value)
 
+    def _set_setting_custom(self, attr: str, value) -> None:
+        """Like _set_setting, but also marks the quality preset "Custom" —
+        the three detection-threshold controls are also driven by the Fast/
+        Balanced/Accurate preset, so hand-tweaking one means the preset no
+        longer exactly matches (ProjectSettings.quality_preset's own
+        contract: "Fast | Balanced | Accurate | Custom")."""
+        if self._project is None:
+            return
+        setattr(self._project.settings, attr, value)
+        self._project.settings.quality_preset = "Custom"
+
+    def _on_threshold_change(self, attr: str, value: float, badge: Badge) -> None:
+        self._set_setting_custom(attr, round(value, 3))
+        badge.setText(f"{value:.2f}")
+
+    def _on_pixel_size_edited(self, line_edit: QLineEdit) -> None:
+        try:
+            value = max(0.0, float(line_edit.text()))
+        except ValueError:
+            value = 0.0
+        line_edit.setText(f"{value:.3f}")
+        self._set_setting("pixel_size_um", value)
+        if self._last_result is not None:
+            self._recompute_results()
+
+    def _toggle_show_predictions(self, on: bool) -> None:
+        for lyr in self._layers.by_kind("labels"):
+            if lyr.name != "Ground truth":
+                lyr.visible = on
+        self._layers.notify()
+
+    def _toggle_show_gt(self, on: bool) -> None:
+        gt = self._layers.find("Ground truth")
+        if gt is not None:
+            gt.visible = on
+            self._layers.notify()
+        elif on:
+            self._toast("No ground truth loaded",
+                       "Pick a ground-truth mask in Results → Ground truth & evaluation.")
+
+    # ── run bar + predict flow ───────────────────────────────────────────────
     def _runbar(self) -> QWidget:
         t = self._t
         bar = QFrame()
@@ -592,17 +1239,458 @@ class WorkspaceScreen(QWidget):
         v = QVBoxLayout(bar)
         v.setContentsMargins(14, 12, 14, 14)
         v.setSpacing(10)
-        prog = QFrame()
-        prog.setFixedHeight(6)
-        prog.setStyleSheet(
+        self._progress_frame = QFrame()
+        self._progress_frame.setFixedHeight(6)
+        self._progress_frame.setStyleSheet(
             "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
             f"stop:0 {t['primary']}, stop:1 {t['signal']}); border-radius:3px;")
-        v.addWidget(prog)
+        self._progress_frame.setVisible(False)
+        v.addWidget(self._progress_frame)
         row = QHBoxLayout()
         row.setSpacing(9)
-        run = PillButton("Run segmentation", t, "primary", "run")
-        run.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        row.addWidget(run, 1)
-        row.addWidget(IconButton("batch", t, 38))
+        self._run_btn_bar = PillButton("Run segmentation", t, "primary", "run")
+        self._run_btn_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._run_btn_bar.clicked.connect(self._start_predict)
+        row.addWidget(self._run_btn_bar, 1)
+        row.addWidget(IconButton("batch", t, 38, "Batch predict", self._start_batch))
         v.addLayout(row)
         return bar
+
+    def _set_running(self, running: bool) -> None:
+        self._predicting = running
+        self._run_btn_topbar.setEnabled(not running)
+        self._run_btn_bar.setEnabled(not running)
+        self._run_btn_bar.setText("Segmenting…" if running else "Run segmentation")
+        self._progress_frame.setVisible(running)
+
+    def _start_predict(self) -> None:
+        if self._project is None:
+            self._toast("No project open", "Open or create a project first.")
+            return
+        if self._current_image_path is None:
+            self._toast("No image selected", "Pick an image from the Images panel first.")
+            return
+        if self._predicting:
+            return
+        try:
+            self._projects.store.save(self._project)
+            config_ok = self._segment.build_config(self._project, self._current_image_path)
+        except ValueError as e:
+            self._toast("Can't run segmentation", str(e))
+            return
+        del config_ok  # only built to validate synchronously before spawning the thread
+        self._run_started_at = time.monotonic()
+        self._set_running(True)
+        self._segment.run_predict_async(
+            self._project, self._current_image_path,
+            on_result=self._safe_emit_predict_result, on_log=self._safe_emit_predict_log,
+            on_finish=self._safe_emit_predict_finish)
+
+    def _safe_emit_predict_result(self, img, mask, stack) -> None:
+        try:
+            self._predict_result_signal.emit(img, mask, stack)
+        except RuntimeError:
+            pass
+
+    def _safe_emit_predict_log(self, msg: str) -> None:
+        try:
+            self._predict_log_signal.emit(msg)
+        except RuntimeError:
+            pass
+
+    def _safe_emit_predict_finish(self) -> None:
+        try:
+            self._predict_finish_signal.emit()
+        except RuntimeError:
+            pass
+
+    def _on_predict_result(self, img, mask, _stack) -> None:
+        self._current_image_array = img
+        mask = np.ascontiguousarray(mask).astype(np.int32)
+        seg = self._layers.find("Segmentation")
+        if seg is not None:
+            seg.data = mask
+            seg.visible = True
+        else:
+            seg = LabelsLayer("Segmentation", mask)
+            self._layers.add(seg, select=False)
+        self._recompute_results()
+        if self._project is not None:
+            self._segment.record_run(self._project, n_cells=self._last_result.get("n_cells", 0))
+        if self._layers.find("Ground truth") is not None:
+            self._evaluate_gt()
+        self._layers.notify()
+
+    def _recompute_results(self) -> None:
+        seg = self._layers.find("Segmentation")
+        if seg is None or self._current_image_array is None:
+            return
+        pixel_size = self._project.settings.pixel_size_um if self._project else 0.0
+        self._last_result = self._segment.compute_measurements(
+            seg.data, image=self._current_image_array, pixel_size_um=pixel_size)
+        self._rebuild_results_pane()
+        self._refresh_images_pane()
+
+    def _on_predict_log(self, msg: str) -> None:
+        if msg.startswith("[ERROR]"):
+            first_line = msg.splitlines()[0]
+            self._toast("Segmentation failed", first_line[len("[ERROR] "):])
+        elif msg.startswith("[HINT]"):
+            self._toast("Hint", msg[len("[HINT] "):])
+
+    def _on_predict_finished(self) -> None:
+        self._set_running(False)
+        if self._project is not None:
+            self._projects.store.save(self._project)
+        elapsed = time.monotonic() - self._run_started_at if self._run_started_at else 0.0
+        if self._last_result is not None:
+            n = self._last_result.get("n_cells", 0)
+            self._on_canvas_status(f"Segmented in {elapsed:.1f} s")
+            self._toast("Segmentation complete", f"{n} cells · {elapsed:.1f} s")
+        self._refresh_images_pane()
+
+    # ── Results pane ─────────────────────────────────────────────────────────
+    def _rebuild_results_pane(self) -> None:
+        layout = self._results_container_layout
+        _clear_layout(layout)
+        t = self._t
+        if self._project is None:
+            empty = label("Open or create a project to see results.", 12, t["text_muted"])
+            empty.setWordWrap(True)
+            layout.addWidget(empty)
+            return
+        if self._last_result is None:
+            empty = label("Run segmentation to see results here.", 12, t["text_muted"])
+            empty.setWordWrap(True)
+            layout.addWidget(empty)
+            layout.addWidget(self._batch_accordion())
+            layout.addWidget(self._benchmark_accordion())
+            layout.addStretch(1)
+            return
+
+        r = self._last_result
+        hero = QHBoxLayout()
+        hero.setSpacing(14)
+        num = QLabel(str(r["n_cells"]))
+        num.setStyleSheet(
+            f"color:{t['success']}; font-family:{theme.MONO}; font-size:40px; font-weight:600; letter-spacing:-1.5px;")
+        hero.addWidget(num)
+        hero.addWidget(label("cells\ndetected", 13, t["text_muted"], 600))
+        hero.addStretch(1)
+        layout.addLayout(hero)
+
+        summary = r.get("summary", {})
+        diam = summary.get("diameter", {})
+        area = summary.get("area", {})
+        coverage = 0.0
+        seg = self._layers.find("Segmentation")
+        if seg is not None and seg.data.size:
+            coverage = float((seg.data > 0).sum()) / seg.data.size * 100.0
+        tiles = QHBoxLayout()
+        tiles.setSpacing(9)
+        diam_unit = next((u for k, _l, u in r["columns"] if k == "diameter"), "px")
+        area_unit = next((u for k, _l, u in r["columns"] if k == "area"), "px²")
+        tiles.addWidget(StatTile(f"{diam.get('median', 0):.1f}", diam_unit, "MEDIAN Ø", t))
+        tiles.addWidget(StatTile(f"{area.get('mean', 0):.0f}", area_unit, "MEAN AREA", t))
+        tiles.addWidget(StatTile(f"{coverage:.1f}", "%", "COVERAGE", t))
+        layout.addLayout(tiles)
+
+        layout.addWidget(GroupLabel("Pixel calibration", t))
+        pixel_size = self._project.settings.pixel_size_um
+        cal_edit = QLineEdit(f"{pixel_size:.3f}")
+        cal_edit.editingFinished.connect(lambda le=cal_edit: self._on_pixel_size_edited(le))
+        layout.addWidget(cal_edit)
+        hint = label("Enter your microscope's µm-per-pixel to get real-world units. 0 = pixels.",
+                    11, t["text_muted"])
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        btns = QGridLayout()
+        btns.setSpacing(8)
+        save_btn = PillButton("Save masks", t, "ghost", "save", small=True)
+        save_btn.clicked.connect(self._save_masks)
+        export_btn = PillButton("Export CSV", t, "ghost", "csv", small=True)
+        export_btn.clicked.connect(self._export_csv)
+        refine_btn = PillButton("Refine…", t, "ghost", "spark", small=True)
+        refine_btn.clicked.connect(self._refine_coming_soon)
+        measure_btn = PillButton("Measurements", t, "ghost", "measure", small=True)
+        measure_btn.clicked.connect(self._show_measurements)
+        for i, b in enumerate([save_btn, export_btn, refine_btn, measure_btn]):
+            btns.addWidget(b, i // 2, i % 2)
+        layout.addLayout(btns)
+
+        layout.addWidget(hline(t))
+        layout.addWidget(GroupLabel("Display · colour cells by", t))
+        colorby_box = SelectBox(COLOR_BY_OPTIONS[0], t, options=COLOR_BY_OPTIONS, on_select=self._on_color_by)
+        layout.addWidget(colorby_box)
+        heat = QFrame()
+        hv = QVBoxLayout(heat)
+        hv.setContentsMargins(0, 4, 0, 0)
+        hv.setSpacing(3)
+        grad = QFrame()
+        grad.setFixedHeight(10)
+        grad.setStyleSheet(
+            "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            "stop:0 #440154, stop:0.25 #3b528b, stop:0.5 #21918c, stop:0.75 #5ec962, stop:1 #fde725);"
+            "border-radius:5px;")
+        hv.addWidget(grad)
+        layout.addWidget(heat)
+
+        layout.addWidget(self._gt_accordion())
+        layout.addWidget(self._batch_accordion())
+        layout.addWidget(self._benchmark_accordion())
+        layout.addStretch(1)
+
+    def _gt_accordion(self) -> Accordion:
+        t = self._t
+        gt_layer = self._layers.find("Ground truth")
+        acc = Accordion("Ground truth & evaluation", t, lead="check", open_=bool(self._gt_metrics))
+        gt_text = Path(self._segment.find_gt_for_image(self._current_image_path) or "").name \
+            if self._current_image_path and gt_layer is None else (gt_layer.name if gt_layer else "")
+        box = SelectBox(gt_text or "Choose ground-truth mask…", t, on_click=self._pick_gt_mask)
+        acc.add(FieldRow("Ground-truth mask", box, t))
+        gt_toggle = Toggle(t, gt_layer.visible if gt_layer else False)
+        gt_toggle.toggled.connect(self._toggle_show_gt)
+        acc.add(FieldRow("Show ground truth", gt_toggle, t))
+        if self._gt_metrics:
+            for name, value in self._format_gt_metrics(self._gt_metrics):
+                mv = QLabel(value)
+                mv.setStyleSheet(f"color:{t['success']}; font-family:{theme.MONO}; font-size:12.5px; font-weight:600;")
+                acc.add(FieldRow(name, mv, t))
+        else:
+            note = label("Pick a ground-truth mask to evaluate against.", 11, t["text_muted"])
+            note.setWordWrap(True)
+            acc.add(note)
+        return acc
+
+    @staticmethod
+    def _format_gt_metrics(m: dict) -> list[tuple[str, str]]:
+        tp, fp, fn = m.get("tp", 0), m.get("fp", 0), m.get("fn", 0)
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        return [("F1 score", f"{m.get('f1', 0):.2f}"), ("Precision", f"{precision:.2f}"),
+               ("Recall", f"{recall:.2f}"), ("AP @ 0.50", f"{m.get('ap@0.5', 0):.2f}")]
+
+    def _pick_gt_mask(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose a ground-truth mask", "",
+            "Masks (*.png *.tif *.tiff *.npy);;All files (*)", options=_DLG)
+        if path:
+            self._load_gt(path)
+
+    def _load_gt(self, path: str) -> None:
+        if self._current_image_array is None:
+            self._toast("No image loaded", "Load an image before adding ground truth.")
+            return
+        shape = self._current_image_array.shape[:2]
+        try:
+            gt = self._segment.load_gt_mask(path, shape)
+        except Exception as e:
+            self._toast("Can't read ground truth", str(e))
+            return
+        existing = self._layers.find("Ground truth")
+        if existing is not None:
+            self._layers.remove(self._layers.index_of(existing))
+        self._layers.add(LabelsLayer("Ground truth", gt), select=False)
+        if self._last_result is not None:
+            self._evaluate_gt()
+        self._rebuild_results_pane()
+
+    def _evaluate_gt(self) -> None:
+        gt_layer = self._layers.find("Ground truth")
+        seg_layer = self._layers.find("Segmentation")
+        if gt_layer is None or seg_layer is None:
+            return
+        self._gt_metrics = self._segment.evaluate_masks(gt_layer.data, seg_layer.data)
+        if self._project is not None:
+            self._segment.record_run(self._project, f1=self._gt_metrics.get("f1"))
+            self._projects.store.save(self._project)
+        self._rebuild_results_pane()
+
+    def _on_color_by(self, text: str) -> None:
+        seg = self._layers.find("Segmentation")
+        if seg is None or self._last_result is None:
+            return
+        key = _COLOR_BY_KEYS.get(text)
+        if key is None:
+            seg.clear_color_overrides()
+        else:
+            overrides = self._segment.color_overrides_for(self._last_result, key)
+            if not overrides:
+                self._toast("Can't colour by that", f"No {key.replace('_', ' ')} data available.")
+                return
+            seg.set_color_overrides(overrides)
+        self._layers.notify()
+
+    def _save_masks(self) -> None:
+        seg = self._layers.find("Segmentation")
+        if seg is None or seg.max_label == 0 or self._project is None or self._current_image_path is None:
+            self._toast("Nothing to save", "Run segmentation first.")
+            return
+        default = str(self._segment.project_run_dir(self._project) /
+                      f"{Path(self._current_image_path).stem}_mask.png")
+        path, _ = QFileDialog.getSaveFileName(self, "Save masks", default, "PNG (*.png)", options=_DLG)
+        if not path:
+            return
+        self._segment.save_mask(seg.data, path)
+        self._toast("Masks saved", path)
+
+    def _export_csv(self) -> None:
+        if self._last_result is None or self._project is None or self._current_image_path is None:
+            self._toast("Nothing to export", "Run segmentation first.")
+            return
+        default = str(self._segment.project_run_dir(self._project) /
+                      f"{Path(self._current_image_path).stem}_measurements.csv")
+        path, _ = QFileDialog.getSaveFileName(self, "Export measurements", default, "CSV (*.csv)", options=_DLG)
+        if not path:
+            return
+        self._segment.export_measurements_csv(self._last_result, path)
+        self._toast("Measurements exported", path)
+
+    def _refine_coming_soon(self) -> None:
+        self._toast("Refine — coming soon", "Interactive point-prompt refinement isn't wired up yet.")
+
+    def _show_measurements(self) -> None:
+        if self._last_result is None:
+            self._toast("No measurements yet", "Run segmentation first.")
+            return
+        self._toast("Measurements", self._segment.summary_line(self._last_result))
+
+    # ── Batch prediction ─────────────────────────────────────────────────────
+    def _batch_accordion(self) -> Accordion:
+        t = self._t
+        acc = Accordion("Batch prediction", t, lead="batch", open_=False)
+        n = len(self._project.image_paths) if self._project else 0
+        note = label(
+            f"Run the current engine & settings across all {n} images in this project, "
+            "then aggregate cohort statistics.", 11.5, t["text_muted"])
+        note.setWordWrap(True)
+        acc.add(note)
+        btn = PillButton("Running batch…" if self._batching else f"Run batch ({n} images)",
+                        t, "ghost", "run", small=True)
+        btn.setEnabled(n > 0 and not self._batching and not self._predicting)
+        btn.clicked.connect(self._start_batch)
+        acc.add(btn)
+        return acc
+
+    def _start_batch(self) -> None:
+        if self._project is None:
+            self._toast("No project open", "Open or create a project first.")
+            return
+        if self._batching:
+            return
+        self._projects.store.save(self._project)
+        try:
+            self._batching = True
+            self._segment.run_batch_async(
+                self._project, on_log=self._safe_emit_batch_log,
+                on_progress=self._safe_emit_batch_progress,
+                on_cohort_ready=self._safe_emit_batch_cohort,
+                on_finish=self._safe_emit_batch_finish)
+        except ValueError as e:
+            self._batching = False
+            self._toast("Can't start batch", str(e))
+            return
+        self._rebuild_results_pane()
+
+    def _safe_emit_batch_log(self, msg: str) -> None:
+        try:
+            self._batch_log_signal.emit(msg)
+        except RuntimeError:
+            pass
+
+    def _safe_emit_batch_progress(self, done: int, total: int) -> None:
+        try:
+            self._batch_progress_signal.emit(done, total)
+        except RuntimeError:
+            pass
+
+    def _safe_emit_batch_cohort(self, records, out_dir) -> None:
+        try:
+            self._batch_cohort_signal.emit(records, out_dir)
+        except RuntimeError:
+            pass
+
+    def _safe_emit_batch_finish(self) -> None:
+        try:
+            self._batch_finish_signal.emit()
+        except RuntimeError:
+            pass
+
+    def _on_batch_progress(self, done: int, total: int) -> None:
+        self._on_canvas_status(f"Batch {done}/{total}")
+
+    def _on_batch_cohort_ready(self, records, out_dir) -> None:
+        if self._project is not None:
+            self._projects.store.save(self._project)
+        pop = self._segment.population_stats(records)
+        self._toast("Batch complete",
+                    f"{pop.get('total_cells', 0)} cells across {pop.get('n_images', 0)} images · {out_dir}")
+
+    def _on_batch_finished(self) -> None:
+        self._batching = False
+        self._refresh_images_pane()
+        self._rebuild_results_pane()
+
+    # ── Benchmark engines vs GT ──────────────────────────────────────────────
+    def _benchmark_accordion(self) -> Accordion:
+        t = self._t
+        acc = Accordion("Benchmark engines vs GT", t, lead="chart", open_=False)
+        if self._bench_rows:
+            for name, val in self._bench_rows:
+                mv = QLabel(val)
+                mv.setStyleSheet(f"color:{t['text_subtle']}; font-family:{theme.MONO}; font-size:12.5px; font-weight:600;")
+                acc.add(FieldRow(name, mv, t))
+        else:
+            note = label("Runs every available engine against this project's ground-truth masks.",
+                        11.5, t["text_muted"])
+            note.setWordWrap(True)
+            acc.add(note)
+        btn = PillButton("Running…" if self._benching else "Run benchmark", t, "ghost", "chart", small=True)
+        btn.setEnabled(not self._benching)
+        btn.clicked.connect(self._start_benchmark)
+        acc.add(btn)
+        return acc
+
+    def _start_benchmark(self) -> None:
+        if self._project is None or self._benching:
+            return
+        try:
+            self._benching = True
+            self._bench_rows = []
+            self._segment.run_benchmark_async(
+                self._project, on_row=self._safe_emit_bench_row,
+                on_log=self._safe_emit_bench_log, on_done=self._safe_emit_bench_done)
+        except ValueError as e:
+            self._benching = False
+            self._toast("Can't run benchmark", str(e))
+            return
+        self._rebuild_results_pane()
+
+    def _safe_emit_bench_row(self, text: str) -> None:
+        try:
+            self._bench_row_signal.emit(text)
+        except RuntimeError:
+            pass
+
+    def _safe_emit_bench_log(self, msg: str) -> None:
+        try:
+            self._bench_log_signal.emit(msg)
+        except RuntimeError:
+            pass
+
+    def _safe_emit_bench_done(self, cols, rows) -> None:
+        try:
+            self._bench_done_signal.emit(cols, rows)
+        except RuntimeError:
+            pass
+
+    def _on_bench_row(self, text: str) -> None:
+        self._on_canvas_status(f"Benchmark {text}")
+
+    def _on_bench_done(self, cols, rows) -> None:
+        self._benching = False
+        # cols = ["engine", "images", "F1@0.5", "AP@0.5", "AP@0.75", "AP@0.9", "mAP"]
+        self._bench_rows = [(r[0], f"{r[2]:.2f}") for r in rows]
+        self._rebuild_results_pane()
+        self._toast("Benchmark complete", f"{len(rows)} engine(s) scored")

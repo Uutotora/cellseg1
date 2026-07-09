@@ -105,9 +105,26 @@ def test_runs_table_includes_a_benchmarked_project(dash, project_ctrl):
 
 
 def test_runs_table_ignores_unbenchmarked_projects(dash, project_ctrl):
-    p = Project(id="x", name="No F1 yet")  # stats.last_f1 defaults to None
+    p = Project(id="x", name="No F1 yet")  # stats.last_f1 AND n_cells both default empty
     project_ctrl.store.save(p, touch=False)
     assert dash.runs_table() == []
+
+
+def test_runs_table_includes_a_plain_segmented_project_with_no_gt(dash, project_ctrl):
+    """A Segment-tab predict/batch run with no ground truth still shows up
+    here (Studio's whole point of logging segmentation activity to the
+    Dashboard) — just with F1 "—" (ok=False), not silently invisible until
+    someone benchmarks it."""
+    p = Project(id="y", name="Segmented, no GT", updated_at="2026-01-02T00:00:00+00:00",
+               settings=ProjectSettings(engine="cellseg1"), stats=ProjectStats(n_cells=247))
+    project_ctrl.store.save(p, touch=False)
+    rows = dash.runs_table()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.name == "Segmented, no GT"
+    assert row.cells == "247"
+    assert row.f1 is None
+    assert row.ok is False
 
 
 def test_runs_table_sorted_newest_first_across_both_sources(dash, train_ctrl, project_ctrl):

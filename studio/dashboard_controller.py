@@ -74,16 +74,20 @@ class DashboardController:
             )))
 
         for project in self.projects.store.list():
-            if project.stats.last_f1 is None:
+            # Any real segmentation activity shows up here, not only a
+            # GT-benchmarked one — a plain predict/batch run with no ground
+            # truth just shows "—" for F1 (ok=False, same muted styling as a
+            # training run) instead of being invisible until benchmarked.
+            if project.stats.last_f1 is None and not project.stats.n_cells:
                 continue
             rows.append((_sort_ts(project.updated_at), DashRun(
                 name=project.name,
                 engine_label=ENGINE_LABELS.get(project.engine, project.engine),
-                f1=f"{project.stats.last_f1:.2f}",
+                f1=f"{project.stats.last_f1:.2f}" if project.stats.last_f1 is not None else None,
                 cells=format_count(project.stats.n_cells) if project.stats.n_cells else None,
                 duration=None,
                 when=relative_time(project.updated_at),
-                ok=True,
+                ok=project.stats.last_f1 is not None,
             )))
 
         rows.sort(key=lambda r: r[0], reverse=True)

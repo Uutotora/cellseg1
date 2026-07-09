@@ -59,6 +59,13 @@ def _fake_predict_cached(config, image_rgb):
 @pytest.fixture(autouse=True)
 def _fake_engine(monkeypatch):
     monkeypatch.setattr("napari_app.inference_cache.predict_cached", _fake_predict_cached)
+    # cellpose is a real, heavy [project.dependencies] package that may well
+    # be installed in whatever env runs these tests (it is, in the full conda
+    # env) — without this, list_available_engines()/run_benchmark_async see
+    # it as real and available and actually run genuine (slow, possibly
+    # model-downloading) Cellpose inference instead of the fake above, which
+    # only stands in for the "cellseg1" engine's predict_cached seam.
+    monkeypatch.setattr("napari_app.engines.cellpose_available", lambda: False)
 
 
 @pytest.fixture
@@ -229,6 +236,13 @@ def test_evaluate_against_gt_perfect_match_scores_f1_one(tmp_path, ctrl):
     gt_path = tmp_path / "gt.png"
     cv2.imwrite(str(gt_path), pred.astype(np.uint16))
     metrics = ctrl.evaluate_against_gt(gt_path, pred)
+    assert metrics["f1"] == pytest.approx(1.0)
+
+
+def test_evaluate_masks_perfect_match_scores_f1_one(ctrl):
+    pred = np.zeros((20, 20), dtype=np.int32)
+    pred[2:10, 2:10] = 1
+    metrics = ctrl.evaluate_masks(pred.copy(), pred)
     assert metrics["f1"] == pytest.approx(1.0)
 
 

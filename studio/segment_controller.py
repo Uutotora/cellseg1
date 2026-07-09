@@ -247,9 +247,16 @@ class SegmentController:
         return gt
 
     def evaluate_against_gt(self, gt_path: str | Path, pred_mask: np.ndarray) -> dict:
-        from napari_app import benchmark
         gt = self.load_gt_mask(gt_path, pred_mask.shape)
-        return benchmark.evaluate(gt, pred_mask)
+        return self.evaluate_masks(gt, pred_mask)
+
+    @staticmethod
+    def evaluate_masks(gt_mask: np.ndarray, pred_mask: np.ndarray) -> dict:
+        """Like :meth:`evaluate_against_gt`, but for a GT mask already loaded
+        into memory (e.g. as a workspace Ground-truth layer) — no file path
+        or resizing involved, just the metrics."""
+        from napari_app import benchmark
+        return benchmark.evaluate(gt_mask, pred_mask)
 
     def discover_gt_pairs(self, project: Project) -> list[tuple[Path, Path]]:
         """Every project image that has a discoverable ground-truth mask —

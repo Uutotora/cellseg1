@@ -41,6 +41,7 @@ from studio import theme
 from studio.components import Sidebar
 from studio.project_controller import ProjectController
 from studio.train_controller import TrainController
+from studio.segment_controller import SegmentController
 from studio.new_project_dialog import NewProjectDialog
 from studio.screens import HomeScreen, ProjectsScreen
 from studio.workspace import WorkspaceScreen
@@ -86,11 +87,13 @@ class StudioWindow(QMainWindow):
 
     def __init__(self, theme_name: str = "dark",
                  project_controller: Optional[ProjectController] = None,
-                 train_controller: Optional[TrainController] = None):
+                 train_controller: Optional[TrainController] = None,
+                 segment_controller: Optional[SegmentController] = None):
         super().__init__()
         self._theme_name = theme_name
         self._projects = project_controller or ProjectController()
         self._train = train_controller or TrainController()
+        self._segment = segment_controller or SegmentController()
         self._screens: dict[str, QWidget] = {}
         self.setWindowTitle("CellSeg1 Studio")
         self.resize(1320, 860)
@@ -145,7 +148,8 @@ class StudioWindow(QMainWindow):
                                self._new_project_dialog.open),
             "projects": ProjectsScreen(t, self._projects, self.navigate, self._open_project,
                                       self._new_project_dialog.open),
-            "workspace": WorkspaceScreen(t),
+            "workspace": WorkspaceScreen(t, self._segment, self._projects, self._toast.announce,
+                                        on_toggle_logs=lambda: self._toggle_drawer(self._logs)),
             "train": ModelsScreen(t, self._train, self._projects, self._toast.announce),
             "dashboard": DashboardScreen(t, self._train, self._projects, self._toast.announce),
             "guide": GuideScreen(t, self._projects, self.navigate, self._open_project,

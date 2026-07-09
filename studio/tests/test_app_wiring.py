@@ -163,14 +163,16 @@ def test_nucleiview_geometry_can_be_synced_to_a_raw_parent(app):
 
 
 # ── screens ──────────────────────────────────────────────────────────────────
-def test_all_screens_construct(app, controller, train_controller):
+def test_all_screens_construct(app, controller, train_controller, tmp_path):
     from studio.screens import HomeScreen, ProjectsScreen
     from studio.workspace import WorkspaceScreen
     from studio.extra_screens import ModelsScreen, DashboardScreen
+    from studio.segment_controller import SegmentController
     t = theme.DARK
+    segment_controller = SegmentController(storage_dir=tmp_path / "segment_storage")
     assert HomeScreen(t, controller, lambda k: None, lambda i: None, lambda: None) is not None
     assert ProjectsScreen(t, controller, lambda k: None, lambda i: None, lambda: None) is not None
-    assert WorkspaceScreen(t) is not None
+    assert WorkspaceScreen(t, segment_controller, controller, lambda title, sub: None) is not None
     assert ModelsScreen(t, train_controller, controller, lambda title, sub: None) is not None
     assert DashboardScreen(t, train_controller, controller, lambda title, sub: None) is not None
 
