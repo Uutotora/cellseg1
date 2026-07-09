@@ -290,6 +290,62 @@ def test_wheel_zooms_in_and_out(app):
     assert c._zoom < z1
 
 
+def _image_overlaps_viewport(c, min_overlap=1.0):
+    """The image rect (in widget coords) must still intersect the viewport —
+    the pan-clamping invariant this whole test group checks."""
+    shape = c._base_shape()
+    h, w = shape
+    scaled_w, scaled_h = w * c._zoom, h * c._zoom
+    left, top = c._pan.x(), c._pan.y()
+    right, bottom = left + scaled_w, top + scaled_h
+    overlap_w = min(right, c.width()) - max(left, 0)
+    overlap_h = min(bottom, c.height()) - max(top, 0)
+    return overlap_w >= min_overlap and overlap_h >= min_overlap
+
+
+def test_pan_cannot_escape_the_viewport_via_drag(app):
+    c, *_ = _make_canvas(app, h=40, w=40)
+    c.resize(200, 200)
+    c.home()
+    _press(c, QPoint(20, 20))
+    # a wildly large drag, far past any reasonable pan distance
+    _move(c, QPoint(20000, 20000))
+    _release(c, QPoint(20000, 20000))
+    assert _image_overlaps_viewport(c)
+
+
+def test_pan_cannot_escape_the_viewport_via_repeated_wheel_zoom(app):
+    c, *_ = _make_canvas(app, h=40, w=40)
+    c.resize(200, 200)
+    c.home()
+    # zoom out repeatedly at a corner far from the image centre — the kind
+    # of repeated extreme input that used to be able to walk the pan away
+    # from the image indefinitely
+    for _ in range(30):
+        ev = QWheelEvent(QPointF(1, 1), QPointF(1, 1), QPoint(0, 0), QPoint(0, -120),
+                         Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                         Qt.ScrollPhase.NoScrollPhase, False)
+        c.wheelEvent(ev)
+    assert _image_overlaps_viewport(c)
+    for _ in range(30):
+        ev = QWheelEvent(QPointF(199, 199), QPointF(199, 199), QPoint(0, 0), QPoint(0, 120),
+                         Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                         Qt.ScrollPhase.NoScrollPhase, False)
+        c.wheelEvent(ev)
+    assert _image_overlaps_viewport(c)
+
+
+def test_clamp_pan_handles_a_tiny_zoomed_out_image(app):
+    """A heavily zoomed-out image (scaled size well under the margin) must
+    not trigger an inverted clamp range."""
+    c, *_ = _make_canvas(app, h=40, w=40)
+    c.resize(400, 400)
+    c._zoom = 0.05
+    c._pan = QPointF(5000, -5000)
+    c._clamp_pan()
+    assert _image_overlaps_viewport(c, min_overlap=0.5)
+
+
 def test_toggle_mip_works_even_on_a_single_plane(app):
     """Real napari's ndisplay toggle has no dimensionality guard at all —
     it works unconditionally, even on flat 2-D data (confirmed against the

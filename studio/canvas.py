@@ -139,7 +139,33 @@ class Canvas(QWidget):
         self._pan = QPointF((self.width() - w * self._zoom) / 2,
                             (self.height() - h * self._zoom) / 2)
         self._fitted = True
+        self._clamp_pan()
         self.update()
+
+    def _clamp_pan(self) -> None:
+        """Keep at least a bit of the image reachable near every edge — pan
+        (drag or the wheel's zoom-to-cursor) can no longer push the whole
+        image out of the viewport with no way back short of hitting Home.
+        A margin capped at half the viewport (and at the image's own scaled
+        size, so a tiny zoomed-out image can still be nudged off-centre
+        rather than being force-glued to the middle) always keeps the two
+        bounds the right way round — see the derivation in this method's
+        test coverage rather than re-deriving it by eye every read.
+        """
+        shape = self._base_shape()
+        if shape is None:
+            return
+        h, w = shape
+        scaled_w, scaled_h = w * self._zoom, h * self._zoom
+        margin = min(80.0, scaled_w, scaled_h, self.width() * 0.5, self.height() * 0.5)
+        lo_x, hi_x = margin - scaled_w, self.width() - margin
+        lo_y, hi_y = margin - scaled_h, self.height() - margin
+        if lo_x > hi_x:
+            lo_x, hi_x = hi_x, lo_x
+        if lo_y > hi_y:
+            lo_y, hi_y = hi_y, lo_y
+        self._pan.setX(max(lo_x, min(hi_x, self._pan.x())))
+        self._pan.setY(max(lo_y, min(hi_y, self._pan.y())))
 
     def widget_to_image(self, pt: QPointF) -> tuple[float, float]:
         col = (pt.x() - self._pan.x()) / self._zoom
@@ -413,6 +439,7 @@ class Canvas(QWidget):
         after_widget = self.image_to_widget(*before[::-1]) if self.transposed else \
             self.image_to_widget(before[1], before[0])
         self._pan += e.position() - after_widget
+        self._clamp_pan()
         self.update()
 
     def mousePressEvent(self, e: QMouseEvent) -> None:
@@ -516,6 +543,7 @@ class Canvas(QWidget):
 
         if self._panning and self._pan_anchor is not None:
             self._pan = self._pan_anchor_pan + (pos - self._pan_anchor)
+            self._clamp_pan()
             self.update()
             return
 
