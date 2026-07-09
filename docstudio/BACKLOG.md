@@ -70,9 +70,10 @@ When you finish a tab: log it in `CHANGELOG.md`, tick it here, update
   compositing with contrast/gamma/colormap/contour/opacity/blending all
   real) with pan/zoom/home, paint/erase/fill/pick/polygon editing, Points/
   Shapes click-to-add/draw, grid mode (one tile per visible layer), a 2D/3D
-  toggle (max-intensity projection across a loaded z-stack — not GPU
-  volumetric rendering, noted as the simplification it is), channel-roll and
-  a non-destructive view-only transpose. `studio/segment_controller.py`
+  toggle (max-intensity projection across a loaded z-stack; a genuinely
+  drag-to-orbit rotate-then-perspective-project tilt for a flat 2-D image —
+  not GPU volumetric rendering, noted as the simplification it is), channel-roll
+  and a non-destructive view-only transpose. `studio/segment_controller.py`
   (new) — maps `ProjectSettings` to `PredictController`'s params/config and
   reuses `run_prediction_async`/`run_batch_async`/`run_benchmark_async`
   unmodified, plus `analysis`/`benchmark`/`cohort` wrappers; `record_run()`
@@ -104,6 +105,14 @@ When you finish a tab: log it in `CHANGELOG.md`, tick it here, update
   fixed; see `CHANGELOG.md`'s same-dated follow-up entries for the detail
   and what was checked against which reference (the classic app's own
   `_add_filled_labels`, real napari's viewer-button source) before fixing.
+- **Follow-up, `/goal`-driven polish pass (same day):** results now persist
+  per (project, image) and reload on reopen; the canvas can no longer be
+  panned/zoomed the image fully out of view; the 2D/3D toggle on a flat
+  image is genuinely drag-to-orbit interactive instead of a fixed static
+  tilt; a comprehensive control-by-control re-verification pass (19 new
+  workspace tests + 1 cross-screen Segment→Dashboard integration test) and
+  a load-speed check found no other gaps. See `CHANGELOG.md`'s same-dated
+  entry.
 - **Tasks:** ☑ Canvas widget (image + pan/zoom) · ☑ own layer model ↔ Layers
   panel · ☑ label/shape/point rendering + editing (brush/eraser/fill/polygon/
   point) · ☑ viewer bar (2D↔3D/grid/home) real · ☑ engine/threshold controls →

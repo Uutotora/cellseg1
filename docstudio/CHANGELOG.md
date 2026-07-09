@@ -5,6 +5,82 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-09 — Segment tab: persistence, pan bounds, real 3-D rotation, verification pass
+
+A `/goal`-driven round: work until the Segment tab genuinely satisfies "3-D
+rotates like real 3-D, every button/panel is correct, the canvas can't be
+flown out of bounds, a saved run survives reopening the project, and it all
+logs to Dashboard, quickly." Four pieces of work plus a closing audit:
+
+- **Segmentation results now persist per (project, image) and reload on
+  reopen.** Previously a predicted mask lived only in the in-memory
+  `LabelsLayer` — closing and reopening the project (or just switching
+  images and back) lost it, so "is this image done?" had no durable answer.
+  `SegmentController` now saves/loads each result mask to a SHA1-hash-keyed
+  path (hashed on the image's resolved absolute path, so two images
+  sharing a filename in different folders never collide) under the
+  project's own run directory; `_select_image` checks for a saved mask
+  before falling back to an empty layer, and the Images pane's per-row
+  status reflects it even for an image that's never been the *selected*
+  one this session. Batch runs write into the same cache so a batch and a
+  single predict agree on "has this been run" for the same image.
+- **The canvas can no longer be panned or zoomed the image fully out of
+  view.** Dragging or repeated wheel-zooming used to let the whole image
+  slide past every edge with no way back short of the Home button.
+  `Canvas._clamp_pan()` now keeps a margin (capped at half the viewport and
+  at the image's own scaled size, so a tiny zoomed-out image can still be
+  nudged off-centre rather than glued to the middle) reachable near every
+  edge, called after every pan-drag, wheel-zoom, and `home()`.
+- **The "3-D" toggle on a flat 2-D image is now genuinely interactively
+  rotatable**, not the fixed static trapezoid tilt from the previous
+  round's honest-substitute. Left-drag while `mip` is on over a
+  single-plane image now orbits a real rotate-then-perspective-project of
+  the image rect's corners around pitch/yaw angles (`Canvas._rot_x`/
+  `_rot_y`), clamped to ±80° short of the projection degenerating;
+  middle-button still always pans; `home()` resets rotation to the default
+  pitch along with pan/zoom, matching real napari's `reset_view()`
+  resetting the whole camera, not just pan/zoom. This is still not a GPU
+  3-D camera (no real depth/occlusion, no volume orbiting) — an honest,
+  interactive substitute for a flat image, same category of simplification
+  as the rest of this canvas, just no longer *static*.
+- **Comprehensive re-verification pass** across every wired control in the
+  Segment tab: the Labels layer's fuller settings (contour, edit-dimension
+  count, contiguous/preserve-labels/show-selected checkboxes, direct colour
+  picking, colour-mode reset), image gamma/colormap, Points/Shapes size,
+  edge-width and clear actions, the Show-predictions/Show-ground-truth
+  overlay toggles, SAM 2's model-size/tracking-mode selects and the SAM
+  backbone select, the generic per-engine setting path, the Refine
+  ("coming soon" — confirmed it still honestly says so rather than
+  silently doing nothing) and Measurements buttons, and CSV export's
+  no-result guard — all either already covered or found to be correctly
+  wired, with 19 new regression tests closing the ones that weren't. Added
+  one true cross-screen integration test: running a fake predict in a real
+  `WorkspaceScreen` and then navigating a real `StudioWindow` to its
+  `DashboardScreen` and reading `runs_table()` back — proving the two
+  screens' shared `ProjectController` wiring end to end, not just each
+  screen's own controller in isolation.
+- **Load-speed check**: project open, image switching (~16 ms/image
+  averaged over 5), layer/settings changes, and Dashboard navigation
+  (~7 ms) are all effectively instant. The one measured hitch (~0.7–0.8 s)
+  is a one-time `import torch` paid by whichever code first calls
+  `cellpose_available()` in a given process — inherent to the `cellpose`
+  dependency, identical in real napari, paid once per app launch rather
+  than once per project — not a Studio inefficiency.
+
+Verified: full `studio/tests` green throughout, 458 → 478 cases (8 new
+canvas tests directly driving simulated drag events and asserting on
+`_rot_x`/`_rot_y` plus a pixel-diff proving a drag visibly changes the
+render, 19 new workspace-control tests, 1 new cross-screen integration
+test); offscreen screenshots at the default/dragged/clamped-extreme
+rotation angles confirm the projection looks like a real tilt (receding
+edge narrows, no inversion) all the way to the clamp boundary. Not
+verified: how the rotation drag feels on a real display with a real mouse
+(offscreen `QMouseEvent` sequences prove the math and state transitions,
+not felt input latency); real model inference speed (all engine calls in
+this pass are monkeypatched, per the existing convention).
+
+---
+
 ## 2026-07-09 — Follow-up: real-usage feedback on the Segment tab, four fixes
 
 Four issues found from actually running the app (not just offscreen tests),
