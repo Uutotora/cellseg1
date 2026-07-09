@@ -314,12 +314,19 @@ def test_roll_channel_cycles_visibility_across_image_layers(app):
     layers.add(a)
     layers.add(b)
     c = Canvas(theme.DARK, layers)
-    c.roll_channel()
+    assert c.roll_channel() is True
     assert a.visible is False
     assert b.visible is True
-    c.roll_channel()
+    assert c.roll_channel() is True
     assert a.visible is True
     assert b.visible is False
+
+
+def test_roll_channel_reports_false_with_only_one_image_layer(app):
+    layers = LayerList()
+    layers.add(ImageLayer("DAPI", np.zeros((5, 5, 3), dtype=np.uint8)))
+    c = Canvas(theme.DARK, layers)
+    assert c.roll_channel() is False
 
 
 def test_step_z_moves_current_plane(app):

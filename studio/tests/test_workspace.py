@@ -446,6 +446,15 @@ def test_toggle_mip_without_volume_toasts(app, segment, projects, toasts, tmp_pa
     assert ws._canvas.mip is False
 
 
+def test_roll_channel_with_one_channel_toasts_instead_of_silent_noop(
+        app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._roll_channel()
+    assert toasts and "Only one channel loaded" in toasts[-1][0]
+
+
 def test_toggle_grid_and_transpose(app, segment, projects, toasts, tmp_path, storage):
     project = _make_project(tmp_path, projects, storage)
     ws = _ws(app, segment, projects, toasts)
@@ -522,6 +531,26 @@ def test_toggle_logs_console_calls_the_injected_callback(app, segment, projects,
     ws = _ws(app, segment, projects, toasts, on_toggle_logs=lambda: calls.append(True))
     ws._toggle_logs_console()
     assert calls == [True]
+
+
+# ── breadcrumb navigation ─────────────────────────────────────────────────────
+def test_breadcrumb_projects_click_navigates_back(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    seen = []
+    ws = WorkspaceScreen(theme.DARK, segment, projects,
+                         lambda title, sub: toasts.append((title, sub)),
+                         on_navigate=lambda key: seen.append(key))
+    ws._load_project(project)
+    ws._go_to_projects()
+    assert seen == ["projects"]
+
+
+def test_breadcrumb_shows_project_name_not_in_the_projects_link(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    assert ws._crumb_projects.text() == "Projects"
+    assert project.name in ws._crumb_name.text()
 
 
 def test_floating_add_point_selects_or_creates_a_points_layer(app, segment, projects, toasts, tmp_path, storage):

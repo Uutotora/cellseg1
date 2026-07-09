@@ -101,13 +101,14 @@ class WorkspaceScreen(QWidget):
     _bench_done_signal = pyqtSignal(object, object)
 
     def __init__(self, t: dict, segment: SegmentController, projects, on_toast,
-                on_toggle_logs=None):
+                on_toggle_logs=None, on_navigate=None):
         super().__init__()
         self._t = t
         self._segment = segment
         self._projects = projects
         self._toast = on_toast
         self._on_toggle_logs = on_toggle_logs
+        self._on_navigate = on_navigate
 
         self._project: Optional[Project] = None
         self._layers = LayerList()
@@ -176,8 +177,7 @@ class WorkspaceScreen(QWidget):
         else:
             name, engine_key = project.name, project.engine
             engine_label = ENGINE_LABELS.get(engine_key, engine_key)
-        self._crumb.setText(
-            f"<span style='color:{t['text_muted']}'>Projects</span>"
+        self._crumb_name.setText(
             f"<span style='color:{t['border_strong']}'>&nbsp;/&nbsp;</span>"
             f"<span style='color:{t['text']}'>{html.escape(name)}</span>")
         kind = ENGINE_KIND.get(engine_key, "muted") if engine_key else "muted"
@@ -187,6 +187,14 @@ class WorkspaceScreen(QWidget):
         self._engine_chip.deleteLater()
         self._engine_chip = Chip(engine_label, t, kind)
         self._chip_row.insertWidget(idx, self._engine_chip)
+
+    def _go_to_projects(self) -> None:
+        """The breadcrumb's "Projects" segment — a real link back to the
+        Projects tab, matching Label Studio's breadcrumb (only the ancestor
+        segment navigates; the current project's own name doesn't, since
+        you're already looking at it)."""
+        if self._on_navigate:
+            self._on_navigate("projects")
 
     def _load_project(self, project: Optional[Project]) -> None:
         self._project = project
@@ -216,9 +224,16 @@ class WorkspaceScreen(QWidget):
         row = QHBoxLayout(bar)
         row.setContentsMargins(18, 0, 18, 0)
         row.setSpacing(12)
-        self._crumb = QLabel()
-        self._crumb.setStyleSheet("font-size:13px; font-weight:600;")
-        row.addWidget(self._crumb)
+        self._crumb_projects = QLabel("Projects")
+        self._crumb_projects.setStyleSheet(
+            f"font-size:13px; font-weight:600; color:{t['text_muted']};")
+        self._crumb_projects.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._crumb_projects.setToolTip("Back to Projects")
+        self._crumb_projects.mouseReleaseEvent = lambda e: self._go_to_projects()
+        row.addWidget(self._crumb_projects)
+        self._crumb_name = QLabel()
+        self._crumb_name.setStyleSheet("font-size:13px; font-weight:600;")
+        row.addWidget(self._crumb_name)
         self._chip_row = row
         self._engine_chip = Chip("", t, "muted")
         row.addWidget(self._engine_chip)
@@ -990,7 +1005,10 @@ class WorkspaceScreen(QWidget):
         self._sync_toolbars()
 
     def _roll_channel(self) -> None:
-        self._canvas.roll_channel()
+        if not self._canvas.roll_channel():
+            self._toast("Only one channel loaded",
+                       "Roll dimensions cycles which image channel is visible — "
+                       "this image only has one.")
 
     def _toggle_transpose(self) -> None:
         self._canvas.toggle_transpose()
@@ -1429,7 +1447,7 @@ class WorkspaceScreen(QWidget):
         if seg is not None and seg.data.size:
             coverage = float((seg.data > 0).sum()) / seg.data.size * 100.0
         tiles = QHBoxLayout()
-        tiles.setSpacing(9)
+        tiles.setSpacing(6)
         diam_unit = next((u for k, _l, u in r["columns"] if k == "diameter"), "px")
         area_unit = next((u for k, _l, u in r["columns"] if k == "area"), "px²")
         tiles.addWidget(StatTile(f"{diam.get('median', 0):.1f}", diam_unit, "MEDIAN Ø", t))

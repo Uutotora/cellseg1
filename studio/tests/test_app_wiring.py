@@ -399,7 +399,7 @@ def test_opening_a_project_sets_active_and_updates_workspace(app, controller, tr
     win._open_project(project.id)
     assert win._stack.currentWidget() is win._screens["workspace"]
     assert controller.get_active().id == project.id
-    assert project.name in win._screens["workspace"]._crumb.text()
+    assert project.name in win._screens["workspace"]._crumb_name.text()
 
 
 def test_active_project_survives_theme_toggle(app, controller, train_controller):
@@ -408,7 +408,7 @@ def test_active_project_survives_theme_toggle(app, controller, train_controller)
     project = controller.list_projects()[0]
     win._open_project(project.id)
     win.toggle_theme()
-    assert project.name in win._screens["workspace"]._crumb.text()
+    assert project.name in win._screens["workspace"]._crumb_name.text()
 
 
 # ── regression: a project created elsewhere must show up immediately ──────────

@@ -171,13 +171,16 @@ class Canvas(QWidget):
         self._composite_dirty = True
         self.update()
 
-    def roll_channel(self) -> None:
+    def roll_channel(self) -> bool:
         """"Roll dimensions": cycle which single image-kind layer is visible,
         the practical equivalent of rolling through an extra axis when that
-        axis is really "one more channel" rather than a literal spatial dim."""
+        axis is really "one more channel" rather than a literal spatial dim.
+        Returns whether it actually rolled — False (a no-op) with only one
+        image layer, so the caller can tell the user why nothing happened
+        instead of a silent, seemingly-broken click."""
         images = [l for l in self.layers if l.kind == "image"]
         if len(images) < 2:
-            return
+            return False
         visible = [l for l in images if l.visible]
         current = visible[0] if visible else images[0]
         idx = images.index(current)
@@ -185,6 +188,7 @@ class Canvas(QWidget):
             l.visible = False
         images[(idx + 1) % len(images)].visible = True
         self.layers.notify()
+        return True
 
     def step_z(self, delta: int) -> None:
         if self.layers.n_planes > 1 and not self.mip:

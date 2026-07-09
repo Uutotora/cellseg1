@@ -70,6 +70,49 @@ def label(text: str, size: float, color: str, weight: int = 400,
     return lb
 
 
+class _ElidingLabel(QLabel):
+    """A ``QLabel`` that elides long text with "…" instead of forcing its
+    parent layout wider — for any label showing unbounded-length *dynamic*
+    text (a LoRA checkpoint's filename, a discovered ground-truth mask's
+    name, an engine's registry label) inside a fixed-width panel. A plain
+    ``QLabel``'s ``sizeHint``/``minimumSizeHint`` always reflect its *full*
+    text, so one long value can silently blow out the whole 320px inspector
+    panel's width — with no horizontal scrollbar to reach the overflow —
+    confirmed by an offscreen width audit (``_val.sizeHint()`` exceeding the
+    panel's available budget), not just by eye. ``text()``/``setText()``
+    still round-trip the *real*, un-elided string.
+    """
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._full_text = text
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        super().setText(text)
+
+    def text(self) -> str:
+        return self._full_text
+
+    def setText(self, text: str) -> None:
+        self._full_text = text
+        self._reelide()
+
+    def resizeEvent(self, e) -> None:
+        super().resizeEvent(e)
+        self._reelide()
+
+    def _reelide(self) -> None:
+        elided = self.fontMetrics().elidedText(
+            self._full_text, Qt.TextElideMode.ElideRight, max(self.width(), 1))
+        super().setText(elided)
+
+    def sizeHint(self) -> QSize:
+        natural = super().sizeHint()
+        return QSize(min(140, natural.width()), natural.height())
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(20, super().minimumSizeHint().height())
+
+
 class Chip(QLabel):
     """Rounded pill/badge. ``kind`` selects the colour family."""
 
@@ -198,10 +241,9 @@ class SelectBox(QFrame):
             ic = QLabel()
             ic.setPixmap(icons.pixmap(lead_icon, lead_color or t["primary"], 14))
             row.addWidget(ic)
-        self._val = QLabel(text)
+        self._val = _ElidingLabel(text)
         self._val.setStyleSheet(f"color:{t['text']}; font-size:12.5px; font-weight:600;")
-        row.addWidget(self._val)
-        row.addStretch(1)
+        row.addWidget(self._val, 1)
         chev = QLabel()
         chev.setPixmap(icons.pixmap("chevron_down", t["text_muted"], 13))
         row.addWidget(chev)
@@ -477,13 +519,13 @@ class StatTile(QFrame):
         self.setStyleSheet(
             f"QFrame{{background:{t['inset']}; border:1px solid {t['border']}; border-radius:10px;}}")
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(12, 11, 12, 11)
+        lay.setContentsMargins(8, 10, 8, 10)
         lay.setSpacing(2)
         v = QLabel(f"{value}<span style='font-size:11px;color:{t['text_muted']}'> {unit}</span>" if unit else value)
         col = t["success"] if ok else t["text"]
-        v.setStyleSheet(f"color:{col}; font-family:{theme.MONO}; font-size:19px; font-weight:600; letter-spacing:-0.5px;")
-        c = QLabel(caption)
-        c.setStyleSheet(f"color:{t['text_muted']}; font-size:10.5px; font-weight:600; letter-spacing:0.5px;")
+        v.setStyleSheet(f"color:{col}; font-family:{theme.MONO}; font-size:17px; font-weight:600; letter-spacing:-0.5px;")
+        c = _ElidingLabel(caption)
+        c.setStyleSheet(f"color:{t['text_muted']}; font-size:10px; font-weight:600; letter-spacing:0.1px;")
         lay.addWidget(v)
         lay.addWidget(c)
 
@@ -543,8 +585,15 @@ class Accordion(QFrame):
         hr.setSpacing(9)
         licon = QLabel()
         licon.setPixmap(icons.pixmap(lead, t["signal"], 15))
-        title_lb = QLabel(title.upper() if caps else title)
-        title_lb.setWordWrap(not caps)
+        # caps=True titles are meant to be short, non-wrapping section headers
+        # (the docstring's contract) — but a *dynamic* one (e.g. "Engine
+        # settings · <engine label>") can still run long, so it gets the same
+        # eliding treatment as SelectBox rather than silently overflowing the
+        # panel. caps=False already wraps instead (a deliberately different,
+        # already-working pattern for full-sentence titles) and is untouched.
+        title_lb = _ElidingLabel(title.upper()) if caps else QLabel(title)
+        if not caps:
+            title_lb.setWordWrap(True)
         if caps:
             title_lb.setStyleSheet(
                 f"color:{t['text_subtle']}; font-size:11.5px; font-weight:600; letter-spacing:0.5px;")
@@ -553,9 +602,12 @@ class Accordion(QFrame):
         self._chev = QLabel()
         self._chev.setPixmap(icons.pixmap("chevron" if not open_ else "chevron_down", t["text_muted"], 14))
         hr.addWidget(licon)
-        hr.addWidget(title_lb)
-        hr.addStretch(1)
-        hr.addWidget(self._chev)
+        hr.addWidget(title_lb, 1 if caps else 0)
+        if caps:
+            hr.addWidget(self._chev)
+        else:
+            hr.addStretch(1)
+            hr.addWidget(self._chev)
         self._head_row.setStyleSheet("background:transparent;")
         self._head_row.mouseReleaseEvent = lambda e: self.toggle()
         self._lay.addWidget(self._head_row)
