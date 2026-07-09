@@ -25,6 +25,7 @@ from studio import theme
 from studio.canvas import Canvas, _blend, _contour_mask, _interpolate, _render_image, _render_labels
 from studio.layer_model import (
     ERASE, FILL, ImageLayer, LabelsLayer, LayerList, PAINT, PICK, POLYGON, PointsLayer,
+    ShapesLayer,
 )
 
 
@@ -210,6 +211,66 @@ def test_no_edit_target_reports_status_hint(app):
     _press(c, QPoint(5, 5))
     assert statuses
     assert "select a Labels layer" in statuses[-1]
+
+
+def test_points_layer_left_click_adds_a_point(app):
+    layers = LayerList()
+    layers.add(ImageLayer("Image", np.zeros((40, 40, 3), dtype=np.uint8)), select=False)
+    points = PointsLayer("Prompts")
+    layers.add(points)
+    c = Canvas(theme.DARK, layers)
+    c.resize(40, 40)
+    c._zoom = 1.0
+    c._pan = QPointF(0.0, 0.0)
+    c._fitted = True
+    c.set_mode(PAINT)  # pan_zoom always pans, regardless of selection — any
+                       # other mode means "the active tool acts on the click"
+    _press(c, QPoint(12, 20))
+    assert points.points == [(20.0, 12.0)]
+
+
+def test_points_layer_right_click_removes_nearest(app):
+    layers = LayerList()
+    points = PointsLayer("Prompts", points=[(5.0, 5.0), (30.0, 30.0)])
+    layers.add(points)
+    c = Canvas(theme.DARK, layers)
+    c.resize(40, 40)
+    c._zoom = 1.0
+    c._pan = QPointF(0.0, 0.0)
+    c._fitted = True
+    c.set_mode(PAINT)
+    _press(c, QPoint(6, 6), button=Qt.MouseButton.RightButton)
+    assert points.points == [(30.0, 30.0)]
+
+
+def test_shapes_layer_polygon_click_and_double_click_adds_a_shape(app):
+    layers = LayerList()
+    shapes = ShapesLayer("Corrections")
+    layers.add(shapes)
+    c = Canvas(theme.DARK, layers)
+    c.resize(40, 40)
+    c._zoom = 1.0
+    c._pan = QPointF(0.0, 0.0)
+    c._fitted = True
+    c.set_mode(POLYGON)
+    _press(c, QPoint(5, 5))
+    _press(c, QPoint(5, 20))
+    _press(c, QPoint(20, 20))
+    _double_click(c, QPoint(20, 5))
+    assert len(shapes.shapes) == 1
+    assert shapes.shapes[0]["type"] == "polygon"
+    assert c._polygon_pts == []
+
+
+def test_shapes_layer_right_click_pops_last_vertex(app):
+    layers = LayerList()
+    layers.add(ShapesLayer("Corrections"))
+    c = Canvas(theme.DARK, layers)
+    c.set_mode(POLYGON)
+    _press(c, QPoint(1, 1))
+    _press(c, QPoint(2, 2))
+    _press(c, QPoint(3, 3), button=Qt.MouseButton.RightButton)
+    assert len(c._polygon_pts) == 1
 
 
 # ── view actions ─────────────────────────────────────────────────────────────

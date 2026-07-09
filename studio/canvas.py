@@ -373,8 +373,37 @@ class Canvas(QWidget):
             return
 
         col, row = self.widget_to_image(pos)
-        target = self.edit_target()
+        sel = self.layers.selected
         z = self.layers.current_z if self.layers.n_planes > 1 else None
+
+        # Points/Shapes take over the click while selected and *some tool
+        # other than pan_zoom/transform is active* (those two are always
+        # reserved for navigation, checked above, so panning still works
+        # with a Points/Shapes layer selected) — no separate "points mode"/
+        # "shapes mode": left adds, right removes the nearest point; a
+        # Shapes layer reuses the Labels POLYGON tool's click-vertices /
+        # double-click-closes flow but appends a real shape instead of
+        # rasterising into a label mask.
+        if isinstance(sel, PointsLayer):
+            if e.button() == Qt.MouseButton.LeftButton:
+                sel.add(row, col)
+                self.layers.notify()
+            elif e.button() == Qt.MouseButton.RightButton:
+                idx = sel.nearest(row, col, max_dist=max(sel.size, 10))
+                if idx is not None:
+                    sel.remove_at(idx)
+                    self.layers.notify()
+            return
+
+        if isinstance(sel, ShapesLayer) and self.mode == POLYGON:
+            if e.button() == Qt.MouseButton.LeftButton:
+                self._polygon_pts.append((row, col))
+            elif e.button() == Qt.MouseButton.RightButton and self._polygon_pts:
+                self._polygon_pts.pop()
+            self.update()
+            return
+
+        target = self.edit_target()
 
         if self.mode == POLYGON and e.button() == Qt.MouseButton.LeftButton:
             self._polygon_pts.append((row, col))
@@ -410,7 +439,16 @@ class Canvas(QWidget):
                 self._on_label_picked(picked)
 
     def mouseDoubleClickEvent(self, e: QMouseEvent) -> None:
-        if self.mode == POLYGON and len(self._polygon_pts) >= 3:
+        if len(self._polygon_pts) < 3:
+            return
+        sel = self.layers.selected
+        if isinstance(sel, ShapesLayer) and self.mode == POLYGON:
+            sel.add("polygon", list(self._polygon_pts))
+            self.layers.notify()
+            self._polygon_pts = []
+            self.update()
+            return
+        if self.mode == POLYGON:
             target = self.edit_target()
             if target is not None:
                 z = self.layers.current_z if self.layers.n_planes > 1 else None
