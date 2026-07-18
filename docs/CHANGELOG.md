@@ -18,6 +18,71 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-18 — Second Linux verification pass (no GPU at all); real app can crash on exit too
+
+Full install-and-verify pass on a *third* machine profile: an Arch Linux
+laptop with **no discrete GPU** (Intel UHD 620 integrated only — no NVIDIA,
+no CUDA, `torch.cuda.is_available()` is `False`), no conda/mamba, and a
+system Python too new to use directly (`requires-python` caps at `<3.13`;
+the box ships a rolling-release Python 3.14 with no `pip`, PEP 668
+externally-managed). Set up a conda-free dev env with `uv` instead — see the
+new "No conda, or a fresh Linux box?" note in `AGENTS.md` for the exact
+commands and the two build-isolation/ordering gotchas hit along the way.
+
+- **Both apps launch and render correctly on native-Wayland Linux
+  (Hyprland).** Verified for real, not just headless-imported: a driver
+  script mirroring `napari_app/main.py`/`studio/app.py` exactly stepped
+  through every classic-app tab (Predict/Annotate/Assistant/Train/Guide) and
+  every Studio screen + overlay (Home/Projects/Segment/Models & Train/
+  Dashboard/Guide/Assistant/Logs) in both themes, screenshotting each via
+  `grim` on the real compositor (no click-automation tool like `xdotool`/
+  `ydotool` was installed, so tab switches were driven the same way the
+  UI's own click handlers do it — `Shell._select`/`StudioWindow.navigate`
+  — rather than synthesized input). Everything renders correctly: no dark-
+  patch bugs, correct theming, honest `Linux · CPU` hardware detection (no
+  stray "Apple" string). A systematic pixel-level scan for the *specific*
+  "bare `QWidget()` inherits the app-wide bg and paints over a lighter
+  card" bug class already fixed three times in `guide_screen.py` (see
+  2026-07-09 below) found zero remaining instances across every other
+  Studio screen/overlay, in both themes.
+- **The full pytest suite's known flaky segfault (`docs/BACKLOG.md` P1)
+  reproduces here too — and this disproves its leading theory.** That entry
+  blamed a specific GTX 1070 CUDA-capability mismatch; this machine has no
+  CUDA at all and still segfaults (2/5 full-suite runs). Got the
+  previously-missing native backtrace via `coredumpctl`/`gdb`: a `hasattr()`
+  call on a `QObject` crashes inside PyQt6's own `qpycore_qobject_getattr`,
+  reached from pyqtgraph's `WidgetGroup.acceptsType` while constructing a
+  **new** `PlotWidget` (`train_widget.py`'s `LossChart` and
+  `assistant_widget.py`'s chart both reproduce it) — a stale/dangling sip
+  wrapper, not a CUDA issue.
+- **New finding: the real classic app can hit the same crash family on
+  exit, not just pytest.** Launched the actual app end-to-end (real
+  `napari.Viewer()`, all 5 widgets, real display) and closed it repeatedly:
+  2 of 3 clean launch-and-quit cycles still segfaulted, natively inside
+  PyQt6/sip's own `cleanup_on_exit` atexit handler, strictly *after*
+  `napari.run()`'s event loop had already returned normally — so no work is
+  lost, but it's a real, frequent native crash on close on this platform.
+  Tried the standard mitigation (forcing `QT_QPA_PLATFORM=xcb` to route
+  through XWayland instead of PyQt6's native Wayland plugin): it does avoid
+  the exit crash, but trades it for a worse *live* regression — continuous
+  vispy/OpenGL "no valid context" errors surfaced as a real error toast
+  during normal use. Documented as explicitly-rejected in `docs/
+  BACKLOG.md`; native Wayland (the default) remains the better tradeoff.
+- **A real SAM ViT-H + LoRA prediction ran end-to-end on CPU** — backbone
+  downloaded fresh (`setup_napari.sh`'s URL) and driven through the exact
+  `PredictController.build_config` → `_predict_cached` choke point this
+  file's own house rules designate, on a real fluorescence microscopy image
+  (`skimage.data.human_mitosis()`, a nuclei/mitosis field). The bundled
+  `cellseg_blood_117.pth` (blood cells) LoRA found 0 instances — a domain
+  mismatch, not a bug: re-run with the bundled `dsb2018_stardist_435.pth`
+  ("Cell nuclei", DSB2018-trained) found 321 nuclei in 314s, confirming
+  real model inference — not just UI rendering — works correctly on this
+  Linux/CPU configuration (no GPU at all on this box).
+
+Not verified here: Windows, and (per the rejected-xcb finding above) the
+exact upstream PyQt6/sip/Qt6-Wayland root cause of the crash-on-exit family
+— tracked, not fixed, in `docs/BACKLOG.md`.
+
 ## 2026-07-09 — First real Linux verification; capability-aware CUDA detection
 
 The app had only ever been run on macOS. First Linux check (real Ubuntu box,

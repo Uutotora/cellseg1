@@ -116,6 +116,32 @@ conda env for actual work:
 - **Run the app:** `bash run_napari.sh` or `cellseg1`  (needs a real display +
   SAM weights; **cannot be driven headless** in CI or an agent sandbox).
 
+**No conda, or a fresh Linux box?** The path above is one session's original
+macOS setup and won't exist elsewhere — confirmed 2026-07-18 on an Arch Linux
+laptop with no conda/mamba at all and a system Python too new to use directly
+(Arch ships a rolling-release Python past this project's `requires-python`
+`<3.13` cap, and it's externally-managed with no `pip`). `uv`
+(https://docs.astral.sh/uv/) is a solid conda-free substitute:
+```
+uv venv --python 3.12 .venv && source .venv/bin/activate
+uv pip install "packaging>=24.2" setuptools wheel
+uv pip install --index-strategy unsafe-best-match \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements.txt          # drop both flags above if there's a real
+                                  # NVIDIA GPU to install CUDA wheels for
+uv pip install --no-build-isolation -e . --no-deps
+```
+The `packaging`/`setuptools` pre-install works around a real uv build-isolation
+gap hit on that box: `setuptools>=77`'s license-expression normalizer needs a
+newer `packaging` than uv's isolated build env supplied on its own
+(`ImportError: Cannot import packaging.licenses`) — pre-installing both into
+the venv and building with `--no-build-isolation` sidesteps it. Still keep
+the two-command `requirements.txt` + `-e . --no-deps` split from that file's
+own comment (not `pip install -r requirements.txt -e .` in one call) — same
+reasoning, plus a second failure mode this session hit doing it as one uv
+call: uv can start building the local package before every resolved
+dependency (e.g. `napari`'s own `pydantic` via `npe2`) is actually installed.
+
 ### Verifying changes without a display
 
 You usually cannot launch the napari GUI. Verify what you can:

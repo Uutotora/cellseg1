@@ -172,38 +172,75 @@ for a credible product · P1 differentiation · P2 later.
 
 ## P1 — differentiation
 
-### [ ] Flaky segfault in the full local `pytest` run on Linux (GPU present)  · M
+### [ ] Flaky PyQt6/sip segfault on Linux — hits both `pytest` and the real app  · M
 - **Goal:** the full `pytest` run (`tests/` + `studio/tests/`) exits 0 every
-  time on a Linux box with the full runtime dependency set installed (torch +
-  PyQt6 + napari together), not just when each test file runs alone.
-- **Why:** on a real Linux dev box with an NVIDIA GPU (confirmed: GTX 1070,
-  compute capability 6.1, driver 580.173, CUDA 13 wheel), a full `pytest` run
-  segfaults (`SIGSEGV`, exit 139) ~44% of the time (7/16 runs observed).
-  Every individual test file passes 100% of the time in isolation — this is
-  an order/accumulation-dependent native crash, not a logic bug. A
-  `faulthandler`-enabled run pinned one occurrence to
-  `pyqtgraph.graphicsItems.PlotItem.PlotItem.__init__` (via
-  `AssistantWidget.__init__`, reached from `tests/
-  test_assistant_widget_wiring.py`'s `widget` fixture) — plausibly this
-  GPU's CUDA-13-driver/compute-6.1 mismatch (see `device_utils.py`'s own
-  docstring, confirmed on this exact machine) leaking into Qt/OpenGL widget
-  construction after torch has already touched `torch.cuda` earlier in the
-  same process. **Invisible to CI**: the `test` dependency-group never
-  installs PyQt6 + torch together, so every `*_wiring.py` test just
-  `importorskip`s there instead of building real widgets — CI has never
-  actually exercised this combination, so it can't have caught it.
-- **Acceptance:** full `pytest` run is reliably exit-0 on a Linux box with a
-  CUDA-capable-but-kernel-incompatible GPU across e.g. 20 consecutive runs;
-  or, if this is an upstream pyqtgraph/Qt/NVIDIA-driver bug outside this
-  repo's control, a documented workaround (e.g. force software OpenGL for
-  pyqtgraph plots, or avoid touching `torch.cuda` before Qt widget
-  construction in the same process) that makes local Linux runs reliable.
-- **Touch:** likely `napari_app/widgets/assistant_widget.py` (PlotWidget
-  construction) and/or `device_utils.py`; needs a `gdb`/core-dump follow-up
-  to see the native frame — `faulthandler` only shows the Python side.
-- **Verify:** repeat `python -m pytest tests/ -q` many times (loop it) and
-  confirm 0 crashes; re-run with `-X faulthandler` if it still reproduces to
-  get an updated trace.
+  time on Linux with the full runtime dependency set installed (torch +
+  PyQt6 + napari together); the real classic app (`run_napari.sh`) exits 0
+  every time it's closed, not just while it's running.
+- **Why:** originally found on a Linux box with an NVIDIA GPU (GTX 1070,
+  compute capability 6.1, CUDA 13 wheel) and written up as a probable
+  CUDA-capability-mismatch issue (`device_utils.py`'s own documented
+  scenario). **2026-07-18, a second Linux box (Arch, Hyprland/Wayland,
+  Intel UHD 620 — no NVIDIA GPU, no CUDA at all,
+  `torch.cuda.is_available()` is `False`) reproduced the exact same class of
+  crash**, which rules the GPU theory out as the root cause — this is a
+  Linux/PyQt6/pyqtgraph issue independent of any GPU. Two distinct crash
+  sites confirmed via `coredumpctl`/`gdb` native backtraces (the
+  Python-side `faulthandler` trace alone, as used in the original writeup,
+  only shows half the picture):
+  1. **Mid-test** (`python -m pytest tests/ studio/tests/ -q`, 2/5 runs on
+     the Arch box): `SIGSEGV` inside PyQt6's own
+     `qpycore_qobject_getattr` — a `hasattr()` call on a `QObject` — reached
+     from pyqtgraph's `WidgetGroup.acceptsType`/`autoAdd` (recursive
+     widget-tree walk) while constructing a **new** `PlotItem`/`PlotWidget`.
+     Seen via both `train_widget.py`'s `LossChart` (`tests/
+     test_dashboard_window_wiring.py`) and `assistant_widget.py`'s chart
+     (`tests/test_assistant_widget_wiring.py`) — not specific to one widget.
+     Consistent with a stale/dangling sip wrapper reachable via Qt's own
+     widget-children tree after hundreds of prior tests' widgets were
+     garbage-collected without an explicit `deleteLater()`/event-loop spin.
+  2. **New finding — the real app crashes on exit too, not just pytest:**
+     launching the actual classic app end-to-end (a script mirroring
+     `napari_app/main.py` exactly — real `napari.Viewer()`, all 5 widgets,
+     real Wayland display, stepping through every tab) and closing it
+     cleanly (`napari.run()`'s event loop already returned) still
+     segfaults on **2 of 3** launches, natively inside PyQt6/sip's own
+     `cleanup_on_exit` atexit handler (`Py_FinalizeEx` →
+     `sip_api_visit_wrappers` → `cleanup_qobject` → `sip_api_get_address`
+     on a bogus pointer). Every launch renders and functions correctly
+     through the entire session first — this only hits during interpreter
+     shutdown, after the user is already done, so no work is lost, but it's
+     a real, frequent (not rare) native crash on this platform.
+  **Tried and rejected as a fix:** forcing `QT_QPA_PLATFORM=xcb` (routing
+  through XWayland instead of PyQt6's native Wayland platform plugin) does
+  avoid the exit-time crash, but trades it for a worse, *live* regression:
+  continuous vispy/OpenGL "Attempt to retrieve context when no valid
+  context" errors, surfaced to the user as a real napari error toast, during
+  normal use. **Do not** set `QT_QPA_PLATFORM=xcb` as a workaround — it
+  breaks canvas rendering. Native Wayland (the default, no override) is the
+  better tradeoff: correct rendering throughout use, occasional noisy exit.
+  **Invisible to CI** either way: the `test` dependency-group never installs
+  PyQt6 + torch together, so every `*_wiring.py` test just `importorskip`s
+  there instead of building real widgets.
+- **Acceptance:** full `pytest` run is reliably exit-0 on Linux (GPU or not)
+  across e.g. 20 consecutive runs, *and* the real app exits 0 on close
+  across e.g. 10 consecutive launch-and-quit cycles; or, if this is an
+  upstream PyQt6/sip/Qt6-Wayland-client-thread bug outside this repo's
+  control (increasingly looks like it, given two unrelated GPUs reproduce it
+  and the crash site is inside sip's own exit handler, not this repo's
+  code), a documented, verified-not-to-regress-rendering workaround.
+- **Touch:** likely nothing fixable purely in this repo — `napari_app/
+  widgets/train_widget.py` and `assistant_widget.py` (the two confirmed
+  `PlotWidget` construction sites) are where the mid-test crash surfaces,
+  but the actual defect is in PyQt6/sip/pyqtgraph's own object-lifecycle
+  handling under Wayland. Worth checking for a newer PyQt6 point release
+  before investing more here.
+- **Verify:** repeat `python -m pytest tests/ studio/tests/ -q` many times
+  and confirm 0 crashes; for the app, launch+quit many times and check the
+  exit code, not just that the window appeared. `coredumpctl list` +
+  `coredumpctl debug <PID> --debugger-arguments="-batch -ex \"thread apply
+  all bt\" -ex quit"` gets the native backtrace directly (no manual gdb
+  attach needed) if it reproduces again.
 
 ### CellSeg1 Studio — standalone desktop app  · XL (epic, multi-PR)
 The headline UX bet: stop being "a napari plugin in a dock" and become a
