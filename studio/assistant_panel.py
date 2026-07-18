@@ -19,10 +19,10 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QPropertyAnimation, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QLineEdit, QToolButton,
-    QScrollArea, QProgressBar,
+    QWidget, QFrame, QGraphicsOpacityEffect, QLabel, QHBoxLayout, QVBoxLayout,
+    QLineEdit, QToolButton, QScrollArea, QProgressBar,
 )
 
 from studio import icons
@@ -155,6 +155,13 @@ class ChatView(QScrollArea):
     # ── flow helpers ─────────────────────────────────────────────────────────
     def _insert(self, w) -> None:
         self._v.insertWidget(self._v.count() - 1, w)  # before the trailing stretch
+        # Every bubble/card/note in the flow goes through here exactly once
+        # (append_token() only mutates an already-inserted bubble's text, it
+        # never re-inserts) — one fade-in per new message, not per streamed
+        # token, and the single choke point new message *kinds* need to gain
+        # the same treatment automatically.
+        from studio.motion import fade_in
+        fade_in(w, 200)
 
     def _scroll(self) -> None:
         QTimer.singleShot(0, lambda: self.verticalScrollBar().setValue(
@@ -335,6 +342,52 @@ class ChangeCard(QFrame):
 
 _SEVERITY_TOKEN = {"good": "success", "info": "primary", "warn": "warning"}
 
+# state -> token: "unknown" (not checked yet) / "checking" (in flight,
+# pulses) / "ok" / "bad" (both solid).
+_STATUS_DOT_TOKEN = {"unknown": "text_muted", "checking": "primary", "ok": "success", "bad": "text_muted"}
+
+
+class _StatusDot(QLabel):
+    """A small live-status dot: solid once a check resolves, gently
+    *breathing* (a looping opacity pulse) while one is in flight — reads as
+    "checking right now", not just a static "please wait" label sitting
+    next to an inert circle."""
+
+    def __init__(self, t: dict, state: str = "unknown", size: int = 8):
+        super().__init__()
+        self._size = size
+        self.setFixedSize(size, size)
+        self._pulse: Optional[QPropertyAnimation] = None
+        self.set_state(t, state)
+
+    def set_state(self, t: dict, state: str) -> None:
+        # Guards the *whole* body, not just the animation setup: this can be
+        # called from a background-thread status check's completion
+        # callback, which can land after the drawer (and this dot) was torn
+        # down mid-check (e.g. a theme toggle) -- same deleted-widget hazard
+        # motion.py's helpers guard against, narrowly, so a genuine bug
+        # elsewhere still surfaces instead of being silently swallowed.
+        try:
+            color = t[_STATUS_DOT_TOKEN.get(state, "text_muted")]
+            self.setStyleSheet(f"background:{color}; border-radius:{self._size // 2}px;")
+            if self._pulse is not None:
+                self._pulse.stop()
+                self._pulse = None
+                self.setGraphicsEffect(None)
+            if state == "checking":
+                eff = QGraphicsOpacityEffect(self)
+                self.setGraphicsEffect(eff)
+                anim = QPropertyAnimation(eff, b"opacity", self)
+                anim.setDuration(900)
+                anim.setKeyValueAt(0.0, 0.35)
+                anim.setKeyValueAt(0.5, 1.0)
+                anim.setKeyValueAt(1.0, 0.35)
+                anim.setLoopCount(-1)
+                anim.start()
+                self._pulse = anim
+        except RuntimeError:
+            pass
+
 
 class AssistantDrawer(QFrame):
     """Right-side chat drawer — a real chat backed by ``AssistantController``,
@@ -375,7 +428,7 @@ class AssistantDrawer(QFrame):
 
         self._model_acc = Accordion(
             f"Model · {BACKEND_LABELS[self._controller.settings.backend]}",
-            t, lead="settings", open_=False)
+            t, lead="settings", open_=False, fill="surface2")
         self._backend_seg = SegControl(
             [BACKEND_LABELS[b] for b in BACKENDS], t,
             active=BACKENDS.index(self._controller.settings.backend))
@@ -644,6 +697,11 @@ class AssistantDrawer(QFrame):
             return t["text_muted"]
         return t["success"] if self._status_ok else t["text_muted"]
 
+    def _status_state(self) -> str:
+        if self._status_ok is None:
+            return "checking"
+        return "ok" if self._status_ok else "bad"
+
     def _refresh_status(self) -> None:
         backend_at_call = self._controller.settings.backend
         self._status_ok = None
@@ -652,6 +710,8 @@ class AssistantDrawer(QFrame):
             self._status_lbl.setText(self._status_line_text())
             self._status_lbl.setStyleSheet(
                 f"color:{self._status_color()}; font-size:11px; background:transparent;")
+        if hasattr(self, "_status_dot"):
+            self._status_dot.set_state(self._t, "checking")
         self._controller.refresh_status_async(
             on_result=lambda ok, msg, models: self._safe_emit_status(backend_at_call, ok, msg, models))
 
@@ -678,6 +738,8 @@ class AssistantDrawer(QFrame):
         t = self._t
         status_row = QHBoxLayout()
         status_row.setSpacing(8)
+        self._status_dot = _StatusDot(t, self._status_state())
+        status_row.addWidget(self._status_dot, alignment=Qt.AlignmentFlag.AlignVCenter)
         self._status_lbl = label(self._status_line_text(), 11, self._status_color())
         self._status_lbl.setWordWrap(True)
         status_row.addWidget(self._status_lbl, 1)
@@ -816,6 +878,8 @@ class AssistantDrawer(QFrame):
         test_btn = PillButton("Test connection", t, "ghost", small=True)
         test_btn.clicked.connect(self._refresh_status)
         test_row.addWidget(test_btn)
+        self._status_dot = _StatusDot(t, self._status_state())
+        test_row.addWidget(self._status_dot, alignment=Qt.AlignmentFlag.AlignVCenter)
         self._status_lbl = label(self._status_line_text(), 10.5, self._status_color())
         self._status_lbl.setWordWrap(True)
         test_row.addWidget(self._status_lbl, 1)

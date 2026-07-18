@@ -101,6 +101,30 @@ def test_accordion_caps_false_keeps_a_full_sentence_title_unshouted(app):
     assert "DO I NEED A GPU?" not in titles
 
 
+def test_accordion_default_fill_is_unchanged(app):
+    # Every existing call site was designed/screenshotted against "inset" —
+    # this must never move without every one of those being re-verified.
+    acc = components.Accordion("Ground truth", theme.DARK)
+    assert f"background:{theme.DARK['inset']}" in acc.styleSheet()
+
+
+def test_accordion_custom_fill_overrides_the_default(app):
+    acc = components.Accordion("Model", theme.DARK, fill="surface2")
+    assert f"background:{theme.DARK['surface2']}" in acc.styleSheet()
+    assert theme.DARK["inset"] not in acc.styleSheet()
+
+
+def test_accordion_opening_fades_the_body_in_closing_does_not(app):
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect
+    acc = components.Accordion("Ground truth", theme.LIGHT, open_=False)
+    assert acc._body.graphicsEffect() is None
+    acc.toggle()   # open
+    assert acc._open is True
+    assert isinstance(acc._body.graphicsEffect(), QGraphicsOpacityEffect)
+    acc.toggle()   # close — no animation needed to disappear
+    assert acc._open is False
+
+
 def test_sidebar_navigates(app):
     seen = []
     sb = components.Sidebar(app_mod._NAV, theme.DARK)
@@ -490,6 +514,33 @@ def test_assistant_and_logs_toggle_as_overlays(app, controller, train_controller
     assert not win._logs.isHidden()
 
 
+def test_opening_the_assistant_slides_in_from_the_right_not_an_instant_pop(
+        app, controller, train_controller, assistant_controller):
+    win = app_mod.StudioWindow(theme_name="dark", project_controller=controller,
+                                train_controller=train_controller,
+                                assistant_controller=assistant_controller)
+    win.navigate("assistant")
+    anim = win._assistant._slide_anim
+    assert anim.startValue().x() == anim.endValue().x() + win._assistant.WIDTH
+    assert anim.startValue().y() == anim.endValue().y()   # right edge only, no vertical drift
+    # QPropertyAnimation.start() applies t=0 (== startValue) synchronously —
+    # proves this is a real, currently-mid-flight animation (starting
+    # off-screen) rather than an instant teleport to the final position.
+    assert win._assistant.geometry() == anim.startValue()
+
+
+def test_opening_logs_slides_up_from_the_bottom(app, controller, train_controller, assistant_controller):
+    from studio.overlays import LogsConsole
+    win = app_mod.StudioWindow(theme_name="dark", project_controller=controller,
+                                train_controller=train_controller,
+                                assistant_controller=assistant_controller)
+    win.navigate("logs")
+    anim = win._logs._slide_anim
+    assert anim.startValue().y() == anim.endValue().y() + LogsConsole.HEIGHT
+    assert anim.startValue().x() == anim.endValue().x()
+    assert win._logs.geometry() == anim.startValue()
+
+
 def test_command_palette_opens_and_escape_closes(app, controller, train_controller, assistant_controller):
     win = app_mod.StudioWindow(theme_name="dark", project_controller=controller,
                                 train_controller=train_controller,
@@ -498,6 +549,23 @@ def test_command_palette_opens_and_escape_closes(app, controller, train_controll
     assert not win._palette.isHidden()
     win._close_overlays()
     assert win._palette.isHidden()
+
+
+def test_ctrl_t_and_meta_t_shortcuts_toggle_the_assistant(app, controller, train_controller, assistant_controller):
+    from PyQt6.QtGui import QShortcut, QKeySequence
+    win = app_mod.StudioWindow(theme_name="dark", project_controller=controller,
+                                train_controller=train_controller,
+                                assistant_controller=assistant_controller)
+    for seq in ("Ctrl+T", "Meta+T"):
+        matches = [s for s in win.findChildren(QShortcut) if s.key() == QKeySequence(seq)]
+        assert len(matches) == 1, f"no registered shortcut for {seq!r}"
+
+    ctrl_t = next(s for s in win.findChildren(QShortcut) if s.key() == QKeySequence("Ctrl+T"))
+    assert win._assistant.isHidden()
+    ctrl_t.activated.emit()
+    assert not win._assistant.isHidden()
+    ctrl_t.activated.emit()
+    assert win._assistant.isHidden()
 
 
 def test_theme_toggle_rebuilds(app, controller, train_controller, assistant_controller):

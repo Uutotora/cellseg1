@@ -5,7 +5,7 @@ CI's light `test` dependency-group same as any other pure-logic test.
 """
 from studio import guide_content as gc
 
-_KNOWN_NAV_KEYS = {"home", "projects", "workspace", "train", "dashboard", "guide"}
+_KNOWN_NAV_KEYS = {"home", "projects", "workspace", "train", "dashboard", "guide", "assistant"}
 _KNOWN_SPECIAL_ACTIONS = {"new_project", "open_sample"}
 
 
@@ -58,13 +58,15 @@ def test_step_actions_only_reference_real_nav_keys_special_actions_or_real_artic
                         f"{article.id}: unknown step action {step.action!r}")
 
 
-def test_shortcuts_cover_the_two_real_key_bindings():
-    # studio/app.py wires exactly: Ctrl+K / Meta+K -> palette, Escape -> close.
-    # Every addition there should get a matching row here.
+def test_shortcuts_cover_the_three_real_key_bindings():
+    # studio/app.py wires exactly: Ctrl+K/Meta+K -> palette, Ctrl+T/Meta+T ->
+    # Assistant, Escape -> close. Every addition there should get a matching
+    # row here.
     all_keys = [k for sc in gc.SHORTCUTS for k in sc.keys]
     assert any("K" in k for k in all_keys)
+    assert any("T" in k for k in all_keys)
     assert any("Esc" in k for k in all_keys)
-    assert len(gc.SHORTCUTS) == 2
+    assert len(gc.SHORTCUTS) == 3
 
 
 def test_faq_has_several_entries_with_real_content():

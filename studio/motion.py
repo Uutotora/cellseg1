@@ -55,6 +55,31 @@ def fade_in(widget, duration: int = 240):
         return None
 
 
+def slide_in(widget, start_geometry, end_geometry, duration: int = 220):
+    """Animate ``widget`` from ``start_geometry`` to ``end_geometry`` (both
+    ``QRect``) — an edge-anchored overlay (a right-side drawer, a bottom
+    console) sliding into place instead of popping in instantly. The caller
+    is responsible for ``widget.setGeometry(start_geometry)`` and
+    ``widget.show()`` *before* calling this; it only animates the
+    transition. Unlike ``fade_in``, this animates the real widget geometry
+    (not a graphics effect) — safe here specifically because these overlays
+    are children positioned with explicit ``setGeometry()`` calls, not
+    managed by a layout that would fight the animation for control of the
+    widget's position every frame.
+    """
+    try:
+        anim = QPropertyAnimation(widget, b"geometry", widget)
+        anim.setDuration(duration)
+        anim.setStartValue(start_geometry)
+        anim.setEndValue(end_geometry)
+        anim.setEasingCurve(EASE)
+        anim.start()
+        widget._slide_anim = anim  # keep a ref alive
+        return anim
+    except Exception:
+        return None
+
+
 def install_hover_lift(widget, base=(0, 0, 0), hover=(14, 26, 3), duration: int = HOVER_MS):
     """Deepen a widget's drop shadow on hover — an "elevation" cue.
 

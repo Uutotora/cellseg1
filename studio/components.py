@@ -561,17 +561,27 @@ class Accordion(QFrame):
     short section headers ("GROUND TRUTH", "BATCH PREDICTION"). Pass
     ``caps=False`` for a full-sentence title — e.g. an FAQ question — which
     reads badly shouted in all-caps at 11.5px.
+
+    ``fill`` picks the background token — default ``"inset"`` (the existing,
+    unchanged look every current call site was designed and screenshotted
+    against: a *recessed* well, right when the accordion sits inside an
+    already-differently-toned card, e.g. the Segment inspector). Pass
+    ``fill="surface2"`` ("elevated fill") when the accordion sits more or
+    less directly on a plain page/panel background instead — `inset` there
+    reads as barely more than a hollow outline (too little contrast against
+    its surroundings), the same family of mistake as the token lesson in
+    `docstudio/CHANGELOG.md`'s 2026-07-08 entry, just one token over.
     """
 
     def __init__(self, title: str, t: dict, lead: str = "check", open_: bool = False,
-                 caps: bool = True):
+                 caps: bool = True, fill: str = "inset"):
         super().__init__()
         self._t = t
         self._open = open_
         self._caps = caps
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
-            f"QFrame#Acc{{background:{t['inset']}; border:1px solid {t['border']}; border-radius:10px;}}")
+            f"QFrame#Acc{{background:{t[fill]}; border:1px solid {t['border']}; border-radius:10px;}}")
         self.setObjectName("Acc")
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 0)
@@ -635,6 +645,13 @@ class Accordion(QFrame):
     def toggle(self):
         self._open = not self._open
         self._body.setVisible(self._open)
+        if self._open:
+            # Reveal is animated (a soft fade-in — the same primitive screen
+            # switches already use); dismissal stays instant, matching most
+            # real accordions (Linear, macOS System Settings, ...): opening
+            # invites a look, closing should just get out of the way.
+            from studio.motion import fade_in
+            fade_in(self._body, 170)
         self._chev.setPixmap(icons.pixmap(
             "chevron_down" if self._open else "chevron", self._t["text_muted"], 14))
 

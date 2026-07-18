@@ -114,6 +114,8 @@ class StudioWindow(QMainWindow):
 
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self._toggle_palette)
         QShortcut(QKeySequence("Meta+K"), self, activated=self._toggle_palette)
+        QShortcut(QKeySequence("Ctrl+T"), self, activated=lambda: self.navigate("assistant"))
+        QShortcut(QKeySequence("Meta+T"), self, activated=lambda: self.navigate("assistant"))
         QShortcut(QKeySequence("Escape"), self, activated=self._close_overlays)
 
     @property
@@ -222,8 +224,28 @@ class StudioWindow(QMainWindow):
             drawer.hide()
         else:
             drawer.place()
+            end_geom = drawer.geometry()
+            # Slide in from whichever edge this overlay is anchored to
+            # (AssistantDrawer: the right edge; LogsConsole: the bottom) —
+            # a real product cue instead of an instant pop-in. Both overlays'
+            # *right* edge touches the window's right edge (LogsConsole
+            # spans full remaining width too, not just AssistantDrawer), so
+            # "which edge does it touch" doesn't disambiguate them — compare
+            # which dimension dominates instead: a right-anchored vertical
+            # panel is tall relative to the window's height (its width is
+            # comparatively narrow); a bottom-anchored horizontal one is
+            # wide relative to the window's width (its height is narrow).
+            height_frac = end_geom.height() / max(1, self.height())
+            width_frac = end_geom.width() / max(1, self.width())
+            if height_frac >= width_frac:
+                start_geom = end_geom.translated(end_geom.width(), 0)   # slide in from the right
+            else:
+                start_geom = end_geom.translated(0, end_geom.height())  # slide up from the bottom
+            drawer.setGeometry(start_geom)
             drawer.show()
             drawer.raise_()
+            from studio.motion import slide_in
+            slide_in(drawer, start_geom, end_geom)
 
     def _toggle_palette(self) -> None:
         if not self._palette.isHidden():

@@ -76,6 +76,8 @@ CATEGORIES: list[str] = [
 SHORTCUTS: list[Shortcut] = [
     Shortcut(["⌘K", "Ctrl+K"],
               "Open the command palette — jump to any action, project or engine without leaving the image."),
+    Shortcut(["⌘T", "Ctrl+T"],
+              "Open (or close) the Assistant — diagnose a result or ask a question without leaving the image."),
     Shortcut(["Esc"],
               "Close the command palette, or any open drawer/console panel."),
 ]

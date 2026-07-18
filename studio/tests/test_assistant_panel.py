@@ -271,6 +271,54 @@ def test_send_disabled_while_a_previous_send_is_in_flight(app, parent, controlle
     assert not any(m.get("content") == "second" for m in d._history)
 
 
+# ── live status dot (pulses while checking, solid once resolved) ────────────
+def test_status_dot_pulses_while_checking_and_settles_once_resolved(
+        app, parent, controller, workspace, monkeypatch):
+    controller.settings.backend = "ollama"
+    monkeypatch.setattr("napari_app.advisor.ollama_available", lambda: True)
+    monkeypatch.setattr("napari_app.advisor.ollama_models", lambda: ["a:1b"])
+    d = _drawer(parent, controller, workspace)
+    # Constructor kicks off an async check -> starts in the "checking" state
+    # (pulsing, a live QGraphicsOpacityEffect) before the result lands.
+    assert d._status_dot.graphicsEffect() is not None
+    _pump(app, controller)
+    # Resolved: _rebuild_model_body() replaced the dot with a fresh, solid one.
+    assert d._status_dot.graphicsEffect() is None
+
+
+def test_status_dot_set_state_after_deletion_does_not_raise(app, parent, controller, workspace):
+    """Same deleted-widget hazard every animation in this codebase guards
+    against (see studio/motion.py's module docstring): a status result can
+    land after the drawer (and this dot) was torn down mid-check."""
+    from PyQt6 import sip
+    dot = ap._StatusDot(theme.DARK, "checking")
+    set_state = dot.set_state
+    sip.delete(dot)
+    set_state(theme.DARK, "ok")   # must not raise
+
+
+def test_manual_refresh_immediately_shows_checking_before_the_result_lands(
+        app, parent, controller, workspace, monkeypatch):
+    import threading
+    controller.settings.backend = "ollama"
+    monkeypatch.setattr("napari_app.advisor.ollama_available", lambda: False)
+    d = _drawer(parent, controller, workspace)
+    _pump(app, controller)
+    assert d._status_dot.graphicsEffect() is None   # settled: not reachable
+
+    release = threading.Event()
+
+    def slow_available():
+        release.wait(timeout=5)
+        return True
+
+    monkeypatch.setattr("napari_app.advisor.ollama_available", slow_available)
+    d._refresh_status()
+    assert d._status_dot.graphicsEffect() is not None   # pulsing again, immediately
+    release.set()
+    _pump(app, controller)
+
+
 # ── Ollama model management wiring ──────────────────────────────────────────
 def test_ollama_model_select_appears_after_a_refresh(app, parent, controller, workspace, monkeypatch):
     controller.settings.backend = "ollama"

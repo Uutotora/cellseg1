@@ -5,6 +5,91 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-18 — Follow-up: real-usage feedback on the Assistant, a design pass
+
+Direct user feedback on a real (non-offscreen) screenshot of the just-shipped
+Assistant drawer, same day: a rendering issue ("borders of blocks aren't
+fully filled"), no keyboard shortcut to open it, and a blunt overall verdict
+— it read as a mockup, not a product, because nothing about it moved.
+
+- **Root cause of the "hollow" look, found by pixel-sampling the drawer
+  offscreen rather than guessing from the (compressed) screenshot**: the
+  "Model" settings `Accordion` used the shared component's default fill —
+  `t['inset']`, a *recessed field well* token — sitting close to directly on
+  the drawer's own `surface` background. In dark mode that's `#101318` vs.
+  `#15181e`: a real fill, confirmed present by direct pixel sampling, just
+  with so little contrast against its surroundings that it read as a hollow
+  outline rather than a card — the same *category* of token mistake as
+  `docstudio/CHANGELOG.md`'s 2026-07-08 "it all looks like one dark canvas"
+  entry (`inset` used where `surface2`, "elevated fill," was called for),
+  just a different instance of it. Fixed at the component level:
+  `components.Accordion` gained an additive `fill: str = "inset"` parameter
+  (every existing call site's exact look is unchanged — confirmed via a new
+  regression test asserting the default styleSheet is byte-identical to
+  before); the Assistant's "Model" accordion now passes `fill="surface2"`.
+  The nested "Download a model" accordion inside it keeps the *default*
+  `inset` — now correctly reading as *recessed within* the elevated Model
+  card instead of just another flat rectangle, real layered depth instead
+  of one flat mistake compounding into a second.
+- **Zero motion anywhere was the bigger complaint** — the drawer popped in
+  instantly, the accordion snapped open with no transition, and every chat
+  message just appeared with no acknowledgement, which reads as unfinished
+  regardless of whether every pixel is technically correct. Added, all
+  using the existing `motion.py` primitives (or new ones following its
+  exact conventions — degrade quietly if animation can't run, guard every
+  callback against a torn-down widget):
+  - **The Assistant drawer (and Logs console) now slide into place** from
+    the edge they're anchored to, instead of popping in — new
+    `motion.slide_in()`, wired into `StudioWindow._toggle_drawer()` (shared
+    by both overlays). Direction is inferred from which of the widget's own
+    dimensions dominates its window dimension (`height/window_height` vs.
+    `width/window_width`) rather than "which edge does it touch" — both
+    overlays' *right* edge touches the window's right edge (LogsConsole
+    spans the full remaining width too, not just AssistantDrawer), so edge-
+    touching alone doesn't disambiguate them; caught by a wiring test
+    before it shipped; a naive first version really did slide LogsConsole
+    in sideways instead of up.
+  - **Chat messages fade in** — every bubble/card/note goes through
+    `ChatView._insert()` exactly once (streamed tokens mutate an
+    already-inserted bubble's text, never re-insert), so one `fade_in()`
+    call there covers every message kind uniformly without re-triggering
+    on every streamed token.
+  - **`Accordion.toggle()` fades its body in on open** (instant on close —
+    revealing invites a look, dismissing should just get out of the way),
+    applied to the shared component so every accordion in Studio gained
+    this, not just the Assistant's.
+  - **A new `_StatusDot`** (`studio/assistant_panel.py`) replaces the
+    plain "Checking…" text with a small dot that visibly *breathes* (a
+    looping opacity pulse) while a backend check is in flight, and settles
+    to a solid colour once resolved — reads as "checking right now," not a
+    static label next to an inert circle.
+- **⌘T / Ctrl+T now opens (or closes) the Assistant** — mirrors the
+  existing ⌘K/Ctrl+K dual-binding pattern exactly (`QShortcut` on both key
+  sequences, since Qt's Ctrl/Meta swap on macOS isn't something to rely on
+  silently). Documented in the Guide's keyboard-shortcuts article and the
+  in-app shortcuts list (now 3 real bindings, was 2).
+
+Verified: 11 new tests (548 total in `studio/tests`, up from 537) — the
+`Accordion` fill parameter (default unchanged + override works), the
+open-fades/close-doesn't behaviour, `motion.slide_in`'s start/end values and
+its deleted-widget degrade-quietly path, the `_toggle_drawer` direction
+inference for *both* overlays (including the LogsConsole-slides-sideways
+bug caught mid-session), the ⌘T/Ctrl+T shortcuts actually toggling the
+drawer, and the `_StatusDot`'s checking/resolved/deleted-widget states.
+Full `studio/tests` and the repo-wide `tests/` green, plus the throwaway
+python3.10-venv light-group check. Fresh offscreen screenshots of the
+expanded Model accordion in both themes confirm the fill is now clearly
+visible as a distinct, elevated card rather than a hollow outline — directly
+compared against the pre-fix screenshot from the same complaint.
+
+**Not verified:** how the slide-in/fade/pulse animations actually feel on a
+real display at real frame rates (offscreen screenshots can only prove the
+animation objects exist with correct start/end state, not perceived
+smoothness); real Ollama/Custom-API server interaction, unchanged from the
+previous entry.
+
+---
+
 ## 2026-07-18 — Assistant tab wired end to end — the last P1 flagship, done
 
 The Assistant drawer goes from a hard-coded `demo.CHAT` transcript (three

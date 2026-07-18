@@ -17,7 +17,7 @@ pytest.importorskip("PyQt6")
 motion = pytest.importorskip("studio.motion")
 
 from PyQt6 import sip
-from PyQt6.QtCore import QPointF
+from PyQt6.QtCore import QPointF, QPropertyAnimation, QRect
 from PyQt6.QtGui import QEnterEvent
 from PyQt6.QtWidgets import QApplication, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect
 
@@ -25,6 +25,27 @@ from PyQt6.QtWidgets import QApplication, QFrame, QGraphicsDropShadowEffect, QGr
 @pytest.fixture
 def app():
     return QApplication.instance() or QApplication([])
+
+
+# ── slide_in ─────────────────────────────────────────────────────────────────
+def test_slide_in_returns_an_animation_with_the_right_start_and_end(app):
+    w = QFrame()
+    start = QRect(360, 42, 360, 818)
+    end = QRect(0, 42, 360, 818)
+    w.setGeometry(start)
+    anim = motion.slide_in(w, start, end, duration=10)
+    assert isinstance(anim, QPropertyAnimation)
+    assert anim.startValue() == start
+    assert anim.endValue() == end
+    assert anim.propertyName() == b"geometry"
+
+
+def test_slide_in_after_widget_deleted_does_not_raise(app):
+    w = QFrame()
+    start, end = QRect(360, 0, 360, 800), QRect(0, 0, 360, 800)
+    w.setGeometry(start)
+    sip.delete(w)
+    assert motion.slide_in(w, start, end, duration=10) is None  # degrades quietly
 
 
 def _enter_event() -> QEnterEvent:
