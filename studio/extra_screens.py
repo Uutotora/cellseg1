@@ -31,6 +31,7 @@ from studio.train_controller import TrainController, TrainedModel
 from studio.project_controller import ProjectController
 from studio.dashboard_controller import DashboardController
 from studio.components import bare_widget
+from studio.log_bus import get_log_bus, emit_prefixed
 
 _DLG = QFileDialog.Option.DontUseNativeDialog
 
@@ -313,6 +314,9 @@ class ModelsScreen(QWidget):
             pass
 
     def _on_log(self, msg: str) -> None:
+        # train_model's real progress/error stream -- previously only
+        # skimmed for a [ERROR] toast, now also reaches the Logs console.
+        emit_prefixed(get_log_bus(), msg, source="studio.train")
         if msg.startswith("[ERROR]"):
             self._toast("Training failed", msg[len("[ERROR] "):])
 

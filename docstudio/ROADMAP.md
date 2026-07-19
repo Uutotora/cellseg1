@@ -19,9 +19,11 @@ in the new UI.
 ### Phase 2 — Differentiation (current)
 Models & Train and Dashboard are wired (2026-07-09); Assistant is wired
 (2026-07-18) — a real chat (offline diagnostics, Ollama, or any
-OpenAI-compatible Custom API) that can act on the Segment tab. Still open:
-Logs and the ⌘K command palette. The features that make Studio more than a
-viewer.
+OpenAI-compatible Custom API) that can act on the Segment tab. Logs is
+wired (2026-07-19) — a real, live stream from `studio/log_bus.py`, the
+studio-wide log every tab's controllers and the app shell itself feed.
+Still open: the ⌘K command palette. The feature that makes Studio more than
+a viewer.
 
 ### Phase 3 — Polish & platform
 Live theme repaint + persistence, Guide/onboarding, Settings, native rounded

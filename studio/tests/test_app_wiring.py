@@ -646,3 +646,47 @@ def test_predicting_in_workspace_shows_up_on_the_dashboard(
     row = next((r for r in rows if r.name == "Integration Project"), None)
     assert row is not None, f"project missing from dashboard runs_table(): {[r.name for r in rows]}"
     assert row.cells is not None
+
+
+# ── real logging (studio/log_bus.py) ────────────────────────────────────────
+def test_studio_window_installs_the_log_handler_and_logs_reach_the_bus(
+        app, controller, train_controller, assistant_controller):
+    """StudioWindow.__init__ -- every construction path, real app or test --
+    must wire the stdlib logging bridge, so an ordinary
+    logging.getLogger(...).info(...) call anywhere in the process reaches
+    the same LogBus the Logs console reads."""
+    import logging
+    from studio.log_bus import StudioLogHandler, get_log_bus
+
+    app_mod.StudioWindow(theme_name="dark", project_controller=controller,
+                          train_controller=train_controller,
+                          assistant_controller=assistant_controller)
+    assert any(isinstance(h, StudioLogHandler) for h in logging.getLogger().handlers)
+    logging.getLogger("studio.probe").info("probe line")
+    assert any(r.message == "probe line" for r in get_log_bus().snapshot())
+
+
+def test_uncaught_exception_hook_logs_a_critical_record():
+    """_install_exception_hook must keep printing the traceback (unchanged)
+    *and* put a real CRITICAL entry on the bus -- a crash shouldn't only be
+    discoverable by whoever had a terminal open behind the app."""
+    import logging
+    import sys
+    from studio.log_bus import LogBus, StudioLogHandler, install_handler
+
+    bus = LogBus()
+    app_logger = logging.getLogger("studio.app")
+    install_handler(bus, logger=app_logger)
+    added = next(h for h in app_logger.handlers if isinstance(h, StudioLogHandler) and h.bus is bus)
+    original_hook = sys.excepthook
+    app_mod._install_exception_hook()
+    try:
+        try:
+            raise ValueError("boom-from-test")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())
+    finally:
+        sys.excepthook = original_hook
+        app_logger.removeHandler(added)
+    assert any("boom-from-test" in r.message and r.level >= logging.CRITICAL
+               for r in bus.snapshot())

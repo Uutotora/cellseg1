@@ -1,50 +1,85 @@
 """CellSeg1 Studio — overlay surfaces: Logs console, command palette, toast.
 
 Created as children of the main window; the window shows/hides and positions
-them. Logs and the palette still render static ``demo`` content — buttons
-give visual feedback only. The Assistant drawer (real chat, real diagnostics,
-real model management) has grown into its own module,
-``studio/assistant_panel.py`` — imported from there, not here; see its
-docstring.
+them. ``LogsConsole`` is a real, live view onto ``studio.log_bus`` — every
+tab's actual operational log lines (segmentation runs, training, the
+Assistant's backend/connection events, app startup/crashes), not a static
+``demo`` transcript — with a level filter, text search, autoscroll, clear,
+and export to a file. The command palette still renders static ``demo``
+content — buttons give visual feedback only. The Assistant drawer (real
+chat, real diagnostics, real model management) has grown into its own
+module, ``studio/assistant_panel.py`` — imported from there, not here; see
+its docstring.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer
+import html
+import time
+from pathlib import Path
+from typing import Optional
+
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QLineEdit,
-    QScrollArea,
+    QTextEdit, QFileDialog,
 )
 
 from studio import icons
 from studio import theme, demo
-from studio.components import IconButton, hline, label
+from studio.components import IconButton, Badge, SelectBox, Toggle, hline, label
+from studio.log_bus import LogBus, LogRecord, get_log_bus, DEBUG, INFO, WARNING, ERROR, short_source
 
 
-def _scroll(inner: QWidget) -> QScrollArea:
-    sa = QScrollArea()
-    sa.setWidgetResizable(True)
-    sa.setFrameShape(QFrame.Shape.NoFrame)
-    sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    sa.setWidget(inner)
-    return sa
+def _level_color(t: dict, rec: LogRecord) -> str:
+    """The line's level colour -- status tokens for warn/error (an outcome),
+    a plain/muted ink for debug/info (not "Primary hue = interactive only,"
+    per DESIGN.md's rule 3), except a `on_log` success line (the existing
+    `✓ ...` convention used throughout the reused ML core) reads as `success`
+    even though it's technically INFO -- the console would otherwise render
+    "247 cells found" in the same flat tone as routine progress chatter.
+    """
+    if rec.level >= ERROR:
+        return t["danger"]
+    if rec.level >= WARNING:
+        return t["warning"]
+    if rec.level >= INFO:
+        return t["success"] if rec.message.startswith("✓") else t["text_subtle"]
+    return t["text_muted"]
 
 
 class LogsConsole(QFrame):
-    """Bottom console with a monospaced log."""
+    """Bottom console: a real, live stream from the shared :class:`LogBus`.
+
+    Backfills whatever the bus already holds at construction (so opening
+    Logs after a background run finished still shows it), then stays live
+    for as long as the widget exists. A ``QTextEdit`` rather than one
+    ``QLabel`` per line (the original static version's approach) — the
+    professional choice once the stream is unbounded instead of 7 fixed
+    demo lines, and matches the classic app's own ``widgets/log_window.py``.
+    """
 
     HEIGHT = 210
+    _record_sig = pyqtSignal(object)
 
-    def __init__(self, parent: QWidget, t: dict):
+    _LEVEL_OPTIONS = ("All", "Debug", "Info", "Warn", "Error")
+    _LEVEL_THRESHOLD = {"All": 0, "Debug": DEBUG, "Info": INFO, "Warn": WARNING, "Error": ERROR}
+
+    def __init__(self, parent: QWidget, t: dict, bus: Optional[LogBus] = None):
         super().__init__(parent)
         self._t = t
+        # Deliberately `is None`, not `bus or get_log_bus()` -- see
+        # log_bus.install_handler's own comment: LogBus defines __len__, so
+        # a freshly-constructed empty bus is falsy and a plain `or` would
+        # silently discard an intentionally-injected (e.g. test) bus.
+        self._bus = bus if bus is not None else get_log_bus()
+        self._threshold = INFO
+        self._records: list[LogRecord] = []
         self.setFixedHeight(self.HEIGHT)
         # Qualified selector: an unqualified background+border rule here
         # would cascade to every descendant that doesn't more specifically
-        # override `border` (bare QWidget/QLabel have no such override) —
-        # confirmed as a real, visible stray-line bug for this exact
-        # pattern on AssistantDrawer (see its own comment); fixed
-        # proactively here too rather than waiting to find it by screenshot
-        # once Logs is wired for real.
+        # override `border` (bare QWidget/QLabel have no such override) --
+        # the exact rendering-bug family already found/fixed repeatedly
+        # elsewhere in Studio (see AssistantDrawer's own comment).
         self.setObjectName("LogsConsole")
         self.setStyleSheet(
             f"QFrame#LogsConsole{{background:{t['surface']}; border-top:1px solid {t['border']};}}")
@@ -55,33 +90,169 @@ class LogsConsole(QFrame):
         head = QWidget()
         head.setStyleSheet(f"background:{t['inset']};")
         hr = QHBoxLayout(head)
-        hr.setContentsMargins(14, 9, 12, 9)
-        hr.setSpacing(10)
+        hr.setContentsMargins(14, 8, 12, 8)
+        hr.setSpacing(8)
         hr.addWidget(label("LOGS", 11.5, t["text_subtle"], 600, 0.6))
-        from studio.components import Badge
-        hr.addWidget(Badge("run · nuclei-dapi-r8", t))
+        self._badge = Badge("0", t)
+        hr.addWidget(self._badge)
         hr.addStretch(1)
+
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Filter…")
+        self._search.setFixedWidth(140)
+        self._search.setStyleSheet(
+            f"QLineEdit{{background:{t['surface']}; border:1px solid {t['border']};"
+            f"border-radius:6px; padding:4px 8px; font-size:11.5px; min-height:0;}}")
+        self._search.textChanged.connect(lambda _text: self._rerender())
+        hr.addWidget(self._search)
+
+        self._level = SelectBox("Info", t, options=list(self._LEVEL_OPTIONS),
+                                 on_select=self._on_level_selected)
+        # SelectBox has no stretch factor of its own -- everywhere else it's
+        # used, its container either gives it a stretch factor or is the
+        # sole child of a vertical layout (which stretches it to the full
+        # container width regardless of sizeHint). Packed into a QHBoxLayout
+        # next to other siblings with real stretch (the search box, the
+        # earlier addStretch), Qt instead honours SelectBox's own sizeHint
+        # literally -- and that sizeHint under-reports the width its value
+        # label + chevron actually need, so "Debug"/"Error" collapsed to a
+        # sliver (confirmed by inspecting _val's allocated geometry: width 0)
+        # with only the chevron visibly left. A floor wide enough for the
+        # longest option (measured: "Debug"/"Error" at 42px) plus its icon
+        # and margins fixes this locally without touching the shared atom.
+        self._level.setMinimumWidth(96)
+        hr.addWidget(self._level)
+
+        self._autoscroll = Toggle(t, on=True)
+        self._autoscroll.toggled.connect(self._on_autoscroll_toggled)
+        hr.addWidget(self._autoscroll)
+        hr.addWidget(label("Auto", 10.5, t["text_muted"]))
+
+        hr.addWidget(IconButton("trash", t, 27, "Clear", self._on_clear))
+        hr.addWidget(IconButton("download", t, 27, "Save to file…", self._export))
         hr.addWidget(IconButton("close", t, 27, "Close", self.hide))
         v.addWidget(head)
         v.addWidget(hline(t))
 
-        body = QWidget()
-        body.setStyleSheet(f"background:{t['scope']};")
-        bv = QVBoxLayout(body)
-        bv.setContentsMargins(14, 10, 14, 10)
-        bv.setSpacing(3)
-        lv_col = {"ok": t["signal"], "info": "#8b9bf4", "warn": t["warning"]}
-        for ts, lv, msg in demo.LOGS:
-            lvtxt = lv.upper().ljust(5).replace(" ", "&nbsp;")
-            line = QLabel(
-                f"<span style='color:#5b6472'>{ts}</span>&nbsp;&nbsp;"
-                f"<span style='color:{lv_col[lv]};font-weight:700'>{lvtxt}</span>&nbsp;&nbsp;"
-                f"<span style='color:#aeb9c7'>{msg}</span>")
-            line.setStyleSheet(f"font-family:{theme.MONO}; font-size:11.5px;")
-            bv.addWidget(line)
-        bv.addStretch(1)
-        v.addWidget(_scroll(body), 1)
+        # Always a dark "scope" ground regardless of the app's light/dark
+        # theme (same token the image viewport uses) -- a log console reads
+        # as an instrument, not a page, in both themes; deliberate, not an
+        # oversight (see theme.py's "the bench & the scope" concept).
+        self._text = QTextEdit()
+        self._text.setReadOnly(True)
+        self._text.setFrameShape(QFrame.Shape.NoFrame)
+        self._text.setStyleSheet(
+            f"QTextEdit{{background:{t['scope']}; border:none; padding:8px 14px;"
+            f"color:#aeb9c7; font-family:{theme.MONO}; font-size:11.5px;}}")
+        v.addWidget(self._text, 1)
+
+        self._record_sig.connect(self._on_record)
+        backlog, unsubscribe = self._bus.subscribe(self._safe_emit_record)
+        self._unsubscribe = unsubscribe
+        # Fires on real C++ destruction regardless of how it happens
+        # (deleteLater during a theme toggle's overlay teardown, or a
+        # test's sip.delete()) -- more robust than trying to catch every
+        # teardown path by hand, and avoids leaking a subscriber closure
+        # onto the bus for the rest of the process's life.
+        self.destroyed.connect(unsubscribe)
+        self._records = list(backlog)
+        self._rerender()
+        self._badge.setText(self._badge_text())
         self.hide()
+
+    # ── filtering / rendering ────────────────────────────────────────────────
+    def _matches(self, rec: LogRecord) -> bool:
+        if rec.level < self._threshold:
+            return False
+        q = self._search.text().strip().lower()
+        if not q:
+            return True
+        return q in rec.message.lower() or q in short_source(rec.source).lower()
+
+    def _format_parts(self, rec: LogRecord) -> tuple[str, str, str]:
+        ts = time.strftime("%H:%M:%S", time.localtime(rec.ts))
+        return ts, rec.level_name, short_source(rec.source)
+
+    def _line_html(self, rec: LogRecord) -> str:
+        ts, lvl, src = self._format_parts(rec)
+        color = _level_color(self._t, rec)
+        msg = html.escape(rec.message).replace("\n", "<br>&nbsp;&nbsp;&nbsp;&nbsp;")
+        lvl_pad = html.escape(lvl.ljust(8)).replace(" ", "&nbsp;")
+        src_pad = html.escape(src.ljust(10)).replace(" ", "&nbsp;")
+        return (
+            f"<div><span style='color:#5b6472'>{ts}</span>&nbsp;&nbsp;"
+            f"<span style='color:{color};font-weight:700'>{lvl_pad}</span>"
+            f"<span style='color:#6c7480'>{src_pad}</span>"
+            f"<span>{msg}</span></div>"
+        )
+
+    def _plain_line(self, rec: LogRecord) -> str:
+        ts, lvl, src = self._format_parts(rec)
+        return f"{ts}  {lvl:<8}{src:<10}{rec.message}"
+
+    def _rerender(self) -> None:
+        matching = [r for r in self._records if self._matches(r)]
+        self._text.setHtml("".join(self._line_html(r) for r in matching))
+        sb = self._text.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _badge_text(self) -> str:
+        total = len(self._records)
+        errors = sum(1 for r in self._records if r.level >= ERROR)
+        warns = sum(1 for r in self._records if r.level == WARNING)
+        parts = [str(total)]
+        if errors:
+            parts.append(f"{errors} err")
+        if warns:
+            parts.append(f"{warns} warn")
+        return " · ".join(parts)
+
+    # ── live updates (bus -> Qt main thread) ────────────────────────────────
+    # A record can arrive from any thread (a predict/training worker, the
+    # Assistant's urllib SSE thread) -- guarded the same way every other
+    # cross-thread emit in Studio is (ModelsScreen._safe_emit_log, etc.): a
+    # background callback can outlive this widget (torn down by a theme
+    # toggle mid-run), and emitting a signal on a since-deleted QObject
+    # raises RuntimeError.
+    def _safe_emit_record(self, rec: LogRecord) -> None:
+        try:
+            self._record_sig.emit(rec)
+        except RuntimeError:
+            pass
+
+    def _on_record(self, rec: LogRecord) -> None:
+        self._records.append(rec)
+        self._badge.setText(self._badge_text())
+        if self._matches(rec):
+            self._text.append(self._line_html(rec))
+            if self._autoscroll.is_on():
+                sb = self._text.verticalScrollBar()
+                sb.setValue(sb.maximum())
+
+    # ── toolbar actions ──────────────────────────────────────────────────────
+    def _on_level_selected(self, choice: str) -> None:
+        self._threshold = self._LEVEL_THRESHOLD[choice]
+        self._rerender()
+
+    def _on_autoscroll_toggled(self, on: bool) -> None:
+        if on:
+            sb = self._text.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+    def _on_clear(self) -> None:
+        self._bus.clear()
+        self._records = []
+        self._text.clear()
+        self._badge.setText(self._badge_text())
+
+    def _export(self) -> None:
+        default_name = f"cellseg1-studio-logs-{time.strftime('%Y%m%d-%H%M%S')}.txt"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save logs", default_name, "Text files (*.txt);;All files (*)")
+        if not path:
+            return
+        lines = [self._plain_line(r) for r in self._records if self._matches(r)]
+        Path(path).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
     def place(self):
         p = self.parentWidget()

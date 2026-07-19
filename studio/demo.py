@@ -101,17 +101,6 @@ CHAT = [
             "it separates touching instances cleanly here.", []),
 ]
 
-# Logs console (time, level, message)
-LOGS = [
-    ("10:42:01", "info", "Loading SAM backbone ViT-H (sam_vit_h_4b8939.pth)…"),
-    ("10:42:03", "ok", "LoRA adapter nuclei-dapi-r8 attached · rank 8 · device mps"),
-    ("10:42:03", "info", "Encoding image embedding 512×512 (cache hit)"),
-    ("10:42:05", "info", "AMG · 32 points/side · pred_iou 0.80 · stability 0.60"),
-    ("10:42:06", "ok", "261 raw masks → box-NMS 0.05 → 247 instances"),
-    ("10:42:06", "warn", "3 masks below min_area 20px discarded"),
-    ("10:42:06", "ok", "Morphometry done · F1 0.94 vs GT · 3.2s"),
-]
-
 # Command palette entries (section, icon, text, hint)
 PALETTE = [
     ("Actions", "run", "Run segmentation", "⏎"),

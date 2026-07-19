@@ -18,6 +18,7 @@ command palette, toast). The classic napari-plugin app
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -53,6 +54,9 @@ from studio.overlays import LogsConsole, CommandPalette, Toast
 from studio.window_chrome import (
     TitleBar, install_corner_grips, layout_corner_grips,
 )
+from studio.log_bus import install_handler
+
+_log = logging.getLogger("studio.app")
 
 _FONT_DIR = Path(__file__).parent / "fonts"
 _CORNER_RADIUS = 12
@@ -93,6 +97,12 @@ class StudioWindow(QMainWindow):
                  segment_controller: Optional[SegmentController] = None,
                  assistant_controller: Optional[AssistantController] = None):
         super().__init__()
+        # Idempotent -- safe no matter how many StudioWindows exist in this
+        # process (every test constructs its own), and is what actually
+        # makes an ordinary logging.getLogger(__name__).info(...) call
+        # anywhere in the process (this module, the Assistant, the reused ML
+        # core) reach the Logs console's shared LogBus.
+        install_handler()
         self._theme_name = theme_name
         self._projects = project_controller or ProjectController()
         self._train = train_controller or TrainController()
@@ -213,6 +223,8 @@ class StudioWindow(QMainWindow):
     def _on_project_created(self, project_id: str) -> None:
         project = self._projects.store.load(project_id)
         n = len(project.image_paths)
+        _log.info("project created: %r (%d image%s, engine=%s)",
+                   project.name, n, "" if n == 1 else "s", project.settings.engine)
         self._toast.announce(
             "Project created",
             f"“{project.name}” · {n} image{'s' if n != 1 else ''} · {project.settings.engine}")
@@ -266,6 +278,7 @@ class StudioWindow(QMainWindow):
 
     def toggle_theme(self) -> None:
         new = "light" if self._theme_name == "dark" else "dark"
+        _log.debug("theme toggled to %s", new)
         self._theme_name = new
         # Tear the old static UI down synchronously (setParent(None) removes it
         # from the child tree now; deleteLater frees it) so nothing double-stacks.
@@ -323,6 +336,10 @@ def _install_exception_hook() -> None:
 
     def _hook(exc_type, exc_value, exc_tb):
         traceback.print_exception(exc_type, exc_value, exc_tb)
+        # Also a real, visible CRITICAL entry in the Logs console -- a crash
+        # shouldn't only be discoverable by whoever happened to have a
+        # terminal open behind the app.
+        _log.critical("Unhandled exception: %s", exc_value, exc_info=(exc_type, exc_value, exc_tb))
 
     sys.excepthook = _hook
 
@@ -330,6 +347,8 @@ def _install_exception_hook() -> None:
 def main() -> None:
     """Launch CellSeg1 Studio (pure-design skeleton — no napari/torch needed)."""
     _install_exception_hook()
+    install_handler()
+    _log.info("CellSeg1 Studio starting…")
     app = QApplication.instance() or QApplication(sys.argv)
     family = load_fonts()
     app.setFont(QFont(family, 10))

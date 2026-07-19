@@ -190,9 +190,52 @@ When you finish a tab: log it in `CHANGELOG.md`, tick it here, update
   real Aim server in the system browser.
 - **Tasks:** ☑ data source · ☑ charts from real metrics · ☑ runs table · ☑ open-in-Aim.
 
-### Logs tab · S
+### Logs tab · S · ✅ done (2026-07-19)
 - **Goal:** real app log stream in the console (reuse `widgets/log_window.py`
   logic / a log handler), autoscroll, level filter.
+- **Work:** `studio/log_bus.py` (new, Qt-free) — a bounded, thread-safe
+  `LogBus` (a ring buffer of `LogRecord`: seq/timestamp/level/source/
+  message) plus `StudioLogHandler`, a real stdlib `logging.Handler` bridge,
+  so an ordinary `logging.getLogger(__name__).info(...)` call anywhere in
+  the process reaches the console — not just hand-picked call sites.
+  `install_handler()` attaches it to the root logger (idempotent, called
+  from `StudioWindow.__init__` and `main()`), raises the effective level to
+  INFO if it was less verbose, and keeps Studio's own `"studio"` namespace
+  at DEBUG regardless, so third-party noise stays out but Studio's own
+  breadcrumbs always get through. `studio/overlays.py`'s `LogsConsole` is
+  rebuilt on top: backfills the bus's history on open, then stays live for
+  as long as it exists (a `pyqtSignal` + the established guarded
+  `_safe_emit_*`/`sip.delete()`-tested pattern marshals a record emitted
+  from any thread onto the Qt main thread) — level filter (`SelectBox`,
+  All/Debug/Info/Warn/Error, a minimum-severity threshold, default "Info"),
+  a text search box (filters by message or source), an autoscroll toggle
+  (on by default), Clear (empties the console *and* the bus), and Export
+  (saves the currently-filtered lines to a `.txt` file) — a `QTextEdit`
+  rather than one `QLabel` per line (the original static version's
+  approach), the professional choice once the stream is unbounded, and
+  matches the classic app's own `widgets/log_window.py` widget choice.
+  Real emitters: `workspace.py`'s `_on_predict_log` (shared by predict/
+  batch/benchmark — the reused `PredictController`'s real operational log,
+  previously skimmed only for a `[ERROR]`/`[HINT]` toast, the rest thrown
+  away) and `extra_screens.py`'s training `_on_log` now both also forward
+  every line to the bus (`log_bus.emit_prefixed`, parsing the existing
+  `[ERROR]`/`[WARN]`/`[HINT]`/`[INFO]` prefix convention onto real
+  `logging` severities) — existing toast behaviour is unchanged, additive
+  only. The Assistant (`assistant_panel.py`) logs backend switches, chat
+  errors, model pull/tuned-agent-create results (INFO/WARNING), and
+  connection-status checks (DEBUG, since those fire automatically rather
+  than from a deliberate action). `app.py` logs startup, project creation,
+  theme toggles (DEBUG), and now also routes uncaught exceptions through
+  the bus as a real CRITICAL entry (in addition to the existing
+  `traceback.print_exception`) — a crash is no longer only visible to
+  whoever had a terminal open behind the app. See `CHANGELOG.md`'s
+  same-dated entry for the full detail, incl. a real `SelectBox` layout bug
+  found and fixed while building the new toolbar.
+- **Tasks:** ☑ log handler/bus (Qt-free, real `logging` bridge) · ☑ live
+  console (backfill + live updates) · ☑ level filter · ☑ search filter ·
+  ☑ autoscroll · ☑ clear · ☑ export · ☑ wire real emitters (segment/train/
+  assistant/app) · ☑ tests (bus/handler pure-logic + console Qt-wiring,
+  incl. a cross-thread emit and a `sip.delete()` unsubscribe regression).
 
 ### Command palette (⌘K) · M
 - **Goal:** every action reachable — run, switch engine, apply preset, export,

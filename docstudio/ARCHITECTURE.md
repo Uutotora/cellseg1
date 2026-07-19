@@ -69,10 +69,17 @@ assistant_panel.py  Studio's own chat UI (own Qt, no import of
                   assistant_context()/apply_assistant_changes()/
                   rerun_predict() hook (see workspace.py's "Assistant
                   integration" section) — the cross-tab wiring.
-overlays.py       LogsConsole, CommandPalette, Toast (Toast now has a real
-                  announce() used by project creation, not just static). The
-                  Assistant drawer used to live here too — it outgrew this
-                  file and moved to assistant_panel.py above.
+log_bus.py        LogBus (a bounded, thread-safe ring buffer of LogRecord)
+                  + StudioLogHandler, a real stdlib logging.Handler bridge
+                  — the Studio-wide log stream every tab's real operational
+                  log lines (segment/train/assistant/app) feed and
+                  overlays.LogsConsole reads live. Qt-free (stdlib only).
+overlays.py       LogsConsole (real, live — see log_bus.py above: level
+                  filter, text search, autoscroll, clear, export),
+                  CommandPalette (still static demo content), Toast (a real
+                  announce() used by project creation, not just static).
+                  The Assistant drawer used to live here too — it outgrew
+                  this file and moved to assistant_panel.py above.
 icons.py          Studio's OWN icon set (from the mockup) — self-contained.
 motion.py         Small motion helpers: fade_in (screen switches),
                   install_hover_lift (animated shadow "elevation" on hover —

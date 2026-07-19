@@ -152,6 +152,22 @@ def test_switching_to_ollama_kicks_off_a_status_check(app, parent, controller, w
     assert d._status_ok is True
 
 
+# ── real logging (studio/log_bus.py, via the stdlib logging bridge) ────────
+def test_switching_backend_logs_to_the_shared_logger(app, parent, controller, workspace, caplog):
+    d = _drawer(parent, controller, workspace)
+    with caplog.at_level("INFO", logger="studio.assistant"):
+        d._backend_seg._select(2)   # Custom API -- unconfigured, short-circuits before any I/O
+    assert any("custom" in r.message.lower() for r in caplog.records)
+
+
+def test_chat_error_logs_a_warning(app, parent, controller, workspace, caplog):
+    d = _drawer(parent, controller, workspace)
+    with caplog.at_level("WARNING", logger="studio.assistant"):
+        d._on_error("network unreachable")
+    assert any(r.levelname == "WARNING" and "network unreachable" in r.message
+               for r in caplog.records)
+
+
 # ── diagnose ─────────────────────────────────────────────────────────────────
 def test_diagnose_with_no_context_prompts_to_predict(app, parent, controller, workspace):
     d = _drawer(parent, controller, workspace)

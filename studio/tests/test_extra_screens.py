@@ -289,6 +289,30 @@ def test_models_screen_safe_emit_guards_against_a_deleted_widget(parent, train_c
     finish_fn()                     # must not raise
 
 
+def test_training_log_forwards_to_the_shared_log_bus_and_toasts_are_unchanged(
+        parent, train_ctrl, project_ctrl, on_toast, toasts, monkeypatch):
+    """_on_log used to throw away every line except [ERROR] (skimmed only
+    for a toast). It must now also reach the real Logs console's LogBus,
+    with the existing toast behaviour byte-for-byte unchanged."""
+    import studio.extra_screens as es_mod
+    from studio import log_bus
+    from studio.log_bus import LogBus
+
+    bus = LogBus()
+    monkeypatch.setattr(es_mod, "get_log_bus", lambda: bus)
+    scr = es.ModelsScreen(theme.DARK, train_ctrl, project_ctrl, on_toast)
+
+    scr._on_log("[ERROR] disk full")
+    scr._on_log("epoch 3/10 loss 0.21")
+
+    recs = bus.snapshot()
+    assert [(r.level, r.message, r.source) for r in recs] == [
+        (log_bus.ERROR, "disk full", "studio.train"),
+        (log_bus.INFO, "epoch 3/10 loss 0.21", "studio.train"),
+    ]
+    assert toasts == [("Training failed", "disk full")]
+
+
 # ── DashboardScreen ──────────────────────────────────────────────────────────
 def test_dashboard_screen_empty_state_constructs_without_crashing(parent, train_ctrl, project_ctrl, on_toast):
     scr = es.DashboardScreen(theme.DARK, train_ctrl, project_ctrl, on_toast)

@@ -14,13 +14,15 @@ root `AGENTS.md`.
 
 ## Where things stand
 
-Studio is past the design-skeleton phase. As of 2026-07-18, Home, Projects,
+Studio is past the design-skeleton phase. As of 2026-07-19, Home, Projects,
 Models & Train, Dashboard, **Segment** (the flagship — own canvas, own layer
-model, real predict/GT/batch/benchmark), and **Assistant** (a real chat —
+model, real predict/GT/batch/benchmark), **Assistant** (a real chat —
 offline diagnostics, Ollama, or any OpenAI-compatible Custom API — that can
-act on the Segment tab) are all wired to real data and logic — see
-`ROADMAP.md` (Phase 0 + 1 done, Phase 2 nearly done) and `BACKLOG.md` for
-exactly what's real vs. still static. Still unwired: the Logs console and
+act on the Segment tab), and **Logs** (a real, live stream from
+`studio/log_bus.py` — every tab's actual operational log lines, a level
+filter, text search, autoscroll, export) are all wired to real data and
+logic — see `ROADMAP.md` (Phase 0 + 1 done, Phase 2 nearly done) and
+`BACKLOG.md` for exactly what's real vs. still static. Still unwired: the
 ⌘K command palette. It launches with `bash run_studio.sh`. The classic app
 (`napari_app/main.py`, `cellseg1`) is separate and untouched.
 

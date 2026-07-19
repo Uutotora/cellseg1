@@ -27,10 +27,11 @@ This folder is Studio's own doc set — separate from the repo-wide `docs/`
 
 - **Every screen from the mockup is reproduced in native Qt** and most are now
   **real**: Home, Projects, Models & Train, Dashboard, Segment (own
-  canvas + layer model, real predict/GT/batch/benchmark), and Assistant (a
+  canvas + layer model, real predict/GT/batch/benchmark), Assistant (a
   real chat — offline diagnostics, Ollama, or any OpenAI-compatible Custom
-  API — that can act on the Segment tab) all run on live data/logic, not
-  `demo.py`. Only the Logs console and ⌘K palette are still static — check
+  API — that can act on the Segment tab), and Logs (a real, live stream from
+  every tab's actual log lines — see `studio/log_bus.py`) all run on live
+  data/logic, not `demo.py`. Only the ⌘K palette is still static — check
   `BACKLOG.md` before assuming otherwise.
 - The goal now is to **wire the remaining overlays one at a time**, each
   keeping the exact look while gaining real behaviour, tracked in `BACKLOG.md`.

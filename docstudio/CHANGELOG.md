@@ -5,6 +5,159 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-19 — Logs tab wired end to end — the last P1 backlog item, done
+
+The Logs console goes from a hard-coded `demo.LOGS` transcript (7 static
+lines, a close button, nothing else) to Studio's real, central log stream —
+the last unwired P1 item (`docstudio/BACKLOG.md`), leaving only the ⌘K
+command palette.
+
+**New `studio/log_bus.py`** (Qt-free, stdlib only) — the thing every other
+piece of this change hangs off:
+- `LogBus`: a bounded (4000), thread-safe ring buffer of `LogRecord`
+  (seq/timestamp/level/source/message) with a plain-callback subscription
+  (no Qt/psygnal — same convention as `layer_model.LayerList`'s events).
+  `subscribe()` returns `(backlog, unsubscribe)` — the backlog snapshot is
+  taken atomically under the same lock as registration, so a record can
+  never be double-delivered or dropped across the join point a separate
+  `snapshot()` + `subscribe()` pair would race.
+- `StudioLogHandler(logging.Handler)` bridges the *real* stdlib `logging`
+  module onto a `LogBus` — so an ordinary
+  `logging.getLogger(__name__).info(...)` call anywhere in the process
+  (Studio's own modules, the reused ML core, even a third-party dependency)
+  reaches the console, not just hand-picked call sites that remember to
+  invoke a bespoke callback. `install_handler()` attaches it to the root
+  logger exactly once (idempotent per `(logger, bus)` pair — safe to call
+  from every `StudioWindow.__init__`, real app or test), raises the
+  logger's effective level to INFO if it was less verbose (root defaults to
+  WARNING, which would otherwise silently swallow every `.info()` call
+  before it reached a handler) without ever lowering a level already set
+  more verbose, and always sets Studio's own `"studio"` namespace to DEBUG
+  regardless — third-party dependency noise stays out, Studio's own
+  breadcrumbs always get through. Capture is deliberately broad (DEBUG at
+  the handler); filtering *for display* is the console's own level filter's
+  job, so flipping the filter to "Debug" retroactively reveals debug lines
+  already sitting in the buffer instead of requiring a restart.
+- `emit_prefixed()` maps the ML core's existing `on_log(msg)` string
+  convention (`napari_app.core.predict_controller`/`train_model`'s
+  `[ERROR]`/`[WARN]`/`[HINT]`/`[INFO]` prefixes, reused unmodified by
+  `segment_controller`/`train_controller`) onto the bus's real `logging`
+  severities instead of everything defaulting to INFO, stripping the
+  now-redundant bracket (the console renders its own coloured level badge
+  per line).
+- A real bug caught while writing this module's own tests, before it ever
+  reached `overlays.py`: `LogBus` defines `__len__` (for `len(bus)`), which
+  means a freshly-constructed *empty* bus is falsy under Python's
+  truthiness rules — the common `bus = bus or get_log_bus()` DI idiom used
+  throughout this codebase (`self._train = train_controller or
+  TrainController()`, etc.) would have silently discarded a real,
+  intentionally-passed-in empty test bus in favour of the global singleton
+  the instant a test asserted on it before emitting anything. Caught by a
+  test that failed for exactly this reason on first write, not by
+  inspection. Fixed everywhere it applies (`install_handler`,
+  `LogsConsole.__init__`) with an explicit `bus if bus is not None else
+  get_log_bus()`; a regression test pins it
+  (`test_install_handler_honors_an_explicit_but_still_empty_bus`).
+
+**`studio/overlays.py`'s `LogsConsole`** rebuilt on the same real-time
+stream: backfills the bus's full history at construction (opening Logs
+after a background run finished still shows it), then stays live — a
+`pyqtSignal` + the established guarded `_safe_emit_record`/
+`sip.delete()`-tested pattern (a record can arrive from any thread: a
+predict/training worker, the Assistant's urllib SSE thread) marshals every
+new record onto the Qt main thread, and `self.destroyed.connect
+(unsubscribe)` unhooks it from the bus the moment the widget is actually
+torn down (a theme toggle rebuilds every overlay), so a stale subscriber
+can never pile up across repeated toggles. A `QTextEdit` — not one `QLabel`
+per line, the original static version's approach — is the professional
+choice once the stream is unbounded instead of 7 fixed demo lines, and
+matches the classic app's own `widgets/log_window.py` widget choice
+(`docstudio/BACKLOG.md`'s own instruction to "reuse `widgets/log_window.py`
+logic"). New toolbar, still inside the unchanged 210px-tall bottom panel: a
+live count badge (`"842 · 3 err · 5 warn"`, omitting a count that's zero),
+a text search box (filters by message or source substring), a level filter
+(`SelectBox`, All/Debug/Info/Warn/Error — a minimum-severity threshold,
+default "Info" so Debug-level breadcrumbs stay hidden unless asked for),
+an autoscroll toggle (on by default — snaps to the bottom on every new
+line; off leaves the scroll position alone even while lines keep arriving
+underneath, exactly like a real terminal), Clear (empties the console *and*
+the bus, not just the view), and Export (saves the currently-*filtered*
+lines to a `.txt` file via a real save dialog) — real professional-console
+table stakes (Console.app, Chrome DevTools, `journalctl`), not just the two
+features `BACKLOG.md` named. Level colours are real design tokens, not new
+hard-coded hex (`t['danger']`/`t['warning']` for error/warn,
+`t['text_subtle']` for plain info, `t['success']` for an `on_log` line that
+starts with the ML core's own existing `✓` success convention) — the
+console body itself keeps the deliberate always-dark `scope` ground
+regardless of the app's light/dark theme (the same token the image
+viewport uses), matching this file's own established "instrument, not a
+page" precedent.
+
+**A real, if minor, layout bug found and fixed while building the new
+toolbar** (`SelectBox` has no stretch factor of its own): packed into a
+`QHBoxLayout` next to a stretched search box and an `addStretch()`, Qt
+honoured `SelectBox`'s own `sizeHint()` literally — and that sizeHint
+under-reports the width its value label actually needs (confirmed by
+inspecting `_val`'s allocated geometry: width 0), so "Debug"/"Error"
+collapsed to a sliver with only the chevron left visible. Every other place
+`SelectBox` is used either gets a stretch factor from its container or is a
+vertical layout's sole child (which stretches it regardless of sizeHint),
+so this never showed up before. Fixed locally with an explicit
+`setMinimumWidth(96)` (measured: the widest option, "Debug"/"Error", is
+42px) rather than touching the shared `components.py` atom — a broader fix
+there risks regressing every other screen's fidelity without the ability to
+re-screenshot all of them, out of scope for this change.
+
+**Real emitters wired, not just a new empty pipe**: `workspace.py`'s
+`_on_predict_log` (shared by predict/batch/benchmark — the reused
+`PredictController`'s real operational log, previously skimmed only for a
+`[ERROR]`/`[HINT]` toast and every other line thrown away) and
+`extra_screens.py`'s training `_on_log` now both also forward every line to
+the bus via `emit_prefixed`, tagged `studio.segment`/`studio.train` —
+existing toast behaviour is unchanged, this is additive. `assistant_panel.py`
+logs backend switches, chat errors, model-pull/tuned-agent-create results
+(INFO on success, WARNING on failure) via the stdlib bridge, and
+connection-status checks at DEBUG (they fire automatically on every backend
+switch, not from a deliberate action, so the default filter keeps them out
+of the way). `app.py` logs a startup line, project creation, theme toggles
+(DEBUG), and — the one genuinely new capability, not just moved plumbing —
+routes uncaught exceptions through the bus as a real CRITICAL entry
+alongside the existing `traceback.print_exception`, so a crash is visible
+in the app itself, not only to whoever had a terminal open behind it.
+
+**Verified:** 604 `studio/tests` (up from 551), all green, incl. two new
+files — `test_log_bus.py` (27 pure-logic cases: bus mechanics, the
+`__len__`-truthiness regression above, the real `StudioLogHandler` bridge
+against actual `logging` calls including `exc_info` formatting,
+`install_handler` idempotency/level rules) and `test_overlays.py` (21
+offscreen Qt cases: backfill, live updates, level filter applied to both
+existing and new records, text search, autoscroll on/off incl. the
+just-toggled-back-on snap, Clear, Export incl. a cancelled dialog, a
+cross-thread emit from a real `threading.Thread`, and the `sip.delete()`
+guard/unsubscribe pair) — plus forwarding tests added to
+`test_workspace.py`/`test_extra_screens.py` (existing toast behaviour
+pinned unchanged) and two new `test_assistant_panel.py` cases using
+`caplog`. Full repo `tests/` (445, classic app untouched) also green. The
+throwaway-venv light-group check (`python3.10`, the documented fallback
+when no bare 3.11/3.12 is on PATH — `tests/test_packaging.py`'s `tomllib`
+gap is the same pre-existing, unrelated py3.11+-only failure this repo's
+own `AGENTS.md` already documents) green: 581 passed, 22 skipped, no
+torch/napari/PyQt6 pulled in. Full `studio/tests` re-run three times in a
+row clean (a real product built on threads/signals earns that scrutiny,
+not just one green run). Real offscreen screenshots in both themes
+(standalone `LogsConsole` and a full `StudioWindow` with real records
+flowing through `get_log_bus()`) confirm the level colours, badge, and the
+Debug-hidden-by-default filter all render correctly — including a
+full-window integration shot showing Logs correctly anchored bottom-right
+of the sidebar with real data.
+
+**Not verified:** how this reads on a real, non-offscreen display; real
+Ollama/Custom-API server interaction (unchanged from prior entries); real
+model/GPU inference (the segment/train log lines in every test are
+monkeypatched seams, per this suite's existing convention).
+
+---
+
 ## 2026-07-18 — Project-wide audit: the same border-cascade bug, everywhere else
 
 Asked directly, after the Assistant fixes: go through and fix this same

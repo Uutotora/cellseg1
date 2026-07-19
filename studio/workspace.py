@@ -47,6 +47,7 @@ from studio.layer_model import (
     PAN_ZOOM, TRANSFORM, PAINT, ERASE, FILL, POLYGON, PICK, PointsLayer, ShapesLayer,
 )
 from studio.segment_controller import SegmentController, apply_quality_preset
+from studio.log_bus import get_log_bus, emit_prefixed
 
 LAYER_TYPE_ICON = {"labels": "layers", "shapes": "shapes", "points": "points", "image": "image"}
 # (icon, tooltip, mode) for the Labels layer's 8-icon tool row. "__shuffle__"
@@ -1537,6 +1538,11 @@ class WorkspaceScreen(QWidget):
         self._refresh_images_pane()
 
     def _on_predict_log(self, msg: str) -> None:
+        # Shared by predict/batch/benchmark -- previously every line but
+        # [ERROR]/[HINT] was thrown away the instant this ran; now the whole
+        # stream (the reused PredictController's real operational log) also
+        # reaches the Logs console, not just a transient toast.
+        emit_prefixed(get_log_bus(), msg, source="studio.segment")
         if msg.startswith("[ERROR]"):
             first_line = msg.splitlines()[0]
             self._toast("Segmentation failed", first_line[len("[ERROR] "):])

@@ -17,6 +17,7 @@ filling whatever room is left) · the input row (Diagnose · text · Send).
 """
 from __future__ import annotations
 
+import logging
 from typing import Callable, Optional
 
 from PyQt6.QtCore import Qt, QPropertyAnimation, QTimer, pyqtSignal
@@ -31,6 +32,8 @@ from studio.components import (
     Accordion, IconButton, PillButton, SegControl, SelectBox, bare_widget, hline, label,
 )
 from studio.assistant_controller import AssistantController, BACKENDS, BACKEND_LABELS
+
+_log = logging.getLogger("studio.assistant")
 
 BUBBLE_MAXW = 300
 
@@ -688,6 +691,7 @@ class AssistantDrawer(QFrame):
         self._offer_suggestions(changes)
 
     def _on_error(self, msg: str) -> None:
+        _log.warning("chat error: %s", msg)
         self._chat.append_token(f"\n[error contacting model: {msg}]")
         self._chat.assistant_done()
         self._send_btn.setEnabled(True)
@@ -695,6 +699,7 @@ class AssistantDrawer(QFrame):
     # ── model settings: backend switch ──────────────────────────────────────
     def _on_backend_changed(self, idx: int) -> None:
         backend = BACKENDS[idx]
+        _log.info("backend switched to %s", BACKEND_LABELS[backend])
         self._controller.settings.backend = backend
         self._controller.save_settings()
         self._found_models = []
@@ -745,6 +750,10 @@ class AssistantDrawer(QFrame):
     def _on_status_result(self, backend_at_call: str, ok: bool, msg: str, models: list) -> None:
         if backend_at_call != self._controller.settings.backend:
             return  # stale — the user switched backends while this was in flight
+        # DEBUG, not INFO -- this fires automatically on every backend
+        # switch/accordion open, not just a deliberate user action; the
+        # Logs console's default level filter hides it unless asked for.
+        _log.debug("status check (%s): ok=%s %s", backend_at_call, ok, msg)
         self._status_ok = ok
         self._status_msg = msg
         self._found_models = list(models or [])
@@ -845,6 +854,10 @@ class AssistantDrawer(QFrame):
             self._op_status_lbl.setText(status)
 
     def _on_pull_done(self, name: str, ok: bool) -> None:
+        if ok:
+            _log.info("model pulled: %s", name)
+        else:
+            _log.warning("model pull failed: %s", name)
         self._op_status_text = f"✓ {name} ready" if ok else f"✗ failed to download {name}"
         self._rebuild_model_body()
         self._refresh_status()
@@ -870,6 +883,10 @@ class AssistantDrawer(QFrame):
             self._op_status_lbl.setText(status)
 
     def _on_create_done(self, ok: bool) -> None:
+        if ok:
+            _log.info("tuned agent cellseg1-assistant ready")
+        else:
+            _log.warning("failed to create the tuned agent")
         self._op_status_text = ("✓ cellseg1-assistant ready — pick it above" if ok
                                 else "✗ could not create the tuned agent")
         self._rebuild_model_body()

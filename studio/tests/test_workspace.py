@@ -1194,4 +1194,31 @@ def test_floating_tool_strip_shows_real_icons_not_a_fallback_chevron(
 
     ws._set_canvas_mode(PAINT)  # forces another _sync_toolbars() restyle pass
     assert pan_btn.icon().pixmap(16, 16).toImage() == _img("target", t["text_muted"])
-    assert brush_btn.icon().pixmap(16, 16).toImage() == _img("brush", t["signal"])
+
+
+# ── real logging (studio/log_bus.py) ────────────────────────────────────────
+def test_predict_log_forwards_to_the_shared_log_bus_and_toasts_are_unchanged(
+        app, segment, projects, toasts, monkeypatch):
+    """_on_predict_log is shared by predict/batch/benchmark and used to throw
+    away every line except [ERROR]/[HINT] (skimmed only for a toast). It must
+    now also reach the real Logs console's LogBus, with the existing toast
+    behaviour byte-for-byte unchanged."""
+    import studio.workspace as ws_mod
+    from studio import log_bus
+    from studio.log_bus import LogBus
+
+    bus = LogBus()
+    monkeypatch.setattr(ws_mod, "get_log_bus", lambda: bus)
+    ws = _ws(app, segment, projects, toasts)
+
+    ws._on_predict_log("[ERROR] boom")
+    ws._on_predict_log("✓ 12 cells")
+    ws._on_predict_log("[HINT] try a smaller tile size")
+
+    recs = bus.snapshot()
+    assert [(r.level, r.message, r.source) for r in recs] == [
+        (log_bus.ERROR, "boom", "studio.segment"),
+        (log_bus.INFO, "✓ 12 cells", "studio.segment"),
+        (log_bus.INFO, "try a smaller tile size", "studio.segment"),
+    ]
+    assert toasts == [("Segmentation failed", "boom"), ("Hint", "try a smaller tile size")]

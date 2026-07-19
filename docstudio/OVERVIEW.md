@@ -25,7 +25,7 @@ new design, so we don't rewrite the hard parts from scratch.
 
 Studio started as a pure design skeleton (Phase 0: every mockup screen
 reproduced in native PyQt6, no logic, `demo.py` static content everywhere)
-and was then wired tab by tab. As of 2026-07-18, Phase 0 and Phase 1 are both
+and was then wired tab by tab. As of 2026-07-19, Phase 0 and Phase 1 are both
 **done**, and Phase 2 is nearly done:
 
 - **Home, Projects, Models & Train, Dashboard, Segment, and Assistant are
@@ -51,9 +51,14 @@ and was then wired tab by tab. As of 2026-07-18, Phase 0 and Phase 1 are both
   re-run — not just a static `demo.CHAT` transcript. Its own auto-tune
   predict→score→adjust loop (the classic app's Assistant has one) is a
   known, deliberate gap, not wired yet — see `BACKLOG.md`.
-- Still static/unwired: the Logs console and ⌘K command palette (Phase 2's
-  remaining items) — check `BACKLOG.md` before assuming otherwise, and
-  update it (+ this file) the moment that changes.
+- **Logs is real** (`studio/log_bus.py` + `overlays.LogsConsole`) — a live
+  stream from every tab's actual operational log lines (segmentation runs,
+  training, the Assistant, app startup/crashes — reused via a real stdlib
+  `logging` bridge, not a static transcript), with a level filter, text
+  search, autoscroll, clear, and export to a file.
+- Still static/unwired: the ⌘K command palette (Phase 2's one remaining
+  item) — check `BACKLOG.md` before assuming otherwise, and update it
+  (+ this file) the moment that changes.
 - The window is still **frameless with rounded corners** and our own dark
   title bar (own traffic lights, native move/resize), so it reads as a
   product, not a Qt window — that part of the original design skeleton work
