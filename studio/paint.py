@@ -146,6 +146,20 @@ class NucleiView(QWidget):
     stretches. ``min_size`` overrides the (200, 160) default sized for the
     workspace viewport — a card cover fixes its own height externally and
     shouldn't be forced taller than that.
+
+    Rendering is cached to an internal pixmap, rebuilt only when the
+    widget's logical size or device pixel ratio changes (a resize, or a drag
+    to a display with a different DPI) -- not on every paintEvent. Recomputing
+    the full procedural field (gradient blobs + antialiased polygons via
+    ``paint_nuclei``) from scratch on every repaint was the dominant cost
+    behind visibly stuttering scroll in a card grid (``ProjectsScreen``): a
+    ``QScrollArea`` repaints every visible child on each scroll tick, so N
+    on-screen cards each doing a full procedural repaint -- plus, separately,
+    an always-on ``QGraphicsDropShadowEffect`` blur, itself expensive to
+    composite -- adds up fast. Caching turns every repaint after the first
+    into a cheap ``drawPixmap`` while keeping the one thing a pre-baked
+    ``nuclei_pixmap()`` can't offer standalone: tracking the widget's live
+    size (a responsive grid card's real width isn't known until layout).
     """
 
     def __init__(self, seed: int = 7, density: float = 0.85, big: bool = True,
@@ -159,12 +173,18 @@ class NucleiView(QWidget):
         self._top_only = top_only
         self.setMinimumSize(*min_size)
         self.setStyleSheet("background:#07090c;")
+        self._cache: Optional[QPixmap] = None
+        self._cache_key: Optional[tuple] = None
 
     def paintEvent(self, e):
+        key = (self.width(), self.height(), self.devicePixelRatioF())
+        if self._cache is None or self._cache_key != key:
+            w, h, dpr = key
+            self._cache = nuclei_pixmap(
+                max(w, 1), max(h, 1), self._seed, density=self._density,
+                outline=True, big=self._big, dpr=max(dpr, 1.0),
+                radius=self._radius, top_only=self._top_only)
+            self._cache_key = key
         p = QPainter(self)
-        if self._radius:
-            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-            p.setClipPath(_round_rect_path(self.width(), self.height(), self._radius, self._top_only))
-        paint_nuclei(p, self.width(), self.height(), self._seed,
-                     self._density, True, self._big)
+        p.drawPixmap(0, 0, self._cache)
         p.end()

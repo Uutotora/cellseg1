@@ -18,12 +18,13 @@ from typing import Callable, Optional
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QToolButton,
-    QPushButton, QSizePolicy, QGraphicsDropShadowEffect, QMenu,
+    QPushButton, QSizePolicy, QGraphicsDropShadowEffect, QMenu, QScrollArea,
 )
 from PyQt6.QtGui import QColor, QAction
 
 from studio import icons
 from studio import theme
+from studio.motion import smooth_scroll_by
 
 
 # ── primitives ───────────────────────────────────────────────────────────────
@@ -60,6 +61,35 @@ def soft_shadow(w: QWidget, blur: int = 16, alpha: int = 26, dy: int = 3) -> Non
     eff.setOffset(0, dy)
     eff.setColor(QColor(28, 42, 120, alpha))
     w.setGraphicsEffect(eff)
+
+
+class SmoothScrollArea(QScrollArea):
+    """A ``QScrollArea`` whose mouse-wheel scrolling is eased, not an instant
+    per-notch jump.
+
+    A trackpad already delivers smooth, high-resolution ``pixelDelta`` wheel
+    events -- Qt's default handling of those is left completely untouched.
+    A traditional notched mouse wheel only ever reports ``angleDelta``, and
+    Qt's default handling of *that* steps the scrollbar straight to its new
+    value with no easing, which is the one case that actually reads as a
+    jarring jump rather than a continuous scroll -- this overrides
+    ``wheelEvent`` for exactly that case and animates it instead (see
+    ``motion.smooth_scroll_by``). Every screen built through this project's
+    shared ``scroll()``/``_scroll()`` helpers gets this for free; construct
+    it directly for a one-off scroll area.
+    """
+
+    _STEP_PX = 120  # ~3 row-heights per notch -- matches Qt's own default "3 lines" feel
+
+    def wheelEvent(self, event) -> None:
+        bar = self.verticalScrollBar()
+        angle_y = event.angleDelta().y()
+        if (not event.pixelDelta().isNull()) or angle_y == 0 \
+                or bar is None or bar.maximum() <= bar.minimum():
+            super().wheelEvent(event)
+            return
+        smooth_scroll_by(bar, -round(angle_y / 120 * self._STEP_PX))
+        event.accept()
 
 
 def label(text: str, size: float, color: str, weight: int = 400,

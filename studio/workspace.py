@@ -39,7 +39,8 @@ from studio.project import ENGINE_LABELS, ENGINE_KIND, Project, ProjectSettings
 from studio.paint import nuclei_pixmap
 from studio.components import (
     Chip, Badge, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
-    SegControl, StatTile, FieldRow, GroupLabel, Accordion, hline, label, bare_widget,
+    SegControl, StatTile, FieldRow, GroupLabel, Accordion, SmoothScrollArea,
+    hline, label, bare_widget,
 )
 from studio.canvas import Canvas
 from studio.layer_model import (
@@ -82,7 +83,7 @@ _GT_COLOR = (0, 255, 89)
 
 
 def _scroll(inner: QWidget) -> QScrollArea:
-    sa = QScrollArea()
+    sa = SmoothScrollArea()
     sa.setWidgetResizable(True)
     sa.setFrameShape(QFrame.Shape.NoFrame)
     sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

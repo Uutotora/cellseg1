@@ -27,7 +27,8 @@ from studio.paint import nuclei_pixmap, NucleiView
 from studio.motion import install_hover_lift
 from studio.components import (
     Chip, Badge, EngineChip, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
-    SegControl, StatTile, FieldRow, GroupLabel, Accordion, hline, soft_shadow, label,
+    SegControl, StatTile, FieldRow, GroupLabel, Accordion, SmoothScrollArea,
+    hline, soft_shadow, label,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -60,7 +61,7 @@ def _open_github() -> None:
 
 # ── shared helpers ───────────────────────────────────────────────────────────
 def scroll(inner: QWidget) -> QScrollArea:
-    sa = QScrollArea()
+    sa = SmoothScrollArea()
     sa.setWidgetResizable(True)
     sa.setFrameShape(QFrame.Shape.NoFrame)
     sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

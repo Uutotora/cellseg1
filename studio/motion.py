@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import QGraphicsDropShadowEffect, QGraphicsOpacityEffect
 
 EASE = QEasingCurve.Type.OutCubic
 HOVER_MS = 160  # matches the mockup's --rail-tap timing
+SCROLL_MS = 180  # eased-wheel-step duration -- brisk, not floaty
 
 
 def _safe_clear_effect(widget) -> None:
@@ -144,3 +145,34 @@ def install_hover_lift(widget, base=(0, 0, 0), hover=(14, 26, 3), duration: int 
         return effect
     except Exception:
         return None
+
+
+def smooth_scroll_by(scrollbar, delta: int, duration: int = SCROLL_MS):
+    """Ease a ``QScrollBar``'s value by ``delta`` px instead of an instant jump.
+
+    For a traditional notched mouse wheel, Qt's default handling steps the
+    scrollbar straight to its new value with no easing -- fine on a trackpad
+    (which already delivers smooth, high-resolution ``pixelDelta`` events
+    Qt passes through untouched) but a visible, jarring jump on a physical
+    wheel. ``components.SmoothScrollArea`` calls this only for that
+    discrete-wheel case. Repeated calls in quick succession (several notches
+    in a row) retarget from the bar's *actual current* value rather than
+    queuing -- same pattern as ``install_hover_lift``'s ``animate_to``, for
+    the same reason: a fresh, responsive retarget reads better than queued
+    motion finishing long after the user stopped scrolling.
+    """
+    try:
+        target = max(scrollbar.minimum(), min(scrollbar.maximum(), scrollbar.value() + delta))
+        old = getattr(scrollbar, "_smooth_scroll_anim", None)
+        if old is not None:
+            old.stop()
+        anim = QPropertyAnimation(scrollbar, b"value", scrollbar)
+        anim.setDuration(duration)
+        anim.setStartValue(scrollbar.value())
+        anim.setEndValue(target)
+        anim.setEasingCurve(EASE)
+        anim.start()
+        scrollbar._smooth_scroll_anim = anim  # keep a ref alive
+        return anim
+    except RuntimeError:
+        return None  # scrollbar torn down mid-gesture (e.g. a tab switch)
