@@ -5,6 +5,80 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-20 — Home motion polish + Segment's "no project" state, corrected same-day
+
+Two product-feel gaps reported directly against the real running app.
+
+**Home: the recent-projects block "shows with a terrible animation every
+time."** Root cause: `app.py`'s `navigate()` faded the *entire* HomeScreen
+in via a `QGraphicsOpacityEffect` on every single visit, not just the
+first. Home's quick-cards, recent rows and aside cards each carry their own
+`install_hover_lift`/`soft_shadow` `QGraphicsDropShadowEffect` (up to ~10 at
+once); animating an opacity effect on their shared ancestor forces Qt to
+re-rasterise every one of those nested effects on every frame of the fade —
+the same composited-effects-are-expensive mechanism already root-caused for
+the Projects grid's scroll stutter earlier this same day, just triggered by
+a repeated opacity animation instead of scrolling, and replaying on *every*
+revisit to an already-built, unchanged screen rather than just the first.
+Fixed by excluding `"home"` from `app.py`'s generic per-navigation fade
+(alongside the pre-existing `"workspace"` exclusion) and replacing it with
+two smaller, more deliberate cues in `HomeScreen.refresh()` itself: a light
+fade scoped to just the recent-projects list (the part that actually
+changed — far fewer nested shadow effects than the whole page), and a new
+`components.WavingEmoji` widget playing a one-shot hand-wave rotation next
+to "Welcome back" on every visit. `WavingEmoji` is a small self-contained
+`QWidget` (`components.py`) with its own `QVariantAnimation` driving a
+rotation transform in `paintEvent` around the glyph's own base (not its
+centre — a wave pivots at the wrist, a centred rotation reads as a spin);
+`page_header()` grew an optional `title_extra` param (unused by every other
+caller, so their layout is unchanged) to seat it beside the title text.
+
+**Segment (Workspace) with no project open: "the empty canvas looks sad."**
+Landing on Segment fresh showed only Canvas's own plain, tiny "No image
+loaded" `paintEvent` text on an otherwise blank dark viewport, with the full
+three-panel IDE layout (Images/Layers · canvas + its floating tool strip/
+viewer bar · Segment/Results) around it, every panel showing nothing useful.
+
+The first fix attempt only addressed the canvas's own corner: a friendly
+emoji + message + "Open a Project" button overlaid on top of the canvas,
+leaving the three surrounding panels and the canvas's own floating tool
+strip/viewer bar on screen exactly as before — still empty, still
+non-functional, still cluttered. Direct feedback caught this immediately
+("ты просто добавил текст и эмодзи и все" — you just added text and an
+emoji, that's it; "убрать все" — remove all of it) before it shipped.
+Corrected same-day into the real fix: the three-panel body and a new
+full-screen "no project" view are now two complete alternatives in one
+`QStackedWidget` (`WorkspaceScreen._body_stack`), toggled in `_load_project`
+— with no project, the three-panel layout isn't just covered by a message,
+it *isn't the visible page at all*. The new view (`_no_project_view()`)
+uses the app's normal theme tokens (`t['bg']`, `t['text']`, ...), not the
+viewport's own always-dark, theme-independent canvas colours — it replaces
+the whole body rather than sitting inside that canvas, so it should look
+like any other page, light or dark. Two actions: "Open a Project"
+(navigates to Projects, reusing the existing breadcrumb callback) and a new
+"New Project" (opens `NewProjectDialog` directly — `WorkspaceScreen` grew
+an `on_new_project` param, wired in `app.py` alongside the other screens
+that already receive it). The topbar's Export/Run buttons — meaningless
+with no project, but not part of the swapped body — are now disabled
+instead of sitting there clickable-but-useless (`theme.button_qss`'s
+existing `:disabled` rules already covered this; they just weren't wired to
+anything before).
+
+Ten new regression tests across `test_components.py` (`WavingEmoji`
+construction/`play()`/paint), `test_home_wiring.py` (scoped fade + wave
+trigger), `test_app_wiring.py` (the `"home"` fade exclusion specifically),
+and `test_workspace.py` (`_body_stack` index toggling, both empty-state
+buttons, Export/Run enabled-state) — every one individually confirmed to
+fail against the pre-fix code (or, for the two brand-new-feature button
+tests where "pre-fix" doesn't quite apply, confirmed to fail when the
+specific wiring they check was deliberately broken) before being trusted.
+Full suite: 728 passed, 0 failed. Verified offscreen in both themes: Home's
+header at rest/mid-wave/settled and after a simulated revisit, and
+Segment's empty state, its two buttons, the disabled topbar buttons, and
+the full three-panel body once a project is actually open.
+
+---
+
 ## 2026-07-20 — Toast: the border/overflow bug was never the Undo button
 
 Same-day follow-up to the "Projects tab v2, revised" entry directly below

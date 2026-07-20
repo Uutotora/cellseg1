@@ -115,7 +115,7 @@ class WorkspaceScreen(QWidget):
     _bench_done_signal = pyqtSignal(object, object)
 
     def __init__(self, t: dict, segment: SegmentController, projects, on_toast,
-                on_toggle_logs=None, on_navigate=None):
+                on_toggle_logs=None, on_navigate=None, on_new_project=None):
         super().__init__()
         self._t = t
         self._segment = segment
@@ -123,6 +123,7 @@ class WorkspaceScreen(QWidget):
         self._toast = on_toast
         self._on_toggle_logs = on_toggle_logs
         self._on_navigate = on_navigate
+        self._on_new_project = on_new_project
 
         self._project: Optional[Project] = None
         self._layers = LayerList()
@@ -150,7 +151,15 @@ class WorkspaceScreen(QWidget):
         row.addWidget(self._left_panel())
         row.addWidget(self._viewport(), 1)
         row.addWidget(self._inspector())
-        outer.addWidget(main, 1)
+
+        # Two full alternatives for the body, not one body with an empty
+        # state layered into a corner of it -- see _no_project_view()'s own
+        # docstring for why the three-panel layout itself (not just the
+        # canvas) is wrong to show with nothing open.
+        self._body_stack = QStackedWidget()
+        self._body_stack.addWidget(main)
+        self._body_stack.addWidget(self._no_project_view())
+        outer.addWidget(self._body_stack, 1)
 
         self._predict_result_signal.connect(self._on_predict_result)
         self._predict_log_signal.connect(self._on_predict_log)
@@ -213,6 +222,9 @@ class WorkspaceScreen(QWidget):
     def _load_project(self, project: Optional[Project]) -> None:
         self._project = project
         self.set_active_project(project)
+        self._body_stack.setCurrentIndex(0 if project else 1)
+        self._run_btn_topbar.setEnabled(project is not None)
+        self._export_btn_topbar.setEnabled(project is not None)
         self._layers.clear()
         self._current_image_path = None
         self._current_image_array = None
@@ -228,6 +240,74 @@ class WorkspaceScreen(QWidget):
         if self._canvas is not None:
             self._canvas.home()
             self._sync_toolbars()
+
+    def _no_project_view(self) -> QWidget:
+        """The Segment tab's own "no project" screen -- replaces the entire
+        three-panel workspace body (``_body_stack`` index 1), not a message
+        layered into a corner of the canvas while the rest of the body
+        stays on screen. The three-panel IDE layout (Images/Layers · canvas
+        with its own floating tool strip/viewer bar · Segment/Results) is
+        only meaningful once there's a real project/image/layers behind it
+        -- with none of that, showing all three panels at once (an empty
+        list, a bare canvas with tools that do nothing yet, an inspector
+        that just says "open or create a project") reads as broken chrome,
+        not a clean empty state. Reported directly against a real
+        screenshot of exactly that ("канвас боковые панели... убрать все" --
+        remove the canvas and side panels, all of it). One centred,
+        theme-aware message instead, matching how Home/Projects look with
+        nothing to show -- not the viewport's own always-dark canvas
+        colours (``_viewport``'s ``#07090c`` backdrop and the floating
+        legend/tools/vbar/status chrome, all deliberately theme-independent
+        since they overlay real image content): this view isn't inside that
+        canvas, it *replaces* the whole body, so it should look like any
+        other page in the app, light or dark.
+        """
+        t = self._t
+        w = QWidget()
+        w.setStyleSheet(f"background:{t['bg']};")
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(10)
+        v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        emoji = label("🙂", 52, t["text"])
+        emoji.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(emoji)
+
+        title = label("No project open", 19, t["text"], 600)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(title)
+
+        # An explicit \n, not setWordWrap(True) -- a wrapping QLabel with no
+        # fixed width anchor has an ambiguous heightForWidth negotiation
+        # (see overlays.Toast's own subtitle fix, docstudio/CHANGELOG.md
+        # 2026-07-20); picking the line break ourselves for this short,
+        # fixed copy sidesteps that whole bug class instead of re-risking it.
+        sub = label("Open an existing project, or create a new one\nto start segmenting cells.",
+                   13, t["text_muted"])
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(sub)
+
+        v.addSpacing(8)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        btn_row.addStretch(1)
+        new_btn = PillButton("New Project", t, "ghost", "plus", small=True)
+        new_btn.clicked.connect(self._trigger_new_project)
+        btn_row.addWidget(new_btn)
+        open_btn = PillButton("Open a Project", t, "primary", "folder", small=True)
+        open_btn.clicked.connect(self._go_to_projects)
+        btn_row.addWidget(open_btn)
+        btn_row.addStretch(1)
+        v.addLayout(btn_row)
+
+        self._no_project_new_btn = new_btn
+        self._no_project_open_btn = open_btn
+        return w
+
+    def _trigger_new_project(self) -> None:
+        if self._on_new_project:
+            self._on_new_project()
 
     # ── top bar ──────────────────────────────────────────────────────────────
     def _topbar(self) -> QWidget:
@@ -252,9 +332,9 @@ class WorkspaceScreen(QWidget):
         self._engine_chip = Chip("", t, "muted")
         row.addWidget(self._engine_chip)
         row.addStretch(1)
-        export_btn = PillButton("Export", t, "ghost", "export", small=True)
-        export_btn.clicked.connect(self._export_csv)
-        row.addWidget(export_btn)
+        self._export_btn_topbar = PillButton("Export", t, "ghost", "export", small=True)
+        self._export_btn_topbar.clicked.connect(self._export_csv)
+        row.addWidget(self._export_btn_topbar)
         self._run_btn_topbar = PillButton("Run", t, "primary", "run", small=True)
         self._run_btn_topbar.clicked.connect(self._start_predict)
         row.addWidget(self._run_btn_topbar)

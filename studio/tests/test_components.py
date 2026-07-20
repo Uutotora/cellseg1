@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("PyQt6")
 components = pytest.importorskip("studio.components")
 
-from PyQt6.QtCore import QPoint, QPointF, QPropertyAnimation, Qt
+from PyQt6.QtCore import QPoint, QPointF, QPropertyAnimation, QVariantAnimation, Qt
 from PyQt6.QtGui import QMouseEvent, QWheelEvent
 from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
@@ -265,3 +265,42 @@ def test_smooth_scroll_area_noop_when_nothing_to_scroll(app):
 
     _wheel(sa, angle_y=-120)
     assert not hasattr(bar, "_smooth_scroll_anim")
+
+
+# ── WavingEmoji ──────────────────────────────────────────────────────────────
+def test_waving_emoji_starts_at_rest(app):
+    w = components.WavingEmoji(theme.DARK)
+    assert w._angle == 0.0
+
+
+def test_waving_emoji_play_starts_a_running_animation_back_to_zero(app):
+    """Assert on the configured animation object right after play(), not on
+    a settled end value -- same reasoning as this file's own
+    SmoothScrollArea tests just above: the shared QApplication's
+    animation-driver timer can be silently wedged by an unrelated,
+    earlier-alphabetical test module's own unpumped animations."""
+    w = components.WavingEmoji(theme.DARK)
+    w.play()
+    assert w._anim.state() == QVariantAnimation.State.Running
+    assert w._anim.keyValueAt(0.0) == 0.0
+    assert w._anim.keyValueAt(1.0) == 0.0
+
+
+def test_waving_emoji_play_is_safe_to_call_again_mid_wave(app):
+    """play() must restart cleanly, not layer a second animation on top --
+    e.g. revisiting Home again before the previous wave finished."""
+    w = components.WavingEmoji(theme.DARK)
+    w.play()
+    w.play()  # must not raise, must still be a single running animation
+    assert w._anim.state() == QVariantAnimation.State.Running
+
+
+def test_waving_emoji_paint_event_does_not_raise(app):
+    """A basic render smoke test -- the custom paintEvent (font + rotation
+    transform) must not crash at rest or mid-wave."""
+    w = components.WavingEmoji(theme.DARK)
+    w.resize(40, 43)
+    w.show()
+    w.grab()  # renders at rest (angle 0)
+    w._set_angle(15.0)
+    w.grab()  # renders mid-wave (a non-zero rotation)

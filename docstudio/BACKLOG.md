@@ -452,7 +452,27 @@ palette) is real. See `ROADMAP.md`.
   Home's quick cards use (New Project, Open a sample, navigate a tab) rather
   than being purely descriptive. Assistant is deliberately not documented —
   it isn't wired yet (see below).
-- [ ] Onboarding / empty states for a fresh install.
+- [x] **Home motion polish + Segment tab's "no project" empty state** — done
+  (2026-07-20). Two related product-feel gaps, reported directly against the
+  real running app (not offscreen): Home's own "Welcome back" felt lifeless
+  and its recent-projects block re-animated jarringly on every single
+  revisit, and Segment (Workspace) with no project open showed a sad,
+  literally-empty dark canvas -- just tiny "No image loaded" text, with a
+  full three-panel IDE layout (Images/Layers · canvas · Segment/Results)
+  around it, every panel empty. See `CHANGELOG.md`'s dated entry for the
+  full technical story, including a first attempt at the Segment fix that
+  only patched the canvas's own corner with a message and left the (now
+  entirely non-functional) side panels and floating canvas toolbars on
+  screen — corrected the same day after direct feedback ("канвас боковые
+  панели... убрать все") into the real fix: the whole three-panel body and
+  a new full-screen "no project" view are two complete alternatives in one
+  `QStackedWidget`, not a message layered into a still-broken layout.
+  **Known gap, deliberately not audited this pass:** whether Models & Train
+  / Dashboard have equally bad "nothing here yet" states — only Home and
+  Segment were reported and fixed.
+- [ ] A first-run / fresh-install onboarding pass proper (a guided first
+  launch, not just a per-screen empty state) — broader than the item above,
+  genuinely unstarted.
 - [ ] Native macOS rounded corners + shadow via pyobjc (drop the mask) — optional.
 - [ ] Settings screen (device, storage, paths, defaults).
 - [ ] Packaging: a real `.app` bundle.

@@ -23,10 +23,10 @@ from studio import icons
 from studio import theme
 from studio import project_controller
 from studio.project import ENGINE_LABELS, ENGINES
-from studio.motion import install_hover_lift
+from studio.motion import install_hover_lift, fade_in
 from studio.components import (
     Chip, Badge, EngineChip, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
-    SegControl, StatTile, FieldRow, GroupLabel, Accordion, SmoothScrollArea,
+    SegControl, StatTile, FieldRow, GroupLabel, Accordion, SmoothScrollArea, WavingEmoji,
     hline, soft_shadow, label,
 )
 from studio.project_dialogs import ProjectSettingsDialog
@@ -69,13 +69,26 @@ def scroll(inner: QWidget) -> QScrollArea:
     return sa
 
 
-def page_header(title: str, subtitle: str, t: dict, action: Optional[QWidget] = None) -> QWidget:
+def page_header(title: str, subtitle: str, t: dict, action: Optional[QWidget] = None,
+                 title_extra: Optional[QWidget] = None) -> QWidget:
+    """``title_extra`` sits beside the title text in the same row (e.g.
+    Home's waving-hand greeting) -- optional and unused by every other
+    caller, so their layout is byte-for-byte unchanged."""
     head = QWidget()
     row = QHBoxLayout(head)
     row.setContentsMargins(34, 30, 34, 18)
     col = QVBoxLayout()
     col.setSpacing(5)
-    col.addWidget(label(title, 26, t["text"], 600, -0.6))
+    if title_extra is not None:
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(4)
+        title_row.addWidget(label(title, 26, t["text"], 600, -0.6))
+        title_row.addWidget(title_extra, alignment=Qt.AlignmentFlag.AlignVCenter)
+        title_row.addStretch(1)
+        col.addLayout(title_row)
+    else:
+        col.addWidget(label(title, 26, t["text"], 600, -0.6))
     if subtitle:
         col.addWidget(label(subtitle, 14, t["text_muted"]))
     row.addLayout(col)
@@ -102,9 +115,10 @@ class HomeScreen(QWidget):
         outer.setSpacing(0)
         self._new_project_cta = PillButton("New Project", t, "primary", "plus")
         self._new_project_cta.clicked.connect(lambda: on_new_project())
-        outer.addWidget(page_header("Welcome back  👋",
+        self._wave = WavingEmoji(t)
+        outer.addWidget(page_header("Welcome back",
                                     "Segment, measure and compare cells across your projects.",
-                                    t, self._new_project_cta))
+                                    t, self._new_project_cta, title_extra=self._wave))
 
         body = QWidget()
         grid = QHBoxLayout(body)
@@ -125,13 +139,35 @@ class HomeScreen(QWidget):
         outer.addWidget(scroll(body))
 
     def refresh(self) -> None:
-        """Rebuild the recent-projects list from the store's current state.
+        """Rebuild the recent-projects list from the store's current state,
+        called by app.navigate() on every visit to Home (including the very
+        first one).
 
         HomeScreen is built once and kept alive across navigation (the stack
         just swaps the visible page), so anything that changes the store
         elsewhere -- most importantly creating a project -- needs this
         called before Home is shown again, or it'd still show what the store
         looked like at construction time.
+
+        Deliberately does *not* fade the whole screen in -- app.navigate()
+        used to do that unconditionally on every screen switch, but Home's
+        quick-cards, recent rows and aside cards each carry their own
+        ``install_hover_lift``/``soft_shadow`` QGraphicsDropShadowEffect
+        (up to ~10 of them at once), and animating a QGraphicsOpacityEffect
+        on their shared ancestor forces Qt to re-rasterise every one of
+        those nested effects on every frame of the fade -- the same
+        composited-effects-are-expensive mechanism already root-caused for
+        the Projects grid's scroll stutter (docstudio/BACKLOG.md's "Projects
+        tab v2" entry), just triggered by a repeated opacity animation
+        instead of scrolling. Worse, it re-played on *every single visit* to
+        an already-built, mostly-unchanged screen, not just the first time —
+        reported directly as "recent projects... каждый раз с ужасной
+        анимацией" (shows with a terrible animation every time). Fixed at
+        the source (app.py's navigate() no longer fades "home" at all) and
+        replaced with two smaller, more deliberate cues here: a light fade
+        scoped to just the part that actually changed (the rebuilt recent
+        list -- far fewer nested shadow effects than the whole page), and
+        the waving-hand greeting playing once per visit.
         """
         idx = self._left.indexOf(self._recent_widget)
         old = self._recent_widget
@@ -140,6 +176,8 @@ class HomeScreen(QWidget):
         self._left.removeWidget(old)
         old.setParent(None)
         old.deleteLater()
+        fade_in(self._recent_widget, 200)
+        self._wave.play()
 
     def _quick(self) -> QGridLayout:
         t = self._t

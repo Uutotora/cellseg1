@@ -133,6 +133,75 @@ def test_refresh_is_a_noop_when_no_active_project(app, segment, projects, toasts
     assert ws._project is None
 
 
+def test_construct_with_no_project_shows_the_no_project_view_not_the_three_panel_body(
+        app, segment, projects, toasts):
+    """Regression test for "empty canvas looks sad" -- and, more pointedly,
+    for the first fix at this being wrong: landing on Segment with no
+    project used to show the full three-panel IDE layout (Images/Layers ·
+    canvas + its floating tool strip/viewer bar · Segment/Results) with
+    every panel empty, plus (round one) just a friendly message layered
+    into the canvas's corner on top of all that -- still broken chrome
+    everywhere else, reported directly against a screenshot ("канвас
+    боковые панели... убрать все" -- remove the canvas and side panels, all
+    of it). The three-panel body and the no-project view are now two full
+    alternatives in one QStackedWidget; with no project, the three-panel
+    body (index 0) must not be the visible page at all."""
+    ws = _ws(app, segment, projects, toasts)
+    assert ws._project is None
+    assert ws._body_stack.currentIndex() == 1
+
+
+def test_loading_a_project_switches_to_the_three_panel_body(app, segment, projects, toasts, tmp_path, storage):
+    ws = _ws(app, segment, projects, toasts)
+    assert ws._body_stack.currentIndex() == 1
+    project = _make_project(tmp_path, projects, storage, n_images=1)
+    ws._load_project(project)
+    assert ws._body_stack.currentIndex() == 0
+
+
+def test_clearing_the_active_project_switches_back_to_the_no_project_view(
+        app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, n_images=1)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    assert ws._body_stack.currentIndex() == 0
+    ws._load_project(None)
+    assert ws._body_stack.currentIndex() == 1
+
+
+def test_no_project_view_open_a_project_button_navigates_to_projects(app, segment, projects, toasts):
+    seen = []
+    ws = WorkspaceScreen(theme.DARK, segment, projects,
+                         lambda title, sub: toasts.append((title, sub)),
+                         on_navigate=lambda key: seen.append(key))
+    ws._no_project_open_btn.click()
+    assert seen == ["projects"]
+
+
+def test_no_project_view_new_project_button_calls_on_new_project(app, segment, projects, toasts):
+    seen = []
+    ws = WorkspaceScreen(theme.DARK, segment, projects,
+                         lambda title, sub: toasts.append((title, sub)),
+                         on_new_project=lambda: seen.append(True))
+    ws._no_project_new_btn.click()
+    assert seen == [True]
+
+
+def test_run_and_export_disabled_without_a_project_enabled_once_one_is_open(
+        app, segment, projects, toasts, tmp_path, storage):
+    """Export/Run sit in the topbar regardless of project state (unlike the
+    rest of the body, the breadcrumb itself stays put) -- but neither does
+    anything meaningful with no project open, so both must be disabled
+    rather than sitting there clickable-but-useless."""
+    ws = _ws(app, segment, projects, toasts)
+    assert not ws._run_btn_topbar.isEnabled()
+    assert not ws._export_btn_topbar.isEnabled()
+    project = _make_project(tmp_path, projects, storage, n_images=1)
+    ws._load_project(project)
+    assert ws._run_btn_topbar.isEnabled()
+    assert ws._export_btn_topbar.isEnabled()
+
+
 # ── project / image loading ──────────────────────────────────────────────────
 def test_load_project_selects_first_image_and_builds_layers(app, segment, projects, toasts, tmp_path, storage):
     project = _make_project(tmp_path, projects, storage, n_images=2)

@@ -183,6 +183,46 @@ def test_refresh_shows_a_project_created_after_construction(app, empty_controlle
     assert any("Brand New Project" in text for text in labels)
 
 
+# ── refresh() motion: scoped, not whole-screen ─────────────────────────────────
+def test_refresh_fades_only_the_recent_section_not_the_whole_home_screen(app, controller):
+    """Regression test: HomeScreen.refresh() used to rely on app.py fading
+    the *entire* screen in via a QGraphicsOpacityEffect on every single
+    visit to Home -- expensive (forces re-rasterising every quick-card's and
+    every recent-row's own QGraphicsDropShadowEffect, from
+    install_hover_lift/soft_shadow, on every frame of the fade -- up to ~10
+    of them at once) and, since it replayed on every revisit to an
+    already-built, mostly-unchanged screen rather than just the first time,
+    reported directly as looking bad ("recent projects... каждый раз с
+    ужасной анимацией" -- shows with a terrible animation every time).
+    Fixed by dropping "home" from app.py's generic per-navigation fade_in()
+    (see test_app_wiring.py's mirroring test) and instead fading only the
+    part that actually changed, here: HomeScreen itself must never carry a
+    graphics effect; only the freshly-rebuilt recent-projects section does.
+    """
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect
+    home = _home(app, controller)
+    home.refresh()
+    assert home.graphicsEffect() is None
+    assert isinstance(home._recent_widget.graphicsEffect(), QGraphicsOpacityEffect)
+
+
+def test_refresh_plays_the_waving_hand_greeting(app, controller):
+    """The "Welcome back" emoji waves once per Home visit -- refresh() is
+    called on every navigation to Home, including the very first (see
+    app.py's navigate()). Assert on the configured animation object right
+    after triggering it, not on a settled end value: the shared
+    QApplication's animation-driver timer can be silently wedged by an
+    unrelated, earlier-alphabetical test module having started its own
+    short-lived animations without pumping the event loop afterwards to let
+    them finish (see test_components.py's SmoothScrollArea tests for the
+    full story, and this file's own established pattern for the same
+    reason)."""
+    from PyQt6.QtCore import QVariantAnimation
+    home = _home(app, controller)
+    home.refresh()
+    assert home._wave._anim.state() == QVariantAnimation.State.Running
+
+
 # ── hover-lift wiring ────────────────────────────────────────────────────────
 def test_quick_cards_and_recent_rows_get_hover_shadow(app, controller):
     home = _home(app, controller)

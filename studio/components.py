@@ -15,12 +15,12 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QPointF, QEasingCurve, QVariantAnimation, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QToolButton,
     QPushButton, QSizePolicy, QGraphicsDropShadowEffect, QMenu, QScrollArea,
 )
-from PyQt6.QtGui import QColor, QAction
+from PyQt6.QtGui import QColor, QAction, QFont, QPainter
 
 from studio import icons
 from studio import theme
@@ -624,6 +624,64 @@ class GroupLabel(QLabel):
         super().__init__(text.upper())
         self.setStyleSheet(
             f"color:{t['text_muted']}; font-size:10.5px; font-weight:600; letter-spacing:0.6px;")
+
+
+class WavingEmoji(QWidget):
+    """An emoji glyph that plays a one-shot hand-wave rotation on ``play()``
+    -- e.g. Home's "Welcome back" greeting, matching the small delight-on-open
+    cue common to Slack/Notion-style greetings rather than a plain static
+    glyph sitting in the title string. Self-contained: builds and owns its
+    own ``QVariantAnimation`` (a plain float angle fed straight into
+    ``update()``, not a ``pyqtProperty`` -- nothing outside this class binds
+    to the angle by name, so the extra property-declaration ceremony isn't
+    earning its keep here) and repaints itself with a rotation transform,
+    since QSS has no ``transform``/``transition`` to animate.
+    """
+
+    def __init__(self, t: dict, glyph: str = "\U0001F44B", size: float = 26):
+        super().__init__()
+        self._glyph = glyph
+        self._size = size
+        self._angle = 0.0
+        self.setFixedSize(int(size * 1.5), int(size * 1.6))
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(900)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+        # A decaying back-and-forth rotation around the wrist, not a spin --
+        # keyframes approximate a real wave: two big swings, then two
+        # smaller ones settling back to rest. Float values (not int), so
+        # QVariantAnimation's interpolation lands on smooth sub-degree
+        # steps instead of choppy whole-degree ones.
+        for frac, deg in ((0.0, 0.0), (0.14, 18.0), (0.30, -13.0), (0.46, 16.0),
+                          (0.62, -8.0), (0.78, 6.0), (0.92, -2.0), (1.0, 0.0)):
+            self._anim.setKeyValueAt(frac, deg)
+        self._anim.valueChanged.connect(self._set_angle)
+
+    def _set_angle(self, deg) -> None:
+        self._angle = float(deg)
+        self.update()
+
+    def play(self) -> None:
+        """(Re)start the wave from rest -- safe to call repeatedly (e.g. once
+        per Home visit); restarts rather than layering a second animation."""
+        self._anim.stop()
+        self._angle = 0.0
+        self._anim.start()
+
+    def paintEvent(self, e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        font = QFont()
+        font.setPointSizeF(self._size)
+        p.setFont(font)
+        # Rotate around the glyph's own base (its "wrist"), not the widget
+        # centre -- a wave pivots at the wrist; a centred rotation reads as
+        # a spin instead.
+        pivot = QPointF(self.width() / 2, self.height() * 0.72)
+        p.translate(pivot)
+        p.rotate(self._angle)
+        p.translate(-pivot)
+        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._glyph)
 
 
 class Accordion(QFrame):

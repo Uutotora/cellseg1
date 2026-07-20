@@ -175,7 +175,8 @@ class StudioWindow(QMainWindow):
                                       self._new_project_dialog.open, on_toast=self._toast.announce),
             "workspace": WorkspaceScreen(t, self._segment, self._projects, self._toast.announce,
                                         on_toggle_logs=lambda: self._toggle_drawer(self._logs),
-                                        on_navigate=self.navigate),
+                                        on_navigate=self.navigate,
+                                        on_new_project=self._new_project_dialog.open),
             "train": ModelsScreen(t, self._train, self._projects, self._toast.announce),
             "dashboard": DashboardScreen(t, self._train, self._projects, self._toast.announce),
             "guide": GuideScreen(t, self._projects, self.navigate, self._open_project,
@@ -214,7 +215,13 @@ class StudioWindow(QMainWindow):
                 refresh()
             self._stack.setCurrentWidget(screen)
             self._sidebar.set_active(key)
-            if key != "workspace":
+            # "home" excluded too, not just "workspace": HomeScreen carries
+            # its own, cheaper, more deliberate motion (a scoped fade on
+            # just its recent-projects list + a waving-hand greeting, both
+            # in HomeScreen.refresh(), already called above) rather than a
+            # blanket QGraphicsOpacityEffect fade of the whole screen on
+            # every single visit -- see that method's own docstring for why.
+            if key not in ("workspace", "home"):
                 try:
                     from studio.motion import fade_in
                     fade_in(screen, 170)

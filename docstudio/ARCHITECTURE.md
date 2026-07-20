@@ -64,7 +64,12 @@ workspace.py      WorkspaceScreen — the signature Segment screen (Images|
                   Layers panel · canvas · Segment|Results inspector). Real:
                   bound to segment_controller + project_controller — Images/
                   Layers/layer-controls/Segment-settings/Run/Results (incl.
-                  GT & evaluation/batch/benchmark) all live, not demo.
+                  GT & evaluation/batch/benchmark) all live, not demo. With
+                  no active project, the three-panel body is swapped out
+                  entirely for a full-screen "no project" view (_body_stack,
+                  a QStackedWidget) rather than layered under it — see
+                  BACKLOG.md's "Home motion polish + Segment's 'no project'
+                  state" entry.
 extra_screens.py  ModelsScreen (train), DashboardScreen (charts + runs table).
 assistant_controller.py  AssistantController (Qt-free): settings
                   (AssistantSettings/AssistantSettingsStore, one small JSON

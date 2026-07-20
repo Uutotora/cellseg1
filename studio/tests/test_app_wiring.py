@@ -634,6 +634,29 @@ def test_navigate_refreshes_home_and_projects_screens(app, empty_controller, tra
     assert len(pcards()) == 1
 
 
+def test_navigate_home_skips_the_whole_screen_fade_other_screens_still_get_one(
+        app, empty_controller, train_controller, assistant_controller):
+    """Regression test, same root cause as screens.py's own
+    test_refresh_fades_only_the_recent_section_not_the_whole_home_screen:
+    navigate() used to fade_in() *every* non-workspace screen on *every*
+    single visit, Home included -- expensive given how many
+    QGraphicsDropShadowEffect-bearing cards Home carries, and, replaying on
+    every revisit rather than just the first, reported directly as a
+    "terrible animation" each time. "home" is now excluded from the generic
+    fade alongside the pre-existing "workspace" exclusion; every other
+    screen (e.g. "projects") must still get one -- this isn't fade_in
+    breaking globally, just Home opting out in favour of its own scoped
+    motion (see HomeScreen.refresh())."""
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect
+    win = app_mod.StudioWindow(theme_name="dark", project_controller=empty_controller,
+                                train_controller=train_controller,
+                                assistant_controller=assistant_controller)
+    win.navigate("home")
+    assert win._screens["home"].graphicsEffect() is None
+    win.navigate("projects")
+    assert isinstance(win._screens["projects"].graphicsEffect(), QGraphicsOpacityEffect)
+
+
 def test_creating_a_project_via_dialog_shows_up_immediately(app, empty_controller, train_controller, assistant_controller):
     """End-to-end regression for the exact bug reported: create -> navigate
     away and back -> the new project is there without restarting the app."""
