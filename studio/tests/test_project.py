@@ -3,6 +3,7 @@
 Pure-logic, no Qt/torch/napari — runs under the light CI `test` group.
 """
 import json
+from pathlib import Path
 
 import pytest
 
@@ -261,3 +262,58 @@ def test_save_default_still_touches(tmp_path):
     p = Project(id="live", name="Live", updated_at="2020-01-01T00:00:00+00:00")
     store.save(p)  # touch=True by default
     assert store.load("live").updated_at != "2020-01-01T00:00:00+00:00"
+
+
+# ── import_image / import_images: copy-into-project (survives moves + TCC) ─────
+# import_image only copies bytes (shutil.copy2, no decode), so a plain byte
+# payload exercises it fully without pulling cv2/numpy into this light-group
+# test module.
+def _png(path, payload=b"\x89PNG\r\n\x1a\n-fake-bytes"):
+    Path(path).write_bytes(payload)
+
+
+def test_import_image_copies_into_project_images_dir(tmp_path):
+    store = ProjectStore(tmp_path / "store")
+    proj = store.create("P")
+    src = tmp_path / "download.png"
+    _png(src)
+    dest = store.import_image(proj.id, src)
+    assert dest.exists()
+    assert dest.parent == store.image_dir(proj.id)
+    assert dest.read_bytes() == src.read_bytes()  # a real copy, not a reference
+
+
+def test_import_image_dedupes_same_filename_from_different_sources(tmp_path):
+    store = ProjectStore(tmp_path / "store")
+    proj = store.create("P")
+    a = tmp_path / "a" / "download.png"
+    b = tmp_path / "b" / "download.png"
+    a.parent.mkdir(); b.parent.mkdir()
+    _png(a); _png(b)
+    d1 = store.import_image(proj.id, a)
+    d2 = store.import_image(proj.id, b)
+    assert d1 != d2  # same basename, two distinct stored files
+    assert d1.exists() and d2.exists()
+
+
+def test_import_images_falls_back_to_original_path_when_source_unreadable(tmp_path):
+    store = ProjectStore(tmp_path / "store")
+    proj = store.create("P")
+    good = tmp_path / "good.png"
+    _png(good)
+    missing = str(tmp_path / "gone.png")  # never created
+    out = store.import_images(proj.id, [str(good), missing])
+    assert Path(out[0]).parent == store.image_dir(proj.id)  # copied
+    assert out[1] == missing  # reference kept, not dropped
+    assert len(out) == 2
+
+
+def test_import_images_is_idempotent_for_already_stored_paths(tmp_path):
+    store = ProjectStore(tmp_path / "store")
+    proj = store.create("P")
+    src = tmp_path / "download.png"
+    _png(src)
+    once = store.import_images(proj.id, [str(src)])
+    twice = store.import_images(proj.id, once)  # re-importing our own copy
+    assert twice == once  # no copy-of-a-copy
+    assert len(list(store.image_dir(proj.id).glob("*.png"))) == 1

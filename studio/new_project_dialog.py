@@ -331,8 +331,14 @@ class NewProjectDialog(QWidget):
         project = self._store.create(
             name, description=self._description.strip(),
             settings=ProjectSettings(engine=engine),
-            image_paths=list(self._image_paths),
         )
+        # Copy the chosen images into the project so they keep opening after
+        # the source moves and aren't blocked by macOS's per-folder privacy
+        # gate (see ProjectStore.image_dir) -- done after create() because the
+        # copy target is keyed by the new project's id.
+        project.image_paths = self._store.import_images(project.id, self._image_paths)
+        project.stats.n_images = len(project.image_paths)
+        self._store.save(project)
         self.hide()
         if self._on_created:
             self._on_created(project.id)

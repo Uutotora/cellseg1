@@ -127,6 +127,13 @@ class WorkspaceScreen(QWidget):
 
         self._project: Optional[Project] = None
         self._layers = LayerList()
+        # Cache thumbnails by path: the images pane is rebuilt wholesale on
+        # every select / add / project-load, and re-decoding each file every
+        # time is what produced the repeated "can't open/read file" storm in
+        # the logs for an unreadable source. Both real and fallback pixmaps
+        # are cached, so a file that can't be read is attempted once, not on
+        # every rebuild.
+        self._thumb_cache: dict[str, QPixmap] = {}
         self._current_image_path: Optional[str] = None
         self._current_image_array: Optional[np.ndarray] = None
         self._last_result: Optional[dict] = None
@@ -459,6 +466,10 @@ class WorkspaceScreen(QWidget):
             self._toast("No new images",
                        "Those are already in this project, or aren't a supported image format.")
             return
+        # Copy into the project (survives the source moving + macOS's
+        # per-folder privacy gate); falls back to the original path per file
+        # if the copy can't happen -- see ProjectStore.import_images.
+        new = self._projects.store.import_images(self._project.id, new)
         self._project.image_paths.extend(new)
         self._project.stats.n_images = len(self._project.image_paths)
         self._projects.store.save(self._project)
@@ -535,18 +546,48 @@ class WorkspaceScreen(QWidget):
         return row
 
     def _thumbnail(self, path: str) -> QPixmap:
+        cached = self._thumb_cache.get(path)
+        if cached is not None:
+            return cached
         try:
             import cv2
             img = cv2.imread(path, cv2.IMREAD_COLOR)
             if img is None:
+                # cv2 fails silently (returns None) on a permission-blocked or
+                # missing file -- fall through to the synthetic placeholder,
+                # cached below so we never re-hit the unreadable file.
                 raise ValueError("unreadable")
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             img = cv2.resize(img, (38, 30), interpolation=cv2.INTER_AREA)
             img = np.ascontiguousarray(img)
             qimg = QImage(img.data, 38, 30, 38 * 3, QImage.Format.Format_RGB888).copy()
-            return QPixmap.fromImage(qimg)
+            pm = QPixmap.fromImage(qimg)
         except Exception:
-            return nuclei_pixmap(38, 30, abs(hash(path)) % 1000, density=2.0)
+            pm = nuclei_pixmap(38, 30, abs(hash(path)) % 1000, density=2.0)
+        self._thumb_cache[path] = pm
+        return pm
+
+    @staticmethod
+    def _read_error_hint(path: str) -> Optional[str]:
+        """A specific, actionable reason ``path`` won't load, or None if it
+        looks readable (so the caller shows the raw error instead). Separates
+        the two real-world causes behind a bare cv2 ``None`` — a moved/deleted
+        file vs macOS's per-folder privacy block — because the fix differs."""
+        p = Path(path)
+        if not p.exists():
+            return ("The file no longer exists at this path — it was moved or deleted. "
+                    "Re-import it (new imports are copied into the project).")
+        try:
+            with open(p, "rb") as f:
+                f.read(1)
+        except PermissionError:
+            return ("macOS is blocking access to this folder — Downloads, Desktop and "
+                    "Documents are privacy-protected. Grant your terminal Full Disk Access "
+                    "in System Settings › Privacy & Security, or re-import the image "
+                    "(new imports are copied into the project and always readable).")
+        except OSError:
+            pass
+        return None
 
     def _select_image(self, path: str) -> None:
         if path == self._current_image_path:
@@ -554,7 +595,8 @@ class WorkspaceScreen(QWidget):
         try:
             img = self._segment.load_preview_image(path)
         except Exception as e:
-            self._toast("Can't load image", str(e))
+            hint = self._read_error_hint(path)
+            self._toast("Can't load image", hint or str(e))
             return
         self._current_image_path = path
         self._current_image_array = img

@@ -286,6 +286,62 @@ class ProjectStore:
         if d.exists():
             shutil.rmtree(d)
 
+    # ── Imported image files ─────────────────────────────────────────────────
+    def image_dir(self, project_id: str) -> Path:
+        """Where a project's *copied-in* image files live (``<project>/images``).
+
+        Created on demand. Keeping imported images inside the project's own
+        folder -- rather than only referencing wherever the user dragged them
+        from -- is what makes them keep opening after the source moves, and
+        (the reason this exists) survives macOS's per-folder privacy gate:
+        ``~/Downloads``, ``~/Desktop`` and ``~/Documents`` are TCC-protected,
+        so a file merely *referenced* there fails to read later with
+        ``Operation not permitted`` even though it plainly exists -- exactly
+        the "can't open/read file" storm reported against real projects. A
+        copy under the app's own store is always readable.
+        """
+        d = self._dir(project_id) / "images"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def import_image(self, project_id: str, src_path: str | Path) -> Path:
+        """Copy ``src_path`` into the project's ``images/`` dir and return the
+        stored path. Name collisions get a numeric suffix so two different
+        sources with the same filename never clobber each other. Raises (does
+        not silently swallow) if the source can't be read -- the caller
+        decides whether to fall back to referencing the original path.
+        """
+        import shutil
+        src = Path(src_path)
+        dest_dir = self.image_dir(project_id)
+        dest = dest_dir / src.name
+        n = 2
+        while dest.exists():
+            dest = dest_dir / f"{src.stem}-{n}{src.suffix}"
+            n += 1
+        shutil.copy2(src, dest)
+        return dest
+
+    def import_images(self, project_id: str, paths) -> list[str]:
+        """Copy each of ``paths`` into the project (see ``import_image``),
+        returning the list of stored paths. A source that can't be copied
+        right now (already gone, or a transient read failure) falls back to
+        its original path rather than being dropped -- the reference is kept
+        so the UI can still show a clear "can't read" state for it instead of
+        silently losing the image. An already-inside-the-store path is left
+        as-is (idempotent: re-importing doesn't copy a copy)."""
+        store_root = str(self.root.resolve())
+        out: list[str] = []
+        for p in paths:
+            try:
+                if str(Path(p).resolve()).startswith(store_root):
+                    out.append(str(p))  # already ours -- don't re-copy
+                else:
+                    out.append(str(self.import_image(project_id, p)))
+            except Exception:
+                out.append(str(p))  # keep the reference; UI surfaces the failure
+        return out
+
     # ── Queries ─────────────────────────────────────────────────────────────
     def list(self) -> list[Project]:
         """All projects, newest-modified first. Corrupt files are skipped."""

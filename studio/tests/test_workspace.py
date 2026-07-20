@@ -276,17 +276,22 @@ def test_select_image_switches_layers(app, segment, projects, toasts, tmp_path, 
 
 
 # ── adding images to an existing project ──────────────────────────────────────
-def test_add_image_paths_appends_and_persists(app, segment, projects, toasts, tmp_path, storage):
+def test_add_image_paths_copies_into_project_and_persists(app, segment, projects, toasts, tmp_path, storage):
     project = _make_project(tmp_path, projects, storage, n_images=1)
     new_img = tmp_path / "extra.png"
     _write_image(new_img, seed=99)
     ws = _ws(app, segment, projects, toasts)
     ws._load_project(project)
     ws._add_image_paths([str(new_img)])
-    assert str(new_img) in project.image_paths
     assert len(project.image_paths) == 2
+    # The image is copied into the project (survives moves + macOS's Downloads
+    # privacy block), so the stored path is the copy, not the original source.
+    added = project.image_paths[1]
+    assert Path(added).parent == projects.store.image_dir(project.id)
+    assert Path(added).name == "extra.png"
+    assert Path(added).read_bytes() == new_img.read_bytes()
     reloaded = projects.store.load(project.id)
-    assert str(new_img) in reloaded.image_paths
+    assert added in reloaded.image_paths
     assert reloaded.stats.n_images == 2
     assert any("Images added" in t[0] for t in toasts)
 
@@ -314,13 +319,51 @@ def test_add_image_paths_auto_selects_first_image_for_empty_project(
     ws._load_project(project)
     assert ws._current_image_path is None
     ws._add_image_paths([str(new_img)])
-    assert ws._current_image_path == str(new_img)
+    # Auto-selects the freshly-added image -- now the in-project copy, not the
+    # original source path (copy-on-import).
+    assert ws._current_image_path == project.image_paths[0]
+    assert Path(ws._current_image_path).parent == projects.store.image_dir(project.id)
 
 
 def test_add_images_without_a_project_toasts(app, segment, projects, toasts):
     ws = _ws(app, segment, projects, toasts)
     ws._add_images()
     assert toasts and "No project open" in toasts[-1][0]
+
+
+# ── image-read robustness: thumbnail cache + actionable error hint ────────────
+def test_thumbnail_is_cached_per_path(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, n_images=1)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    path = project.image_paths[0]
+    first = ws._thumbnail(path)
+    second = ws._thumbnail(path)
+    assert first is second  # second call returns the cached pixmap, no re-decode
+    assert path in ws._thumb_cache
+
+
+def test_thumbnail_caches_the_fallback_for_an_unreadable_file(app, segment, projects, toasts, tmp_path, storage):
+    # A missing/unreadable file must be attempted once, not re-decoded on every
+    # images-pane rebuild (the "can't open/read file" log storm).
+    project = _make_project(tmp_path, projects, storage, n_images=1)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    gone = str(tmp_path / "vanished.png")
+    pm = ws._thumbnail(gone)
+    assert gone in ws._thumb_cache
+    assert ws._thumbnail(gone) is pm
+
+
+def test_read_error_hint_flags_a_missing_file(tmp_path):
+    hint = WorkspaceScreen._read_error_hint(str(tmp_path / "nope.png"))
+    assert hint is not None and "no longer exists" in hint
+
+
+def test_read_error_hint_is_none_for_a_readable_file(tmp_path):
+    p = tmp_path / "ok.png"
+    _write_image(p)
+    assert WorkspaceScreen._read_error_hint(str(p)) is None
 
 
 def test_images_drop_adds_only_local_image_files(app, segment, projects, toasts, tmp_path, storage):
@@ -347,8 +390,12 @@ def test_images_drop_adds_only_local_image_files(app, segment, projects, toasts,
             pass
 
     ws._images_drop(_FakeDropEvent())
-    assert str(new_img) in project.image_paths
+    # The local image is copied into the project (copy-on-import); the non-local
+    # URL is ignored. So we gained exactly one image, stored under the project.
     assert len(project.image_paths) == 2
+    added = project.image_paths[1]
+    assert Path(added).parent == projects.store.image_dir(project.id)
+    assert Path(added).name == Path(new_img).name
 
 
 # ── layer panel actions ───────────────────────────────────────────────────────

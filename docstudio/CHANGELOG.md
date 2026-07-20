@@ -5,6 +5,46 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-21 — Segment: images are copied into the project on import; unreadable files no longer storm the log
+
+Reported against a real project: opening it threw "Can't load image / Cannot
+read: …/Downloads/download (2).png" every time, the selected image never
+appeared on the canvas, and the terminal filled with hundreds of
+`imread_(...): can't open/read file: check file path/integrity` warnings.
+
+Root cause: the file was fine — macOS's per-folder privacy gate (TCC) blocks
+reading `~/Downloads` (also `~/Desktop`, `~/Documents`) unless the launching
+terminal has Full Disk Access, so `cv2.imread` returns `None` and `open()`
+raises `PermissionError: Operation not permitted`. Projects stored the
+original external path, so every open re-hit the blocked file. Confirmed by
+reproducing the exact `PermissionError` directly on the reported path (the
+file exists and is intact; only the folder is gated).
+
+Fixes:
+- **Copy-on-import.** `ProjectStore.import_image/import_images` copy chosen
+  files into `<project>/images/` and store *that* path. Both entry points use
+  it (the New Project dialog and the Images pane's +/drag-drop). Reading at
+  import time works even without Full Disk Access because the file dialog /
+  Finder drag grants a transient read scope; the copy then lives in the app's
+  own store and is always readable afterwards. A source that can't be copied
+  right now falls back to referencing the original path (kept, not dropped).
+- **No more log storm.** Thumbnails are cached per path (`_thumb_cache`), so
+  an unreadable file is attempted once, not re-decoded on every wholesale
+  rebuild of the images pane (select / add / project-load each rebuilt it).
+- **Actionable error.** When a preview still can't load, the toast now names
+  the real cause — a moved/deleted file vs a macOS privacy block — with the
+  fix for each (`_read_error_hint`), instead of a raw `Cannot read: …`.
+
+Existing projects that still point at `~/Downloads` need the source re-imported
+(now copied in) or the terminal granted Full Disk Access — the app can't grant
+itself a TCC permission. Verified: full studio suite green; new tests cover
+the copy/dedupe/fallback/idempotence of import, the thumbnail cache (incl. the
+unreadable-file case), and the error-hint classification. Not verified: the
+real on-screen canvas for a TCC-blocked file (can't reproduce the GUI
+headless) — but new imports are copied, so they read normally.
+
+---
+
 ## 2026-07-21 — Home: recent-projects entrance animation only plays on a real change, and carries no shadows
 
 Reported again, directly: the recent-projects list on Home animates badly
