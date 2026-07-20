@@ -27,7 +27,7 @@ from typing import Callable
 from PyQt6.QtCore import Qt, QEvent, QSize, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QLineEdit,
-    QTextEdit, QFileDialog, QScrollArea, QGraphicsOpacityEffect, QToolButton,
+    QTextEdit, QFileDialog, QScrollArea, QGraphicsOpacityEffect,
 )
 
 from studio import icons
@@ -705,16 +705,6 @@ class Toast(QFrame):
         self._subtitle.setWordWrap(True)
         self._subtitle.setMaximumWidth(280)  # wrap long messages instead of clipping/overflowing
         col.addWidget(self._subtitle)
-        # Hidden unless announce() is given an action (e.g. "Undo" after
-        # trashing a project) -- most toasts are purely informational.
-        self._action_btn = QToolButton()
-        self._action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._action_btn.setStyleSheet(
-            f"QToolButton{{background:transparent; border:none; color:{t['primary']};"
-            f" font-size:12px; font-weight:700; padding:3px 0 0 0;}}"
-            f"QToolButton:hover{{color:{t['primary_hover']};}}")
-        self._action_btn.setVisible(False)
-        col.addWidget(self._action_btn)
         row.addLayout(col)
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
@@ -727,35 +717,11 @@ class Toast(QFrame):
             self.adjustSize()
             self.move(p.width() - self.width() - 22, p.height() - self.height() - 22)
 
-    def announce(self, title: str, subtitle: str, duration_ms: int = 3200,
-                action_label: Optional[str] = None,
-                on_action: Optional[Callable[[], None]] = None) -> None:
-        """Show a real, timed confirmation with the given text.
-
-        Pass ``action_label``/``on_action`` together for an inline action
-        (e.g. ``"Undo"`` right after trashing a project) -- clicking it stops
-        the auto-hide timer, hides the toast, and runs the callback. Omit
-        both (the default) for a purely informational toast, unchanged from
-        before this existed.
-        """
+    def announce(self, title: str, subtitle: str, duration_ms: int = 3200) -> None:
+        """Show a real, timed confirmation with the given text."""
         self._title.setText(title)
         self._subtitle.setText(subtitle)
-        if action_label and on_action:
-            self._action_btn.setText(action_label)
-            try:
-                self._action_btn.clicked.disconnect()
-            except TypeError:
-                pass  # no prior connection to drop (first-ever action toast)
-            self._action_btn.clicked.connect(lambda: self._run_action(on_action))
-            self._action_btn.setVisible(True)
-        else:
-            self._action_btn.setVisible(False)
         self.place()
         self.show()
         self.raise_()
         self._hide_timer.start(duration_ms)
-
-    def _run_action(self, on_action: Callable[[], None]) -> None:
-        self._hide_timer.stop()
-        self.hide()
-        on_action()

@@ -362,61 +362,76 @@ palette) is real. See `ROADMAP.md`.
        for #1, but part of "make scrolling itself better" as separately
        asked for.
     3. *Feature — deletion:* `ProjectStore.delete()` (`project.py`) already
-       exists but is called from **nowhere** — dead code. Rather than wiring
-       it to a hard, irreversible delete, add a **trash/soft-delete** layer
-       in front of it (`trashed_at` on `Project`; `ProjectStore.trash()`/
-       `restore()`; `list()`/`recent()`/`favorites()` exclude trashed by
-       default. Shipped simpler than planned here: no separate `purge()`
-       name — "Delete Forever" calls the existing `delete()` directly,
-       since it already does exactly the right thing and a wrapper would
-       have added a name with no behaviour of its own). Chosen over a scary type-to-confirm hard-delete
-       because (a) Studio is a local, single-user desktop app — none of the
-       "N teammates lose access" blast-radius that justifies heavy
-       interrogation in a multi-user SaaS Danger Zone — and (b) "prefer
-       reversibility over interrogation where you can" is the stated best
-       practice for destructive-action UX; a project can represent real
-       segmentation/training work, so recoverability matters more than
-       ceremony. Confirmation dialog still required before trashing (reuses
-       `new_project_dialog.py`'s scrim+panel construction) — names the
-       project and what's at stake, red action button — plus a Toast with
-       an Undo action right after.
+       exists but is called from **nowhere** — dead code. **Revised same day,
+       after real (non-offscreen) usage:** the first version wired this
+       behind a trash/soft-delete layer (`trashed_at` on `Project`, a Trash
+       view with Restore/Delete Forever, a Toast "Undo" action) reasoning
+       that "reversible by default" beats interrogation for a local
+       single-user app. Direct feedback from actually running the app —
+       plus Label Studio reference screenshots showing its own Settings >
+       Danger Zone pattern — said this was more machinery than the product
+       needs, and a rendering bug in the Trash dialog (found live, not
+       offscreen) reinforced the point. **Reverted to a direct, permanent
+       delete** gated behind a `ConfirmDialog` (`confirm_delete_project`) —
+       the one truly irreversible action in the flow, one click of friction,
+       no undo layer to maintain. `Project.trashed_at`/`ProjectStore.trash()`
+       /`restore()` were removed entirely (unused once nothing called them),
+       not left as dead code.
     4. *Feature — organise:* a **⋯ kebab menu** on every grid card and list
-       row (Open · Rename · Duplicate · Move to Trash) — the concrete
-       feature Label Studio has (its own project overflow menu: rename via
-       Settings, Duplicate, Pin, Danger Zone) that Studio's cards currently
-       lack entirely (today: a star for favourite, and the whole card is one
-       big click-to-open target — no secondary actions at all). Duplicate
-       mirrors Label Studio's own semantics: copy settings/tags/image
-       references, reset stats/favourite/timestamps (no completed-results
-       carried over, since nothing has run against the copy yet).
-    5. *Feature — organise:* a small **Trash** entry point listing trashed
-       projects with Restore/Delete Forever. Shipped always-visible instead
-       of "only shown once something's been trashed" as first planned here —
-       disabled+dimmed when empty instead, matching this app's own existing
-       "discoverable, not hidden" rule for disabled affordances (already
-       used for the command palette's disabled rows); a predictable,
-       consistent location beat conditional visibility.
-    6. *Feature — findability:* a **Sort** control (Name / Last modified /
+       row. **Revised same day**, matching Label Studio's reference
+       screenshots exactly: their own card overflow menu is just two items
+       (Settings / Label) — landed as **Open · Duplicate · Settings**, not
+       the longer Open/Rename/Duplicate/Move-to-Trash first shipped.
+    5. *Feature — a real Settings screen:* **new same day**, replacing both
+       the standalone `RenameDialog` and the Trash view. `project_dialogs.
+       ProjectSettingsDialog` — General (editable Project Name/Description,
+       mirroring Label Studio's own General Settings fields exactly) and a
+       visually distinct Danger Zone card (red-tinted, `Delete Project` ->
+       its own nested `ConfirmDialog`) in one compact panel rather than a
+       separate navigated screen with a sidebar, since two sections don't
+       need one. Reached from the kebab menu's "Settings" item.
+    6. *Visual — the biggest single change:* **removed all decorative cover
+       art.** The original card had a live-painted "nuclei art" thumbnail
+       (the whole reason `NucleiView` got a caching pass earlier the same
+       day) with star/kebab/engine-chip/progress floating on top of it as an
+       overlay. Direct feedback: "why do I need project logos" against Label
+       Studio's own reference cards, which are plain text (name, a stat
+       row, a footer) with zero imagery anywhere. Cards (grid + list) and
+       Home's recent-projects row all redesigned the same way: a plain
+       header row (engine chip, star, kebab) then name/description/stats/
+       tags/footer, no cover, no overlay positioning. This removes the
+       single most expensive thing the grid used to repaint on every scroll
+       frame — the more important half of the same-day scroll-perf story,
+       on top of the NucleiView caching + eased-wheel work. `NucleiView`
+       itself is untouched (still used nowhere in Projects/Home now, but
+       left as tested, available infrastructure rather than deleted, since
+       `workspace.py` still uses its sibling `nuclei_pixmap()` for its own,
+       legitimately different, canvas-placeholder context).
+    7. *Feature — findability:* a **Sort** control (Name / Last modified /
        Created / Most cells) — today the grid has no user-facing sort at
        all, only the store's implicit `updated_at` ordering. Present in
        essentially every comparable product (Label Studio, Linear, Notion).
-    7. *Visual:* an audit of every margin/spacing/radius literal in
+       Unaffected by the same-day revision above.
+    8. *Visual:* an audit of every margin/spacing/radius literal in
        `ProjectsScreen` against `DESIGN.md`'s rhythm (2·4·8·14·16·24·34) and
-       radii (7/10/14/18) tokens — fix any that drifted off it.
+       radii (7/10/14/18) tokens — fix any that drifted off it. Unaffected
+       by the same-day revision above.
   - **Tasks:** ☑ NucleiView pixmap cache + call-count regression test ☑
-    consolidated scroll helper + eased wheel step ☑ trash/restore in
-    `project.py` + `project_controller.py` (pure-logic tests) ☑ kebab menu +
-    delete-confirm dialog + Undo toast ☑ Trash view ☑ rename + duplicate
-    (controller + dialog) ☑ Sort control ☑ spacing audit ☑ offscreen
-    screenshots, both themes, real QSS applied (per this file's own
-    hard-learned verification rule — caught 2 real rendering bugs and 2
-    layout/overflow bugs this way, not by tests) ☑ `CHANGELOG.md` entry.
-  - **Known, deliberate gaps** (see the same-dated `CHANGELOG.md` entry for
+    consolidated scroll helper + eased wheel step ☑ delete gated behind a
+    single `ConfirmDialog`, no trash layer ☑ kebab menu (Open · Duplicate ·
+    Settings) ☑ `ProjectSettingsDialog` (General + Danger Zone) ☑ duplicate
+    (controller + kebab wiring) ☑ Sort control ☑ spacing audit ☑ cover-art
+    removal (cards, list rows, Home's recent row) ☑ offscreen screenshots,
+    both themes, real QSS applied (per this file's own hard-learned
+    verification rule — caught 2 real rendering bugs and 2 layout/overflow
+    bugs across the two rounds, not by tests) ☑ `CHANGELOG.md` entries.
+  - **Known, deliberate gaps** (see the same-dated `CHANGELOG.md` entries for
     the full list): delete/rename from inside an open project (Workspace's
-    own breadcrumb — only the grid/list has it today), bulk multi-select,
-    pagination/virtualisation past the ~6-project seed scale, a real
-    multi-user "workspaces" concept (deliberately out of scope, see
-    `OVERVIEW.md`).
+    own breadcrumb — only the grid/list kebab has it today), bulk
+    multi-select, pagination/virtualisation past the ~6-project seed scale,
+    a real multi-user "workspaces" concept (deliberately out of scope, see
+    `OVERVIEW.md`), no undo for a deleted project (a deliberate simplification
+    this time, not an oversight — see the revision note above).
 - [x] **Guide & Docs screen** — done (2026-07-08). A real, in-app documentation
   surface (`studio/guide_content.py` + `guide_screen.py`): searchable article
   nav (5 topics, 10 articles) + the selected article, reached from the

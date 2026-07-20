@@ -23,14 +23,13 @@ from studio import icons
 from studio import theme
 from studio import project_controller
 from studio.project import ENGINE_LABELS, ENGINES
-from studio.paint import nuclei_pixmap, NucleiView
 from studio.motion import install_hover_lift
 from studio.components import (
     Chip, Badge, EngineChip, PillButton, IconButton, SelectBox, Toggle, Slider, Stepper,
     SegControl, StatTile, FieldRow, GroupLabel, Accordion, SmoothScrollArea,
     hline, soft_shadow, label,
 )
-from studio.project_dialogs import confirm_trash, RenameDialog, TrashDialog
+from studio.project_dialogs import ProjectSettingsDialog
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -84,18 +83,6 @@ def page_header(title: str, subtitle: str, t: dict, action: Optional[QWidget] = 
     if action is not None:
         row.addWidget(action, alignment=Qt.AlignmentFlag.AlignBottom)
     return head
-
-
-def cover_label(seed: int, w: int, h: int, density: float, big: bool = False) -> QLabel:
-    lb = QLabel()
-    lb.setFixedSize(w, h)
-    # radius=7 (--r-sm), all four corners: a standalone rounded thumbnail
-    # (mockup's `.thumb{border-radius:7px}`), not a card-cover's top slice —
-    # baked into the pixmap itself since QSS border-radius doesn't clip a
-    # QLabel's own pixmap (see paint.nuclei_pixmap's docstring).
-    lb.setPixmap(nuclei_pixmap(w, h, seed, density=density, big=big, radius=7))
-    lb.setScaledContents(True)
-    return lb
 
 
 # ── Home ─────────────────────────────────────────────────────────────────────
@@ -241,7 +228,6 @@ class HomeScreen(QWidget):
         lay = QHBoxLayout(row)
         lay.setContentsMargins(14, 11, 14, 11)
         lay.setSpacing(14)
-        lay.addWidget(cover_label(p.seed, 52, 40, 1.5))
         meta = QVBoxLayout()
         meta.setSpacing(2)
         meta.addWidget(label(p.name, 13.5, t["text"], 600))
@@ -340,12 +326,10 @@ class HomeScreen(QWidget):
 # ── Projects ─────────────────────────────────────────────────────────────────
 _SCOPES = ("all", "favorites", "shared")
 
-# The engine-chip dot colour on a project card cover — the mockup gives each
-# engine its own hue (iris / teal / fig) distinct from ENGINE_KIND's fg/bg
-# "kind" (primary/signal), which only carries two families. Reuses theme.VIZ,
-# the app's one stable categorical palette, rather than inventing new tokens;
-# fixed (not per-theme) since the chip always sits on the same dark cover
-# overlay regardless of app theme, same as its text/background already are.
+# The engine-chip dot colour on a project card's header — each engine gets
+# its own hue (iris / teal / fig) distinct from ENGINE_KIND's fg/bg "kind"
+# (primary/signal), which only carries two families. Reuses theme.VIZ, the
+# app's one stable categorical palette, rather than inventing new tokens.
 _ENGINE_DOT = {"cellseg1": theme.VIZ[0], "cellpose": theme.VIZ[1], "sam2": theme.VIZ[5]}
 
 
@@ -366,7 +350,6 @@ class ProjectsScreen(QWidget):
         self._engines: set[str] = set()
         self._sort = "modified"
         self._view = "grid"
-        self._trash_dialog: Optional[TrashDialog] = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -427,7 +410,6 @@ class ProjectsScreen(QWidget):
         self._outer.removeWidget(old)
         old.setParent(None)
         old.deleteLater()
-        self._refresh_trash_button()
         self._populate()
 
     # Every toolbar control except the page header's primary "New Project"
@@ -488,20 +470,7 @@ class ProjectsScreen(QWidget):
         self._view_seg.setFixedHeight(H)
         self._view_seg.changed.connect(self._on_view_changed)
         row.addWidget(self._view_seg)
-
-        # Always present (predictable location beats hiding it, matching
-        # this app's own "disabled rows shown dimmed, not hidden --
-        # discoverability" principle for the command palette), just disabled
-        # with nothing to show when the trash is empty.
-        self._trash_btn = IconButton("trash", t, H, "Trash", on_click=self._open_trash)
-        row.addWidget(self._trash_btn)
-        self._refresh_trash_button()
         return bar
-
-    def _refresh_trash_button(self) -> None:
-        n = len(self._controller.list_trashed())
-        self._trash_btn.setEnabled(n > 0)
-        self._trash_btn.setToolTip(f"Trash — {n} project{'s' if n != 1 else ''}" if n else "Trash is empty")
 
     # ── toolbar handlers ─────────────────────────────────────────────────────
     def _on_search(self, text: str) -> None:
@@ -562,31 +531,22 @@ class ProjectsScreen(QWidget):
         self._controller.toggle_favorite(project_id)
         self._populate()
 
-    # ── overflow (⋯) menu + trash ────────────────────────────────────────────
+    # ── overflow (⋯) menu + settings ─────────────────────────────────────────
     def _open_card_menu(self, anchor: QWidget, project_id: str, project_name: str) -> None:
         """A per-card/row overflow menu, anchored under ``anchor`` (the ⋯
         button that opened it) -- same on-demand-QMenu construction as
         ``_open_filter_menu``/``SelectBox._open_menu`` elsewhere in this file.
+        Deliberately short (Open · Duplicate · Settings) -- rename and
+        delete both live in Settings now, matching Label Studio's own
+        minimal card overflow menu (Settings / Label) rather than listing
+        every action here.
         """
         menu = QMenu(self)
         menu.addAction("Open", lambda: self._open(project_id))
-        menu.addAction("Rename…", lambda: self._open_rename(project_id, project_name))
         menu.addAction("Duplicate", lambda: self._duplicate(project_id))
-        menu.addSeparator()
-        menu.addAction("Move to Trash", lambda: self._confirm_trash(project_id, project_name))
+        menu.addAction("Settings", lambda: self._open_settings(project_id))
         menu.popup(anchor.mapToGlobal(anchor.rect().bottomRight()))
         self._card_menu = menu  # keep a ref alive while it's open
-
-    def _open_rename(self, project_id: str, project_name: str) -> None:
-        # Keep a ref alive while it's open -- see _confirm_trash's comment.
-        self._active_dialog = RenameDialog(
-            self, self._t, project_name,
-            on_save=lambda new_name: self._do_rename(project_id, new_name))
-        self._active_dialog.open()
-
-    def _do_rename(self, project_id: str, new_name: str) -> None:
-        self._controller.rename_project(project_id, new_name)
-        self.refresh()
 
     def _duplicate(self, project_id: str) -> None:
         dup = self._controller.duplicate_project(project_id)
@@ -594,32 +554,29 @@ class ProjectsScreen(QWidget):
         if self._toast:
             self._toast("Project duplicated", f"“{dup.name}” created.")
 
-    def _confirm_trash(self, project_id: str, project_name: str) -> None:
-        # Keep a ref alive while it's open -- same reason _open_card_menu
-        # does for its QMenu: with nothing referencing the dialog Python-side
-        # (only Qt's own C++ parent-child ownership), it's fair game for
-        # garbage collection before the user ever gets to click anything.
-        self._active_dialog = confirm_trash(
-            self, self._t, project_name,
-            on_confirm=lambda: self._do_trash(project_id, project_name))
+    def _open_settings(self, project_id: str) -> None:
+        project = self._controller.store.load(project_id)
+        # Keep a ref alive while it's open -- with nothing else referencing
+        # the dialog Python-side (only Qt's own C++ parent-child ownership),
+        # it's fair game for garbage collection before a click.
+        self._active_dialog = ProjectSettingsDialog(
+            self, self._t, project,
+            on_saved=lambda name, desc: self._save_settings(project_id, name, desc),
+            on_delete=lambda: self._delete_project(project_id, project.name))
+        self._active_dialog.open()
 
-    def _do_trash(self, project_id: str, project_name: str) -> None:
-        self._controller.trash_project(project_id)
+    def _save_settings(self, project_id: str, name: str, description: str) -> None:
+        self._controller.rename_project(project_id, name)
+        project = self._controller.store.load(project_id)
+        project.description = description
+        self._controller.store.save(project)
+        self.refresh()
+
+    def _delete_project(self, project_id: str, project_name: str) -> None:
+        self._controller.delete_project(project_id)
         self.refresh()
         if self._toast:
-            self._toast("Moved to Trash", f"“{project_name}” moved to Trash.",
-                       action_label="Undo",
-                       on_action=lambda: self._undo_trash(project_id))
-
-    def _undo_trash(self, project_id: str) -> None:
-        self._controller.restore_project(project_id)
-        self.refresh()
-
-    def _open_trash(self) -> None:
-        if self._trash_dialog is None:
-            self._trash_dialog = TrashDialog(self, self._t, self._controller,
-                                            on_changed=self.refresh)
-        self._trash_dialog.open()
+            self._toast("Project deleted", f"“{project_name}” was permanently deleted.")
 
     # ── data + rendering ─────────────────────────────────────────────────────
     def _filtered_projects(self) -> list:
@@ -672,6 +629,16 @@ class ProjectsScreen(QWidget):
         self._list_host.setVisible(self._view == "list")
 
     def _card(self, p: "project_controller.ProjectCard") -> QFrame:
+        """A clean, text-only card -- no thumbnail/cover art. Matches Label
+        Studio's own project card (reference screenshots supplied by the
+        product owner): identity + stats + a footer, nothing decorative.
+        The earlier version had a live-painted "nuclei art" cover; removed
+        entirely (not hidden behind a flag -- genuinely not wanted), which
+        also removes the single most expensive thing this grid used to
+        repaint on every scroll frame (on top of the NucleiView caching and
+        eased-wheel-scroll work already done -- this is the rest of that
+        same performance story, and the more important half of it).
+        """
         t = self._t
         card = QFrame()
         card.setObjectName("PCard")
@@ -681,76 +648,26 @@ class ProjectsScreen(QWidget):
             f"#PCard{{background:{t['surface']}; border:1px solid {t['border']}; border-radius:14px;}}"
             f"#PCard:hover{{border-color:{t['border_strong']};}}")
         install_hover_lift(card, base=(14, 22, 3), hover=(22, 34, 6))
-        lay = QVBoxLayout(card)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
+        b = QVBoxLayout(card)
+        b.setContentsMargins(16, 16, 16, 16)
+        b.setSpacing(3)
 
-        # cover — a live-painting NucleiView, not a pixmap: this card sits in a
-        # 3-equal-stretch grid, so its real width tracks the window rather
-        # than any fixed reference, and a stretched pre-baked pixmap would
-        # distort the rounded corners. It's a raw (non-layout) child of
-        # cwrap, same as the mockup's cover art sitting *behind* the star/
-        # engine-chip/progress overlay rather than stacked above it in a
-        # column — so its geometry is synced to cwrap explicitly, both now
-        # and on every future resize (cwrap's own resize alone wouldn't
-        # otherwise touch a child it doesn't manage via layout).
-        cover = NucleiView(seed=p.seed, density=1.1, big=False,
-                          radius=14, top_only=True, min_size=(0, 0))
-        cwrap = QFrame()
-        cwrap.setFixedHeight(132)
-        cwl = QVBoxLayout(cwrap)
-        cwl.setContentsMargins(0, 0, 0, 0)
-        cover.setParent(cwrap)
-        cover.setGeometry(0, 0, cwrap.width(), cwrap.height())
-        cwrap.resizeEvent = lambda e: cover.setGeometry(0, 0, cwrap.width(), cwrap.height())
-
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 10, 10, 0)
-        top.addStretch(1)
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        eng = EngineChip(p.engine_label, _ENGINE_DOT.get(p.engine_key, theme.VIZ[0]),
+                        bg=t["surface2"], fg=t["text_subtle"], border=t["border"])
+        head.addWidget(eng)
+        head.addStretch(1)
         star = IconButton("star", t, 26, "Favourite",
                            on_click=lambda pid=p.id: self._toggle_favorite(pid))
-        # Opaque colours only: icons.py hands this straight to an SVG `stroke=`
-        # attribute, and QSvgRenderer silently drops rgba()/alpha there (no
-        # error, just an invisible icon) — confirmed by direct pixel-count
-        # rendering. A muted opaque grey reads as "dimmed" against the dark
-        # cover backdrop just as well as true alpha would have.
-        star_color = "#f0b357" if p.favorite else "#8b93a3"
-        star.setIcon(icons.icon("star", star_color, 15))
-        star.setStyleSheet(
-            "QToolButton{background:rgba(8,12,16,0.4); border:1px solid transparent; border-radius:8px;}"
-            "QToolButton:hover{background:rgba(8,12,16,0.6);}")
+        star.setIcon(icons.icon("star", "#f0b357" if p.favorite else t["text_muted"], 15))
+        head.addWidget(star)
         more = IconButton("more", t, 26, "More")  # handler wired below (needs `more` itself as the menu anchor)
-        more.setIcon(icons.icon("more", "#e9ecf1", 15))
-        more.setStyleSheet(
-            "QToolButton{background:rgba(8,12,16,0.4); border:1px solid transparent; border-radius:8px;}"
-            "QToolButton:hover{background:rgba(8,12,16,0.6);}")
         more.clicked.connect(lambda _=False, w=more, pid=p.id, name=p.name: self._open_card_menu(w, pid, name))
-        top.addWidget(more)
-        top.addWidget(star)
-        cwl.addLayout(top)
+        head.addWidget(more)
+        b.addLayout(head)
+        b.addSpacing(6)
 
-        overlay = QHBoxLayout()
-        overlay.setContentsMargins(10, 0, 10, 10)
-        eng = EngineChip(p.engine_label, _ENGINE_DOT.get(p.engine_key, theme.VIZ[0]),
-                        bg="rgba(8,12,16,0.6)", fg="#eaf0f8", border="rgba(255,255,255,0.12)")
-        overlay.addWidget(eng, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft)
-        overlay.addStretch(1)
-        prog = QLabel(f"{p.progress}%")
-        prog.setStyleSheet(f"color:#fff; font-family:{theme.MONO}; font-size:10.5px; font-weight:600;"
-                           f"background:rgba(8,12,16,0.55); border-radius:6px; padding:2px 7px;")
-        overlay.addWidget(prog, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
-        cwl.addStretch(1)
-        cwl.addLayout(overlay)
-        lay.addWidget(cwrap)
-
-        body = QWidget()
-        b = QVBoxLayout(body)
-        # 14 on every side (DESIGN.md's rhythm) -- was an asymmetric
-        # (15, 14, 15, 15), off the rhythm and not matching any sibling
-        # card's own padding (HomeScreen's _card()/_quick_card() both use a
-        # uniform value on all sides), found during a visual audit.
-        b.setContentsMargins(14, 14, 14, 14)
-        b.setSpacing(3)
         b.addWidget(label(p.name, 14.5, t["text"], 600, -0.2))
         desc = label(p.description, 12, t["text_muted"])
         desc.setWordWrap(True)
@@ -768,7 +685,18 @@ class ProjectsScreen(QWidget):
             tags.addStretch(1)
             b.addSpacing(12)
             b.addLayout(tags)
-        lay.addWidget(body)
+
+        b.addSpacing(12)
+        b.addWidget(hline(t))
+        b.addSpacing(8)
+        foot = QHBoxLayout()
+        foot.addWidget(label(f"{p.progress}% segmented", 11, t["text_muted"], 600))
+        foot.addStretch(1)
+        when = QLabel(p.when)
+        when.setStyleSheet(f"color:{t['text_muted']}; font-size:11px; font-family:{theme.MONO};")
+        foot.addWidget(when)
+        b.addLayout(foot)
+
         card.mouseReleaseEvent = lambda e, pid=p.id: self._open(pid)
         return card
 
@@ -795,7 +723,10 @@ class ProjectsScreen(QWidget):
         card = QFrame()
         card.setObjectName("Ghost")
         card.setCursor(Qt.CursorShape.PointingHandCursor)
-        card.setMinimumHeight(290)
+        # Matches a real card's own height (measured: 265px with tags, now
+        # that cards are cover-art-free and shorter) so the grid's last
+        # (ghost) cell doesn't stand out as a visibly different size.
+        card.setMinimumHeight(265)
         card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         card.setStyleSheet(
             f"#Ghost{{background:transparent; border:1px dashed {t['border_strong']}; border-radius:14px;}}"
@@ -845,7 +776,6 @@ class ProjectsScreen(QWidget):
         lay = QHBoxLayout(row)
         lay.setContentsMargins(14, 11, 14, 11)
         lay.setSpacing(14)
-        lay.addWidget(cover_label(p.seed, 52, 40, 1.5))
 
         meta = QVBoxLayout()
         meta.setSpacing(2)

@@ -5,6 +5,119 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-20 — Projects tab v2, revised: real usage reverts Trash/Undo, cards lose their cover art
+
+Same-day follow-up to the "Projects tab v2" entry directly below this one.
+That entry shipped, was screenshotted offscreen in both themes, and was
+believed done — then the product owner actually ran the app (not offscreen)
+and sent real screenshots: a rendering bug in the Toast, a rendering bug in
+the Trash dialog (window looked cropped after clicking a button inside it),
+and, more fundamentally, direct comparison against Label Studio's own
+reference screenshots (project cards, the overflow menu, Settings > Danger
+Zone) making the case that the whole tab needed to be simpler and closer to
+that reference, not just bug-fixed. This is exactly the kind of gap
+offscreen-only verification can't close — the project's own `docstudio/
+studio-subproject.md`-equivalent lessons about "always screenshot before
+trusting it" cover rendering bugs found *offscreen*; this is the next tier
+up, bugs and product-shape problems only surfaced by a real person actually
+using the real, rendered app.
+
+**Toast reverted to plain/informational.** The previous entry's "Undo"
+action button (`overlays.Toast`'s `action_label`/`on_action` pair) rendered
+with its border not fully enclosing the taller, three-line content (title +
+wrapped subtitle + the Undo link) — very likely a `QLabel.setWordWrap(True)`
++ single-pass `adjustSize()` interaction (a real, if narrower, Qt quirk
+worth remembering, not fully root-caused since the whole feature was about
+to have zero callers either way). Since deletion no longer needs an Undo
+action at all (see below), the fix was to remove the feature rather than
+debug a code path nothing would use afterward — `Toast` is back to exactly
+what it was before that entry: title + subtitle, no action button, no
+`QToolButton`.
+
+**Deletion simplified to match Label Studio's own Danger Zone exactly.**
+Removed entirely: `Project.trashed_at`, `ProjectStore.trash()`/`restore()`/
+`trashed()`, `ProjectController.trash_project()`/`restore_project()`/
+`list_trashed()`/`delete_project_permanently()`, `TrashDialog`,
+`confirm_trash()`, the toolbar's Trash entry point, the standalone
+`RenameDialog`. In their place: `ProjectController.delete_project()` (a
+thin wrapper straight over the store's own, already-existing hard
+`delete()`) and a new `studio/project_dialogs.ProjectSettingsDialog` --
+General (editable Project Name/Description, matching Label Studio's own
+General Settings fields) and a Danger Zone card (a real, qualified
+`#DangerZone` red-tinted `QFrame`, not just red text -- "Deleting this
+project removes its images, results, and settings from this device. This
+can't be undone." + a `Delete Project` button) inside one compact scrim+
+panel modal rather than a separate navigated screen with its own sidebar,
+since this product only needs two sections' worth of settings. Deleting
+still requires its own nested `ConfirmDialog` -- the one truly irreversible
+click in the whole flow -- but there is no Trash to check afterward and
+nothing to restore.
+
+**The kebab menu shrank to match Label Studio's own reference exactly:**
+their card overflow menu is two items (Settings / Label); ours is now
+**Open · Duplicate · Settings**, down from Open/Rename…/Duplicate/Move to
+Trash. Rename lives in Settings' own Project Name field now (with the
+field's cursor explicitly set to position 0 on open, so a long description
+shows its start, not wherever the field's default cursor-at-end scrolled
+to) -- Duplicate stayed a direct, undo-free kebab action since it's
+additive and trivially reversible by just deleting the copy.
+
+**The single biggest change: every project card, list row, and Home's
+recent-projects row lost its decorative cover art entirely.** The original
+design had a live-painted "nuclei art" thumbnail (`paint.NucleiView`,
+`cover_label()`) with the star/kebab/engine-chip/progress floating on top
+of it as an overlay -- direct feedback, with Label Studio's own reference
+cards held up for comparison: plain text, a stat row, a footer, zero
+imagery anywhere, "почему мне нужны лого проектов" ("why do I need project
+logos"). Redesigned to match: a plain header row (engine chip · star ·
+kebab, no floating/overlay positioning), then name, description, the
+existing stats row (unchanged -- Images/Cells/F1 vs GT was already good),
+tags, and a footer (progress % + relative timestamp, replacing the old
+dark-overlay corner badges). `cover_label()` (dead after this, zero
+remaining callers anywhere) was deleted outright rather than left unused.
+`paint.NucleiView` itself was **not** deleted -- it's tested, working
+infrastructure with no callers left in Projects/Home specifically, but
+`workspace.py` still uses its sibling `nuclei_pixmap()` for the Segment
+canvas's own placeholder art, a legitimately different context, and a
+future decorative use isn't implausible enough to justify deleting a
+tested class over. The Ghost ("+ New Project") card's height was remeasured
+and matched to a real card's new (much shorter, no-cover) height so the
+grid's trailing cell doesn't stand out as a different size.
+
+**Known, deliberate gaps** (unchanged from the entry below except where
+noted): no undo for a deleted project -- a deliberate simplification this
+round, not an oversight, matching Label Studio's own Danger Zone having no
+undo either; everything else (in-project delete/rename, bulk multi-select,
+pagination past the seed scale, multi-user workspaces) as before.
+
+**Tested:** every pure-logic and Qt test touching the removed trash/rename
+surface was deleted or rewritten against the new API (not left disabled or
+skipped) -- `test_project.py`'s trash section removed outright,
+`test_project_controller.py`'s trash tests replaced with `delete_project`
+equivalents, `test_project_dialogs.py` substantially rewritten (`ConfirmDialog`
+tests kept as-is since that class didn't change; `RenameDialog`/`TrashDialog`
+tests replaced with `ProjectSettingsDialog` tests, including its own
+scrim-bleed regression test -- this dialog applied the learned
+`background:transparent` fix from the start, so this test confirms that
+holds rather than finding a new instance of the bug), `test_app_wiring.py`'s
+sort-order test fixed for the new card's layout-item chain (verified
+directly against a real card before trusting it, not guessed), its trash-
+button/rename-dialog tests replaced with settings/delete equivalents. One
+genuine test-writing mistake caught and fixed before commit, not after: the
+new Settings-dialog scrim-bleed test initially flagged the Danger Zone's own
+labels as a false positive (they're supposed to sit on the red tint, not
+the plain white panel -- the test's blanket "must equal `surface`" check
+needed to exclude the Danger Zone's own descendants and instead assert
+they're *not* plain white). Full `pytest studio/tests` green throughout.
+Every change screenshotted offscreen in both themes -- including, this
+time, the exact interaction sequence the product owner actually hit
+(duplicate a project, delete the duplicate, reopen the surfaces involved)
+-- but real on-screen feel/click behaviour is still genuinely unverified in
+this sandbox; that gap is what caused this whole follow-up entry to exist,
+worth remembering rather than re-learning.
+
+---
+
 ## 2026-07-20 — Projects tab v2: real deletion, rename/duplicate, sort, a scroll-perf fix
 
 P1 was fully done (see the command-palette entries below, same day) but the

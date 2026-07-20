@@ -21,21 +21,27 @@ screens.py        HomeScreen, ProjectsScreen — bound to project_controller
                   components.SmoothScrollArea — see components.py). Live
                   data, not demo. Home's quick cards/resource links are all
                   real actions now (New Project dialog, navigate, external
-                  open, "Open Sample"). ProjectsScreen's cards/rows carry a
-                  real ⋯ overflow menu (Open/Rename/Duplicate/Move to
-                  Trash — see project_dialogs.py) and a Sort control
+                  open, "Open Sample"). Cards/rows are plain text — no
+                  cover-art thumbnail, matching Label Studio's own reference
+                  cards — with a real ⋯ overflow menu (Open/Duplicate/
+                  Settings — see project_dialogs.py) and a Sort control
                   (project_controller.ProjectController.SORT_OPTIONS).
 new_project_dialog.py  NewProjectDialog — the "+ New Project" modal (scrim +
                   centred panel, same construction as overlays.CommandPalette):
                   name+description → import (drag-drop or a file picker) →
                   engine, writing through ProjectStore.create() on finish.
 project_dialogs.py  ConfirmDialog (generic scrim+panel confirm — used for
-                  "Move to Trash?"/"Delete Forever?" via the confirm_trash/
-                  confirm_delete_forever builders) + RenameDialog (a
-                  QLineEdit, same construction) + TrashDialog (lists
-                  trashed projects, Restore/Delete Forever per row) — the
-                  Projects tab's small modals, split out once ProjectsScreen
-                  itself got too large for them to live inline.
+                  "Delete Project?" via the confirm_delete_project builder)
+                  + ProjectSettingsDialog (General — editable name/
+                  description — and a Danger Zone card, Delete Project ->
+                  its own nested ConfirmDialog; mirrors Label Studio's own
+                  Settings/Danger Zone) — the Projects tab's small modals,
+                  split out once ProjectsScreen itself got too large for
+                  them to live inline. An earlier RenameDialog + TrashDialog
+                  (soft-delete with Restore/Undo) were built, then reverted
+                  the same day after real (non-offscreen) usage found both a
+                  rendering bug and that the product didn't want the extra
+                  machinery — see docstudio/CHANGELOG.md's dated entry.
 layer_model.py    Our own evented layer model (Layer/ImageLayer/LabelsLayer/
                   PointsLayer/ShapesLayer/LayerList) — napari-Labels-faithful
                   properties/defaults, plain-callback events (no Qt/psygnal),
