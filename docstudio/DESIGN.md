@@ -63,8 +63,10 @@ No native grey OS title bar.
 
 Chip · Badge · PillButton (primary/ghost/success/danger) · IconButton ·
 SelectBox · Toggle · Slider · Stepper · SegControl · StatTile · FieldRow ·
-GroupLabel · Accordion · Sidebar. Every one takes a token dict and works in
-both themes. Add new atoms here, not ad hoc in screens.
+GroupLabel · Accordion · Sidebar · SmoothScrollArea (an eased-wheel-step
+QScrollArea — every screen's shared `scroll()`/`_scroll()` helper builds one
+of these now, not a bare QScrollArea). Every one takes a token dict and
+works in both themes. Add new atoms here, not ad hoc in screens.
 
 ## Rules for new UI
 

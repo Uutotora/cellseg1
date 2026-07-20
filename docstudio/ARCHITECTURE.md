@@ -17,13 +17,25 @@ project_controller.py  ProjectController (Qt-free): search/filter, favourites,
                   the active project shared with the Workspace tab, sample
                   seeding. Home/Projects screens are bound to it.
 screens.py        HomeScreen, ProjectsScreen — bound to project_controller
-                  (+ shared page_header/scroll helpers). Live data, not demo.
-                  Home's quick cards/resource links are all real actions now
-                  (New Project dialog, navigate, external open, "Open Sample").
+                  (+ shared page_header/scroll helpers, the latter now
+                  components.SmoothScrollArea — see components.py). Live
+                  data, not demo. Home's quick cards/resource links are all
+                  real actions now (New Project dialog, navigate, external
+                  open, "Open Sample"). ProjectsScreen's cards/rows carry a
+                  real ⋯ overflow menu (Open/Rename/Duplicate/Move to
+                  Trash — see project_dialogs.py) and a Sort control
+                  (project_controller.ProjectController.SORT_OPTIONS).
 new_project_dialog.py  NewProjectDialog — the "+ New Project" modal (scrim +
                   centred panel, same construction as overlays.CommandPalette):
                   name+description → import (drag-drop or a file picker) →
                   engine, writing through ProjectStore.create() on finish.
+project_dialogs.py  ConfirmDialog (generic scrim+panel confirm — used for
+                  "Move to Trash?"/"Delete Forever?" via the confirm_trash/
+                  confirm_delete_forever builders) + RenameDialog (a
+                  QLineEdit, same construction) + TrashDialog (lists
+                  trashed projects, Restore/Delete Forever per row) — the
+                  Projects tab's small modals, split out once ProjectsScreen
+                  itself got too large for them to live inline.
 layer_model.py    Our own evented layer model (Layer/ImageLayer/LabelsLayer/
                   PointsLayer/ShapesLayer/LayerList) — napari-Labels-faithful
                   properties/defaults, plain-callback events (no Qt/psygnal),

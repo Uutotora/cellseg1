@@ -315,8 +315,8 @@ palette) is real. See `ROADMAP.md`.
 ## P2 — polish & platform
 
 - [ ] Live theme repaint without a full rebuild; persist the choice.
-- [ ] **Projects tab v2 — deletion, trash, rename/duplicate, real scroll
-  performance** · L · in progress (2026-07-20). The Projects tab was marked
+- [x] **Projects tab v2 — deletion, trash, rename/duplicate, real scroll
+  performance** · L · done (2026-07-20). The Projects tab was marked
   done in the skeleton-to-real pass (2026-07-08), but that pass only covered
   browse/search/favourite/grid-list — a real product also needs to
   delete/rename/duplicate/organise projects, and the grid's scroll needs to
@@ -365,9 +365,11 @@ palette) is real. See `ROADMAP.md`.
        exists but is called from **nowhere** — dead code. Rather than wiring
        it to a hard, irreversible delete, add a **trash/soft-delete** layer
        in front of it (`trashed_at` on `Project`; `ProjectStore.trash()`/
-       `restore()`/`purge()`, `purge()` being the first real caller of the
-       existing `delete()`; `list()`/`recent()`/`favorites()` exclude
-       trashed by default). Chosen over a scary type-to-confirm hard-delete
+       `restore()`; `list()`/`recent()`/`favorites()` exclude trashed by
+       default. Shipped simpler than planned here: no separate `purge()`
+       name — "Delete Forever" calls the existing `delete()` directly,
+       since it already does exactly the right thing and a wrapper would
+       have added a name with no behaviour of its own). Chosen over a scary type-to-confirm hard-delete
        because (a) Studio is a local, single-user desktop app — none of the
        "N teammates lose access" blast-radius that justifies heavy
        interrogation in a multi-user SaaS Danger Zone — and (b) "prefer
@@ -387,9 +389,13 @@ palette) is real. See `ROADMAP.md`.
        mirrors Label Studio's own semantics: copy settings/tags/image
        references, reset stats/favourite/timestamps (no completed-results
        carried over, since nothing has run against the copy yet).
-    5. *Feature — organise:* a small **Trash** entry point (only shown once
-       something's been trashed) listing trashed projects with
-       Restore/Delete Forever.
+    5. *Feature — organise:* a small **Trash** entry point listing trashed
+       projects with Restore/Delete Forever. Shipped always-visible instead
+       of "only shown once something's been trashed" as first planned here —
+       disabled+dimmed when empty instead, matching this app's own existing
+       "discoverable, not hidden" rule for disabled affordances (already
+       used for the command palette's disabled rows); a predictable,
+       consistent location beat conditional visibility.
     6. *Feature — findability:* a **Sort** control (Name / Last modified /
        Created / Most cells) — today the grid has no user-facing sort at
        all, only the store's implicit `updated_at` ordering. Present in
@@ -397,13 +403,20 @@ palette) is real. See `ROADMAP.md`.
     7. *Visual:* an audit of every margin/spacing/radius literal in
        `ProjectsScreen` against `DESIGN.md`'s rhythm (2·4·8·14·16·24·34) and
        radii (7/10/14/18) tokens — fix any that drifted off it.
-  - **Tasks:** ☐ NucleiView pixmap cache + timing regression test ☐
-    consolidated scroll helper + wheel tuning ☐ trash/restore/purge in
-    `project.py` + `project_controller.py` (pure-logic tests) ☐ kebab menu +
-    delete-confirm dialog + Undo toast ☐ Trash view ☐ rename + duplicate
-    (controller + dialog) ☐ Sort control ☐ spacing audit ☐ offscreen
+  - **Tasks:** ☑ NucleiView pixmap cache + call-count regression test ☑
+    consolidated scroll helper + eased wheel step ☑ trash/restore in
+    `project.py` + `project_controller.py` (pure-logic tests) ☑ kebab menu +
+    delete-confirm dialog + Undo toast ☑ Trash view ☑ rename + duplicate
+    (controller + dialog) ☑ Sort control ☑ spacing audit ☑ offscreen
     screenshots, both themes, real QSS applied (per this file's own
-    hard-learned verification rule) ☐ `CHANGELOG.md` entries per increment.
+    hard-learned verification rule — caught 2 real rendering bugs and 2
+    layout/overflow bugs this way, not by tests) ☑ `CHANGELOG.md` entry.
+  - **Known, deliberate gaps** (see the same-dated `CHANGELOG.md` entry for
+    the full list): delete/rename from inside an open project (Workspace's
+    own breadcrumb — only the grid/list has it today), bulk multi-select,
+    pagination/virtualisation past the ~6-project seed scale, a real
+    multi-user "workspaces" concept (deliberately out of scope, see
+    `OVERVIEW.md`).
 - [x] **Guide & Docs screen** — done (2026-07-08). A real, in-app documentation
   surface (`studio/guide_content.py` + `guide_screen.py`): searchable article
   nav (5 topics, 10 articles) + the selected article, reached from the

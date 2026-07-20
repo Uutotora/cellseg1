@@ -208,6 +208,31 @@ def test_trash_dialog_lists_trashed_projects(parent, controller):
     assert len(rows) == 1
 
 
+def test_trash_dialog_row_does_not_overflow_the_panel_for_a_long_name(parent, controller):
+    """Regression test: a row's own QHBoxLayout (name+timestamp, stretch=1,
+    beside two non-shrinking buttons) used a plain, non-eliding label() for
+    the name -- a long name (a duplicate's "<name> copy" easily qualifies)
+    forced the whole row wider than the fixed-440px panel, and with the
+    horizontal scrollbar explicitly disabled (SmoothScrollArea, matching
+    every other scroll area in this app), the overflow wasn't scrollable
+    either -- "Delete Forever" ended up partly outside the visible panel.
+    Confirmed by measuring a real row before the fix: 469px inside a 440px
+    panel, the button's right edge 30px past the panel's own edge.
+    """
+    p = controller.list_projects()[0]
+    dup = controller.duplicate_project(p.id)  # "<name> copy" -- reliably long
+    controller.trash_project(dup.id)
+    dlg = pd.TrashDialog(parent, theme.DARK, controller)
+    dlg.open()
+
+    from PyQt6.QtWidgets import QFrame, QPushButton
+    row = dlg._rows_host.findChildren(QFrame, "TrashRow")[0]
+    assert row.width() <= dlg._panel.width()
+    for btn in row.findChildren(QPushButton):
+        right_edge = row.mapTo(dlg._panel, btn.geometry().topRight()).x()
+        assert right_edge <= dlg._panel.width(), f"{btn.text()!r} overflows the panel"
+
+
 def test_trash_dialog_restore_removes_the_row_and_calls_on_changed(parent, controller):
     p = controller.list_projects()[0]
     controller.trash_project(p.id)

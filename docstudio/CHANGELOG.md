@@ -5,6 +5,126 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-20 — Projects tab v2: real deletion, rename/duplicate, sort, a scroll-perf fix
+
+P1 was fully done (see the command-palette entries below, same day) but the
+Projects tab itself — marked done back on 2026-07-08 — only ever covered
+browse/search/favourite/grid-list. Asked to bring it to "real product" bar
+against Label Studio (the project's own design reference) and general
+product-dashboard practice; this landed as 6 separate commits, each tested
+and screenshotted in both themes before the next one started. Full detail
+lives in the commit messages; this is the roll-up. See `docstudio/
+BACKLOG.md`'s "Projects tab v2" entry for the original analysis this was
+scoped from.
+
+**Scroll performance, root-caused not guessed.** `ProjectsScreen`'s card
+cover (`paint.NucleiView`) regenerated its whole procedural nuclei field
+from scratch on *every* repaint, and every card also carried an always-on
+`QGraphicsDropShadowEffect` (`install_hover_lift`'s base alpha was 22, not
+0) — both fire on every scroll-triggered repaint, for every visible card.
+Fixed by caching `NucleiView`'s painted output to an internal pixmap,
+rebuilt only on an actual resize — a call-count regression test confirmed
+3-vs-0 against the pre-fix code. Secondary polish: the three duplicated
+`scroll()`/`_scroll()` helpers (`screens.py`, `workspace.py`) were
+consolidated into one shared `components.SmoothScrollArea`, which eases a
+discrete mouse-wheel notch via `QPropertyAnimation` instead of an instant
+jump (a trackpad's own `pixelDelta` is already smooth and left untouched).
+
+**Deletion — the explicitly-requested feature.** `ProjectStore.delete()`
+had existed since the tab shipped but was dead code, called from nowhere.
+Rather than wire it straight to the grid, added a soft-delete layer in
+front of it: `Project.trashed_at` + `ProjectStore.trash()`/`restore()`
+(hard `delete()` stays as the irreversible "Delete Forever" path, reached
+only from Trash). Chosen over an immediate hard delete because a project
+can represent real segmentation/training work and "reversible by default"
+beat interrogation-heavy confirmation for a local single-user app — see
+the BACKLOG entry for the full reasoning against Label Studio's own Danger
+Zone pattern. UI: a ⋯ overflow menu on every card/row (new `more` icon —
+three round dots via the same zero-length-stroke trick `assistant`/`guide`
+already use), `studio/project_dialogs.py`'s new `ConfirmDialog` (named
+project, red action, reused for both "Move to Trash" and "Delete Forever"),
+a Toast "Undo" action (`overlays.Toast` gained an optional `action_label`/
+`on_action` pair, purely additive), and `TrashDialog` reached from an
+always-visible-but-disabled-when-empty toolbar entry (matches the app's
+own "discoverable, not hidden" rule for disabled affordances).
+
+**Rename + Duplicate** round out the kebab menu. `RenameDialog` (a
+`QLineEdit`, Cancel/Save, Enter-to-save). Duplicate mirrors Label Studio's
+own semantics — settings/tags/image references copy, results don't
+(stats/favourite reset, since nothing has run against the copy yet) — and
+needs no confirmation, since it's additive and trivially undoable.
+
+**Sort** (Last modified / Name A-Z / Date created / Most cells) — present
+in every comparable product and, until now, entirely absent; the grid only
+ever had the store's implicit `updated_at` order.
+
+**Four real, pre-existing/newly-introduced bugs found and fixed along the
+way, all by actually screenshotting both themes (or measuring real
+geometry), not by tests alone:**
+1. **`NewProjectDialog` had the same rendering-bug family this file already
+   has several entries about** (an unstyled `QWidget()` container inheriting
+   the app-wide background rule), glaring in light theme specifically
+   because that dialog's scrim is translucent — a scrim-over-`bg` blend is
+   visibly darker than scrim-over-`surface`. Pre-existing, never caught
+   across "several prior New-Project-dialog sessions" per this file's own
+   history, because dark theme (the apparent default review theme) hides
+   it almost completely. Fixed at all 8 sites; `TrashDialog` got the
+   identical bug in its own header/scroll-content (same fix, matching
+   `CommandPalette`'s own `_results_container` precedent).
+2. **`ProjectsScreen._confirm_trash`/`TrashDialog._confirm_delete` each
+   discarded their `ConfirmDialog`'s return value** — with nothing
+   Python-side referencing it, it was fair game for garbage collection
+   before a click. Caught by a wiring test, fixed with a kept `self.
+   _active_dialog` ref (the same convention `_open_card_menu` already uses
+   for its `QMenu`).
+3. **The new Sort `SelectBox` rendered as just a bare chevron, no visible
+   label text** — its value label (`_ElidingLabel`) uses a horizontally
+   `Ignored` size policy (correct for its original fixed-width-panel
+   context, the Segment inspector), so `SelectBox`'s own `sizeHint` never
+   reserved room for text in a toolbar with room to spare. Fixed with an
+   explicit `setMinimumWidth(152)`.
+4. **Found in the very last verification pass, not by a test**:
+   `TrashDialog`'s row used a plain, non-eliding `label()` for the project
+   name, sharing a `QHBoxLayout` with two non-shrinking buttons — a long
+   name (a duplicate's own `"<name> copy"` reliably qualifies) forced the
+   whole row 469px wide inside a fixed 440px panel, and with the horizontal
+   scrollbar explicitly off (`SmoothScrollArea`, matching every other
+   scroll area in the app), "Delete Forever" ended up partly outside the
+   visible panel — measured directly (`row.width()`, a button's mapped
+   geometry), not eyeballed. Fixed by switching the name to
+   `components._ElidingLabel` (the same atom `SelectBox`/`Accordion`/
+   `StatTile` already use for exactly this shape of problem), which elides
+   with "…" instead of forcing the row wider than its container.
+
+**Visual audit against `DESIGN.md`'s rhythm** found the codebase already
+disciplined — most "off-rhythm" numbers turned out to be small, deliberate
+insets reused identically across sibling call sites, not drift. Found and
+fixed exactly one genuine inconsistency: the project card body's padding
+was an asymmetric `(15, 14, 15, 15)`, normalised to a uniform 14.
+
+**Known, deliberate gaps** (not built, not silently skipped either):
+deleting/renaming from *inside* an open project (Workspace's own breadcrumb
+⋯ menu) — only the Projects grid/list has it; bulk multi-select
+(trash/tag several projects at once); pagination/virtualisation for a
+library much larger than the ~6-project seed set (the grid is a plain
+`QGridLayout`, fine at today's scale, untested past it); a literal
+"workspaces" concept (Label Studio has one, this app is single-user local,
+deliberately out of scope per `OVERVIEW.md`).
+
+**Tested:** ~86 new test cases across 7 commits (pure-logic: trash/restore/
+rename/duplicate/sort on the store and controller; Qt: `NucleiView` caching,
+`SmoothScrollArea` wheel behaviour, `ConfirmDialog`/`RenameDialog`/
+`TrashDialog` in isolation, `Toast`'s new action support, and the full
+flows wired through `ProjectsScreen`) plus 3 geometry/pixel-sampling
+regression tests for bugs 1/1/4 above (all three confirmed to fail against
+the pre-fix/reverted code first, reporting the exact wrong values —
+e.g. `469 <= 440` for bug 4). Full `pytest studio/tests` green throughout;
+every commit screenshotted offscreen in both themes before moving to the
+next. Not verified: real on-screen feel/click behaviour (no display in
+this sandbox).
+
+---
+
 ## 2026-07-20 — Follow-up #2: a real visual pass, Raycast as the reference
 
 Direct feedback again after the sizing fix: still not right — the search

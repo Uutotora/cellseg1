@@ -15,7 +15,9 @@ from typing import Callable, Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit
 
-from studio.components import IconButton, PillButton, SmoothScrollArea, hline, label, soft_shadow
+from studio.components import (
+    IconButton, PillButton, SmoothScrollArea, _ElidingLabel, hline, label, soft_shadow,
+)
 from studio.project_controller import ProjectController, relative_time
 
 
@@ -334,7 +336,16 @@ class TrashDialog(QWidget):
         lay.setSpacing(10)
         meta = QVBoxLayout()
         meta.setSpacing(2)
-        meta.addWidget(label(p.name, 13.5, t["text"], 600))
+        # _ElidingLabel, not label(): this row sits in a fixed-width panel
+        # (440px) alongside two buttons that don't shrink -- a long project
+        # name (e.g. a duplicate, "<name> copy") otherwise forces the whole
+        # row wider than the panel with the horizontal scrollbar disabled,
+        # pushing "Delete Forever" partly outside it. Confirmed by measuring
+        # a real row's geometry before the fix: 469px wide inside a 440px
+        # panel, the button's right edge 30px past the panel's own edge.
+        name_lbl = _ElidingLabel(p.name)
+        name_lbl.setStyleSheet(f"color:{t['text']}; font-size:13.5px; font-weight:600;")
+        meta.addWidget(name_lbl)
         when = relative_time(p.trashed_at) if p.trashed_at else ""
         meta.addWidget(label(f"Trashed {when}" if when else "Trashed", 11.5, t["text_muted"]))
         lay.addLayout(meta, 1)
