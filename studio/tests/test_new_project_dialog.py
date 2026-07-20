@@ -216,3 +216,53 @@ def test_panel_border_does_not_leak_onto_every_label_in_the_dialog(app):
         assert not offenders, f"individually boxed labels: {offenders}"
     finally:
         app.setStyleSheet("")   # process-wide QApplication singleton -- don't leak
+
+
+def test_dialog_containers_sit_on_the_panel_surface_not_a_scrim_blended_patch(app):
+    """Every plain QWidget() grouping container in this dialog (header,
+    footer, body_wrap, each step's own wrapper, _field()'s wrapper, a file
+    row) used to inherit the app-wide QWidget{background:<bg>} rule instead
+    of staying transparent -- a *different* instance of the same rendering-
+    bug family the panel-border test above already covers, this time via
+    `background` rather than `border`. Subtle under most opaque ancestors
+    (`bg` and `surface` are close enough that it barely reads as a seam),
+    but glaring here specifically because this dialog sits on a translucent
+    scrim (`rgba(8,10,20,0.34)`): a scrim-over-bg blend is visibly darker
+    than a scrim-over-surface blend, so every label sitting on one of these
+    containers rendered inside its own boxed patch -- confirmed by an actual
+    light-theme screenshot before the fix (every label individually boxed,
+    the QLineEdits themselves rendering with the wrong dark colours too).
+    """
+    import time as _time
+    from studio import theme
+
+    # Light, not dark: `bg` (#f4f6f8) and `surface` (#ffffff) are close
+    # enough in dark theme (#0d0f13 / #15181e) that the pre-fix bug barely
+    # reads as a seam there -- light theme is where the scrim-amplified
+    # version of this bug was actually found and is worth pinning.
+    t = theme.LIGHT
+    app.setStyleSheet(theme.build_qss(t))
+    try:
+        parent = QWidget()
+        parent.resize(900, 700)
+        store = ProjectStore("/tmp/_unused_scrim_bleed_test_store")
+        dlg = npd.NewProjectDialog(parent, t, store, on_created=lambda pid: None)
+        dlg.open()
+        parent.show()
+        for _ in range(30):
+            app.processEvents()
+            _time.sleep(0.01)
+
+        img = dlg.grab().toImage()
+        from PyQt6.QtWidgets import QLabel
+        labels = [w for w in dlg.findChildren(QLabel) if w.text().strip() and w.isVisible()]
+        assert len(labels) >= 3
+        offenders = []
+        for lbl in labels:
+            pt = lbl.mapTo(dlg, lbl.rect().topLeft())
+            sample = img.pixelColor(pt.x(), pt.y())
+            if sample.name() != t["surface"]:
+                offenders.append((lbl.text(), sample.name()))
+        assert not offenders, f"labels not sitting on the panel's own surface fill: {offenders}"
+    finally:
+        app.setStyleSheet("")   # process-wide QApplication singleton -- don't leak

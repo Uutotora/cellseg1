@@ -40,6 +40,7 @@ _ENGINE_BLURB = {
 
 def _field(title: str, control: QWidget, t: dict) -> QWidget:
     w = QWidget()
+    w.setStyleSheet("background:transparent;")
     v = QVBoxLayout(w)
     v.setContentsMargins(0, 0, 0, 0)
     v.setSpacing(7)
@@ -154,6 +155,7 @@ class NewProjectDialog(QWidget):
         v.addWidget(self._header())
         v.addWidget(hline(t))
         body_wrap = QWidget()
+        body_wrap.setStyleSheet("background:transparent;")
         self._body = QVBoxLayout(body_wrap)
         self._body.setContentsMargins(24, 22, 24, 4)
         v.addWidget(body_wrap)
@@ -166,6 +168,7 @@ class NewProjectDialog(QWidget):
     def _header(self) -> QWidget:
         t = self._t
         h = QWidget()
+        h.setStyleSheet("background:transparent;")
         row = QHBoxLayout(h)
         row.setContentsMargins(20, 16, 14, 16)
         row.setSpacing(10)
@@ -183,6 +186,7 @@ class NewProjectDialog(QWidget):
     def _footer(self) -> QWidget:
         t = self._t
         f = QWidget()
+        f.setStyleSheet("background:transparent;")
         row = QHBoxLayout(f)
         row.setContentsMargins(20, 14, 20, 16)
         row.setSpacing(10)
@@ -199,6 +203,7 @@ class NewProjectDialog(QWidget):
     def _step_name(self) -> QWidget:
         t = self._t
         w = QWidget()
+        w.setStyleSheet("background:transparent;")
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(16)
@@ -215,6 +220,7 @@ class NewProjectDialog(QWidget):
     def _step_import(self) -> QWidget:
         t = self._t
         w = QWidget()
+        w.setStyleSheet("background:transparent;")
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(12)
@@ -234,6 +240,7 @@ class NewProjectDialog(QWidget):
     def _file_row(self, idx: int, path: str) -> QWidget:
         t = self._t
         row = QWidget()
+        row.setStyleSheet("background:transparent;")
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(6)
@@ -246,6 +253,7 @@ class NewProjectDialog(QWidget):
     def _step_engine(self) -> QWidget:
         t = self._t
         w = QWidget()
+        w.setStyleSheet("background:transparent;")
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(14)
