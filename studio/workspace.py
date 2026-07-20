@@ -1228,6 +1228,13 @@ class WorkspaceScreen(QWidget):
         self._rebuild_layer_controls()
         self._sync_toolbars()
 
+    def _on_canvas_mode_changed(self, mode: str) -> None:
+        """The canvas switched tool itself (a single-key shortcut like B/E/F).
+        It already called set_mode; just refresh the UI that mirrors the mode
+        (the labels tool-row highlight + the floating strip / viewer bar)."""
+        self._rebuild_layer_controls()
+        self._sync_toolbars()
+
     def _set_layer_opacity(self, layer, value: float, badge: Badge) -> None:
         layer.opacity = value
         badge.setText(f"{value:.2f}")
@@ -1308,7 +1315,8 @@ class WorkspaceScreen(QWidget):
         vp = QFrame()
         vp.setStyleSheet("background:#07090c;")
         self._canvas = Canvas(t, self._layers, on_status=self._on_canvas_status,
-                             on_label_picked=self._on_label_picked)
+                             on_label_picked=self._on_label_picked,
+                             on_mode_change=self._on_canvas_mode_changed)
         lay = QVBoxLayout(vp)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._canvas)
@@ -1340,9 +1348,13 @@ class WorkspaceScreen(QWidget):
         tl = QVBoxLayout(tools)
         tl.setContentsMargins(5, 5, 5, 5)
         tl.setSpacing(4)
+        # Navigation + prompts only -- Paint used to sit here too, duplicating
+        # the Labels tool row (and now the B shortcut), and Home reused the
+        # very same "target" glyph as Pan two rows up. Distinct icons now:
+        # pan, add-a-prompt-point, home.
         self._floating_tool_buttons: list[tuple[QToolButton, str, str]] = []
-        for icon_name, action in [("target", PAN_ZOOM), ("brush", PAINT),
-                                   ("points", "__add_point__"), ("target", "__home__")]:
+        for icon_name, action in [("target", PAN_ZOOM),
+                                   ("points", "__add_point__"), ("home", "__home__")]:
             b = IconButton(icon_name, t, 30)
             b.clicked.connect(lambda _=False, a=action: self._on_floating_tool(a))
             tl.addWidget(b)

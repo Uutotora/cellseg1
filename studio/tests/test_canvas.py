@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import QApplication
 from studio import theme
 from studio.canvas import Canvas, _blend, _contour_mask, _interpolate, _render_image, _render_labels
 from studio.layer_model import (
-    ERASE, FILL, ImageLayer, LabelsLayer, LayerList, PAINT, PICK, POLYGON, PointsLayer,
+    ERASE, FILL, ImageLayer, LabelsLayer, LayerList, PAINT, PAN_ZOOM, PICK, POLYGON, PointsLayer,
     ShapesLayer,
 )
 
@@ -671,3 +671,33 @@ def test_pick_does_not_create_an_undo_step(app):
     c.set_mode(PICK)
     _press(c, QPoint(20, 20))
     assert not layers[1].can_undo  # picking a colour edits nothing
+
+
+# ── single-key tool shortcuts ─────────────────────────────────────────────────
+def _key(widget, qtkey):
+    from PyQt6.QtGui import QKeyEvent
+    ev = QKeyEvent(QKeyEvent.Type.KeyPress, qtkey, Qt.KeyboardModifier.NoModifier)
+    widget.keyPressEvent(ev)
+
+
+def test_tool_shortcut_keys_switch_mode(app):
+    from studio.layer_model import ERASE, FILL, PICK, POLYGON
+    seen = []
+    c, layers, *_ = _make_canvas(app)
+    c._on_mode_change = seen.append
+    for qtkey, mode in [(Qt.Key.Key_B, PAINT), (Qt.Key.Key_E, ERASE),
+                        (Qt.Key.Key_F, FILL), (Qt.Key.Key_G, POLYGON),
+                        (Qt.Key.Key_K, PICK), (Qt.Key.Key_V, PAN_ZOOM)]:
+        _key(c, qtkey)
+        assert c.mode == mode
+    assert seen[0] == PAINT and seen[-1] == PAN_ZOOM  # callback fired per switch
+
+
+def test_tool_shortcut_ignored_with_modifier(app):
+    # Ctrl+B etc. must not steal the key (leaves it for real shortcuts).
+    from PyQt6.QtGui import QKeyEvent
+    c, layers, *_ = _make_canvas(app)
+    c.set_mode(PAN_ZOOM)
+    ev = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_B, Qt.KeyboardModifier.ControlModifier)
+    c.keyPressEvent(ev)
+    assert c.mode == PAN_ZOOM  # unchanged

@@ -1076,12 +1076,12 @@ def test_floating_tool_strip_highlights_active_mode(app, segment, projects, toas
     ws = _ws(app, segment, projects, toasts)
     ws._load_project(project)
     pan_btn = ws._floating_tool_buttons[0][0]  # (target, PAN_ZOOM)
-    brush_btn = ws._floating_tool_buttons[1][0]  # (brush, PAINT)
+    point_btn = ws._floating_tool_buttons[1][0]  # (points, __add_point__ -- an action, not a mode)
     assert _is_toolbar_button_on(pan_btn)  # PAN_ZOOM is the default mode
-    assert not _is_toolbar_button_on(brush_btn)
+    assert not _is_toolbar_button_on(point_btn)
     ws._set_canvas_mode(PAINT)
-    assert not _is_toolbar_button_on(pan_btn)
-    assert _is_toolbar_button_on(brush_btn)
+    assert not _is_toolbar_button_on(pan_btn)  # pan no longer the active mode
+    assert not _is_toolbar_button_on(point_btn)  # an action never shows "active"
 
 
 def test_selecting_a_new_image_resets_mip(app, segment, projects, toasts, tmp_path, storage):
@@ -1593,9 +1593,9 @@ def test_floating_tool_strip_shows_real_icons_not_a_fallback_chevron(
         return icons.icon(name, color, 16).pixmap(16, 16).toImage()
 
     pan_btn = ws._floating_tool_buttons[0][0]   # (target, PAN_ZOOM)
-    brush_btn = ws._floating_tool_buttons[1][0]  # (brush, PAINT)
+    point_btn = ws._floating_tool_buttons[1][0]  # (points, __add_point__)
     assert pan_btn.icon().pixmap(16, 16).toImage() == _img("target", t["signal"])
-    assert brush_btn.icon().pixmap(16, 16).toImage() == _img("brush", t["text_muted"])
+    assert point_btn.icon().pixmap(16, 16).toImage() == _img("points", t["text_muted"])
 
     ws._set_canvas_mode(PAINT)  # forces another _sync_toolbars() restyle pass
     assert pan_btn.icon().pixmap(16, 16).toImage() == _img("target", t["text_muted"])

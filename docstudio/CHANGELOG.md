@@ -5,6 +5,24 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-21 — Segment: single-key tool shortcuts + a de-duplicated canvas tool strip (napari parity)
+
+- **Tool shortcuts.** With the canvas focused: B paint, E erase, F fill, G
+  polygon, K pick, V pan/zoom — napari-style. Handled in `Canvas.keyPressEvent`
+  (only while the canvas has focus, so they never fight a text field elsewhere)
+  and gated on no modifier, so Ctrl/Cmd combos pass through. A new
+  `on_mode_change` callback refreshes the labels tool-row highlight + toolbars.
+- **De-duplicated floating strip.** The canvas tool strip carried Paint
+  (duplicating the Labels tool row, now also the B key) and reused the exact
+  "target" glyph for both Pan and Home. It's navigation + prompts only now —
+  Pan, Add-prompt-point, Home — each with its own icon.
+
+Verified: tests for every shortcut key (+ modifier is ignored) and the strip's
+new icon set/highlighting. Full suite green. Not verified: live keypress focus
+behaviour on a real window.
+
+---
+
 ## 2026-07-21 — Segment: a real empty-state for the Layers pane (no more stray lines on a blank panel)
 
 Direct feedback on the left panel with nothing loaded: "непонятные линии если

@@ -52,12 +52,14 @@ class Canvas(QWidget):
     def __init__(self, t: dict, layers: LayerList, *,
                  on_status: Optional[Callable[[str], None]] = None,
                  on_label_picked: Optional[Callable[[int], None]] = None,
+                 on_mode_change: Optional[Callable[[str], None]] = None,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._t = t
         self.layers = layers
         self._on_status = on_status
         self._on_label_picked = on_label_picked
+        self._on_mode_change = on_mode_change
 
         self.mode = PAN_ZOOM
         self.grid = False
@@ -662,11 +664,25 @@ class Canvas(QWidget):
             self._painting = False
             self._paint_last = None
 
+    # Single-key tool switches, napari-style, active only while the canvas has
+    # focus (so they never fight a text field elsewhere in the screen). The
+    # workspace wires on_mode_change to refresh its toolbars/labels-tool
+    # highlight after the switch.
+    _KEY_MODES = {
+        Qt.Key.Key_V: PAN_ZOOM, Qt.Key.Key_B: PAINT, Qt.Key.Key_E: ERASE,
+        Qt.Key.Key_F: FILL, Qt.Key.Key_G: POLYGON, Qt.Key.Key_K: PICK,
+    }
+
     def keyPressEvent(self, e) -> None:
         if e.key() in (Qt.Key.Key_Up, Qt.Key.Key_PageUp):
             self.step_z(-1)
         elif e.key() in (Qt.Key.Key_Down, Qt.Key.Key_PageDown):
             self.step_z(1)
+        elif e.key() in self._KEY_MODES and e.modifiers() == Qt.KeyboardModifier.NoModifier:
+            mode = self._KEY_MODES[e.key()]
+            self.set_mode(mode)
+            if self._on_mode_change:
+                self._on_mode_change(mode)
         else:
             super().keyPressEvent(e)
 
