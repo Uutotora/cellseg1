@@ -870,12 +870,14 @@ class WorkspaceScreen(QWidget):
         _clear_layout(layout)
         for i, layer in enumerate(self._layers):
             layout.addWidget(self._layer_row(i, layer))
+        layout.addStretch(1)  # keep rows compact + top-aligned (don't stretch to fill)
 
     def _layer_row(self, i: int, layer) -> QFrame:
         t = self._t
         sel = i == self._layers.selected_index
         row = QFrame()
         row.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.setFixedHeight(44)  # compact + predictable for drag-reorder step maths
         # Qualified -- see _image_row's comment (same pattern, same fix).
         row.setObjectName("LayerRow")
         row.setStyleSheet(
@@ -905,13 +907,35 @@ class WorkspaceScreen(QWidget):
         nm.setStyleSheet(f"color:{t['text']}; font-size:12.5px; font-weight:600;")
         lay.addWidget(nm, 1)
         lay.addWidget(label(count, 10.5, t["text_muted"]))
-        # Deferred for the same reason as the image row above: _select_layer
-        # rebuilds _layers_list_layout (this row's own parent) synchronously.
-        row.mouseReleaseEvent = lambda e, idx=i: QTimer.singleShot(0, lambda: self._select_layer(idx))
+        # Drag a row up/down to reorder (z-order = list order); a plain click
+        # selects. Both outcomes are deferred one tick -- select and move each
+        # rebuild _layers_list_layout (this row's own parent) synchronously,
+        # the same SIP hazard the image rows guard.
+        def _press(e, r=row):
+            r._drag_from_y = e.position().y()
+        def _release(e, idx=i, r=row):
+            start = getattr(r, "_drag_from_y", None)
+            r._drag_from_y = None
+            n = len(list(self._layers))
+            row_h = r.height() + max(self._layers_list_layout.spacing(), 0)
+            steps = int(round((e.position().y() - start) / max(row_h, 1))) if start is not None else 0
+            dst = max(0, min(n - 1, idx + steps))
+            if dst != idx:
+                QTimer.singleShot(0, lambda: self._move_layer(idx, dst))
+            else:
+                QTimer.singleShot(0, lambda: self._select_layer(idx))
+        row.mousePressEvent = _press
+        row.mouseReleaseEvent = _release
         return row
 
     def _select_layer(self, idx: int) -> None:
         self._layers.select(idx)
+        self._rebuild_layer_controls()
+
+    def _move_layer(self, src: int, dst: int) -> None:
+        """Reorder layers (drag in the Layers list). z-order = list order, so
+        this changes what draws on top; selection follows the moved layer."""
+        self._layers.move(src, dst)
         self._rebuild_layer_controls()
 
     def _toggle_layer_visible(self, idx: int) -> None:

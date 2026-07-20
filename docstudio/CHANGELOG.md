@@ -5,6 +5,25 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-21 — Segment: drag a layer up/down to reorder it (napari parity)
+
+`LayerList.move` existed but nothing drove it. Layer rows are draggable now:
+press and drag a row vertically, release to drop it at the new position
+(z-order = list order, so this changes what draws on top); a plain click still
+selects, and selection follows the moved layer. Both outcomes are deferred one
+tick (the same list-rebuild SIP hazard the other rows guard). Rows also gained
+a fixed height + a trailing stretch so the list stays compact and top-aligned
+(they used to expand to fill) — which also makes the drag's row-step maths
+predictable. Tests cover `_move_layer` (reorder + selection-follows) and a
+real drag-down gesture reordering rather than selecting. Full suite green.
+
+That completes the napari-parity batch the redesign feedback asked for
+(undo/redo, tool shortcuts, layer reorder, image contrast, tool-strip dedup)
+alongside the structural work (resizable/collapsible panes, swipe-to-delete,
+empty-state).
+
+---
+
 ## 2026-07-21 — Segment: editable image contrast (min/max sliders + Auto) — napari parity
 
 The image layer's contrast was a read-only "lo – hi" badge. It's now editable,

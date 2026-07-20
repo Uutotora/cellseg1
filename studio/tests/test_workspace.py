@@ -469,6 +469,32 @@ def test_canvas_bar_has_undo_and_redo_buttons(app, segment, projects, toasts, tm
     assert "redo" in ws._vbar_buttons
 
 
+# ── layer drag-reorder ────────────────────────────────────────────────────────
+def test_move_layer_reorders_and_keeps_selection(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, n_images=1)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)  # [image, Segmentation]
+    names_before = [l.name for l in ws._layers]
+    seg_idx = ws._layers.index_of(ws._layers.find("Segmentation"))
+    ws._layers.select(seg_idx)
+    ws._move_layer(seg_idx, 0)  # send Segmentation to the bottom of the list
+    assert [l.name for l in ws._layers] == list(reversed(names_before))
+    assert ws._layers.selected.name == "Segmentation"  # selection follows the move
+
+
+def test_layer_row_drag_down_reorders_not_selects(app, segment, projects, toasts, tmp_path, storage):
+    project = _make_project(tmp_path, projects, storage, n_images=1)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    first_before = list(ws._layers)[0].name
+    row = ws._layers_list_layout.itemAt(0).widget()  # topmost row (index 0)
+    _dispatch_press(row, pos=(5, 4))
+    _dispatch_release(row, pos=(5, 80))  # a clear downward drag
+    _pump_events(app)
+    # index-0 layer moved down (no longer first); a drag must not be read as a tap
+    assert list(ws._layers)[0].name != first_before
+
+
 # ── image contrast limits ─────────────────────────────────────────────────────
 def test_auto_contrast_sets_percentile_limits(app, segment, projects, toasts, tmp_path, storage):
     project = _make_project(tmp_path, projects, storage, n_images=1)
