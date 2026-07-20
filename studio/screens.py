@@ -30,6 +30,7 @@ from studio.components import (
     SegControl, StatTile, FieldRow, GroupLabel, Accordion, SmoothScrollArea,
     hline, soft_shadow, label,
 )
+from studio.project_dialogs import confirm_trash, TrashDialog
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -351,17 +352,20 @@ _ENGINE_DOT = {"cellseg1": theme.VIZ[0], "cellpose": theme.VIZ[1], "sam2": theme
 class ProjectsScreen(QWidget):
     def __init__(self, t: dict, controller: "project_controller.ProjectController",
                  on_navigate: Callable[[str], None], on_open: Callable[[str], None],
-                 on_new_project: Callable[[], None]):
+                 on_new_project: Callable[[], None],
+                 on_toast: Optional[Callable[..., None]] = None):
         super().__init__()
         self._t = t
         self._controller = controller
         self._nav = on_navigate
         self._open = on_open
         self._new_project = on_new_project
+        self._toast = on_toast
         self._query = ""
         self._scope = "all"
         self._engines: set[str] = set()
         self._view = "grid"
+        self._trash_dialog: Optional[TrashDialog] = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -422,6 +426,7 @@ class ProjectsScreen(QWidget):
         self._outer.removeWidget(old)
         old.setParent(None)
         old.deleteLater()
+        self._refresh_trash_button()
         self._populate()
 
     # Every toolbar control except the page header's primary "New Project"
@@ -467,7 +472,20 @@ class ProjectsScreen(QWidget):
         self._view_seg.setFixedHeight(H)
         self._view_seg.changed.connect(self._on_view_changed)
         row.addWidget(self._view_seg)
+
+        # Always present (predictable location beats hiding it, matching
+        # this app's own "disabled rows shown dimmed, not hidden --
+        # discoverability" principle for the command palette), just disabled
+        # with nothing to show when the trash is empty.
+        self._trash_btn = IconButton("trash", t, H, "Trash", on_click=self._open_trash)
+        row.addWidget(self._trash_btn)
+        self._refresh_trash_button()
         return bar
+
+    def _refresh_trash_button(self) -> None:
+        n = len(self._controller.list_trashed())
+        self._trash_btn.setEnabled(n > 0)
+        self._trash_btn.setToolTip(f"Trash — {n} project{'s' if n != 1 else ''}" if n else "Trash is empty")
 
     # ── toolbar handlers ─────────────────────────────────────────────────────
     def _on_search(self, text: str) -> None:
@@ -523,6 +541,46 @@ class ProjectsScreen(QWidget):
     def _toggle_favorite(self, project_id: str) -> None:
         self._controller.toggle_favorite(project_id)
         self._populate()
+
+    # ── overflow (⋯) menu + trash ────────────────────────────────────────────
+    def _open_card_menu(self, anchor: QWidget, project_id: str, project_name: str) -> None:
+        """A per-card/row overflow menu, anchored under ``anchor`` (the ⋯
+        button that opened it) -- same on-demand-QMenu construction as
+        ``_open_filter_menu``/``SelectBox._open_menu`` elsewhere in this file.
+        """
+        menu = QMenu(self)
+        menu.addAction("Open", lambda: self._open(project_id))
+        menu.addSeparator()
+        menu.addAction("Move to Trash", lambda: self._confirm_trash(project_id, project_name))
+        menu.popup(anchor.mapToGlobal(anchor.rect().bottomRight()))
+        self._card_menu = menu  # keep a ref alive while it's open
+
+    def _confirm_trash(self, project_id: str, project_name: str) -> None:
+        # Keep a ref alive while it's open -- same reason _open_card_menu
+        # does for its QMenu: with nothing referencing the dialog Python-side
+        # (only Qt's own C++ parent-child ownership), it's fair game for
+        # garbage collection before the user ever gets to click anything.
+        self._active_dialog = confirm_trash(
+            self, self._t, project_name,
+            on_confirm=lambda: self._do_trash(project_id, project_name))
+
+    def _do_trash(self, project_id: str, project_name: str) -> None:
+        self._controller.trash_project(project_id)
+        self.refresh()
+        if self._toast:
+            self._toast("Moved to Trash", f"“{project_name}” moved to Trash.",
+                       action_label="Undo",
+                       on_action=lambda: self._undo_trash(project_id))
+
+    def _undo_trash(self, project_id: str) -> None:
+        self._controller.restore_project(project_id)
+        self.refresh()
+
+    def _open_trash(self) -> None:
+        if self._trash_dialog is None:
+            self._trash_dialog = TrashDialog(self, self._t, self._controller,
+                                            on_changed=self.refresh)
+        self._trash_dialog.open()
 
     # ── data + rendering ─────────────────────────────────────────────────────
     def _filtered_projects(self) -> list:
@@ -622,6 +680,13 @@ class ProjectsScreen(QWidget):
         star.setStyleSheet(
             "QToolButton{background:rgba(8,12,16,0.4); border:1px solid transparent; border-radius:8px;}"
             "QToolButton:hover{background:rgba(8,12,16,0.6);}")
+        more = IconButton("more", t, 26, "More")  # handler wired below (needs `more` itself as the menu anchor)
+        more.setIcon(icons.icon("more", "#e9ecf1", 15))
+        more.setStyleSheet(
+            "QToolButton{background:rgba(8,12,16,0.4); border:1px solid transparent; border-radius:8px;}"
+            "QToolButton:hover{background:rgba(8,12,16,0.6);}")
+        more.clicked.connect(lambda _=False, w=more, pid=p.id, name=p.name: self._open_card_menu(w, pid, name))
+        top.addWidget(more)
         top.addWidget(star)
         cwl.addLayout(top)
 
@@ -763,6 +828,10 @@ class ProjectsScreen(QWidget):
                            on_click=lambda pid=p.id: self._toggle_favorite(pid))
         star.setIcon(icons.icon("star", "#f0b357" if p.favorite else t["text_muted"], 15))
         lay.addWidget(star)
+
+        more = IconButton("more", t, 30, "More")  # handler wired below (needs `more` itself as the menu anchor)
+        more.clicked.connect(lambda _=False, w=more, pid=p.id, name=p.name: self._open_card_menu(w, pid, name))
+        lay.addWidget(more)
 
         row.mouseReleaseEvent = lambda e, pid=p.id: self._open(pid)
         return row

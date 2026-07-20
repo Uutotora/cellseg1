@@ -580,3 +580,60 @@ def test_input_and_footer_rows_match_the_panel_surface_not_the_page_bg(styled_ap
             f"{name} margin-corner sampled {sample.name()!r}, expected the panel's "
             f"own surface fill {light_t['surface']!r} -- a bare QWidget() row "
             f"wrapper is painting the page bg over it again")
+
+
+# ── Toast ────────────────────────────────────────────────────────────────────
+def test_toast_announce_without_action_hides_the_action_button(app, parent):
+    toast = overlays.Toast(parent, theme.DARK)
+    toast.announce("Moved to Trash", "“A” moved to Trash.")
+    assert toast.isVisible()
+    assert not toast._action_btn.isVisible()
+
+
+def test_toast_announce_with_action_shows_it_and_runs_on_click(app, parent):
+    toast = overlays.Toast(parent, theme.DARK)
+    seen = []
+    toast.announce("Moved to Trash", "“A” moved to Trash.",
+                   action_label="Undo", on_action=lambda: seen.append("undone"))
+    assert toast._action_btn.isVisible()
+    assert toast._action_btn.text() == "Undo"
+
+    toast._action_btn.click()
+
+    assert seen == ["undone"]
+    assert toast.isHidden()  # clicking the action dismisses the toast
+
+
+def test_toast_action_click_stops_the_auto_hide_timer(app, parent):
+    toast = overlays.Toast(parent, theme.DARK)
+    toast.announce("Moved to Trash", "…", duration_ms=50000,
+                   action_label="Undo", on_action=lambda: None)
+    assert toast._hide_timer.isActive()
+    toast._action_btn.click()
+    assert not toast._hide_timer.isActive()
+
+
+def test_toast_second_announce_without_action_clears_a_previous_one(app, parent):
+    """A later plain announce() (no action) must not leave a stale action
+    button visible/wired from an earlier one -- e.g. a second, unrelated
+    toast firing shortly after an "Undo" toast timed out on its own."""
+    toast = overlays.Toast(parent, theme.DARK)
+    toast.announce("Moved to Trash", "…", action_label="Undo", on_action=lambda: None)
+    assert toast._action_btn.isVisible()
+
+    toast.announce("Segmentation complete", "128 cells")
+
+    assert not toast._action_btn.isVisible()
+
+
+def test_toast_reconnecting_action_does_not_call_the_previous_handler(app, parent):
+    """Each announce() with an action must rewire the click handler, not
+    stack a second connection alongside the first (both would fire)."""
+    toast = overlays.Toast(parent, theme.DARK)
+    seen = []
+    toast.announce("A", "…", action_label="Undo", on_action=lambda: seen.append("a"))
+    toast.announce("B", "…", action_label="Undo", on_action=lambda: seen.append("b"))
+
+    toast._action_btn.click()
+
+    assert seen == ["b"]

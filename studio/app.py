@@ -172,7 +172,7 @@ class StudioWindow(QMainWindow):
             "home": HomeScreen(t, self._projects, self.navigate, self._open_project,
                                self._new_project_dialog.open),
             "projects": ProjectsScreen(t, self._projects, self.navigate, self._open_project,
-                                      self._new_project_dialog.open),
+                                      self._new_project_dialog.open, on_toast=self._toast.announce),
             "workspace": WorkspaceScreen(t, self._segment, self._projects, self._toast.announce,
                                         on_toggle_logs=lambda: self._toggle_drawer(self._logs),
                                         on_navigate=self.navigate),

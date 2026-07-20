@@ -37,6 +37,12 @@ PATHS: dict[str, str] = {
     "plus":        '<path d="M12 5v14M5 12h14"/>',
     "chevron":     '<path d="M9 6l6 6-6 6"/>',
     "chevron_down": '<path d="M6 9l6 6 6-6"/>',
+    # three evenly-spaced round dots via zero-length "h.01" segments +
+    # stroke-linecap="round" -- the same technique "assistant"'s typing
+    # indicator and "guide"'s info-dot already use; a real filled circle
+    # isn't an option since every path here renders stroke-only (fill="none"
+    # on the <svg> root in _svg()). The card/row overflow ("⋯") menu trigger.
+    "more":        '<path d="M5 12h.01M12 12h.01M19 12h.01"/>',
     "diagnose":    '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
     "search":      '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
     "check":       '<path d="M20 6L9 17l-5-5"/>',

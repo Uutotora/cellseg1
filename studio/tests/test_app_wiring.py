@@ -335,6 +335,112 @@ def test_projects_screen_toolbar_controls_share_one_height(app, controller):
     assert scr._scope_seg.height() == H
     assert scr._filter_btn.height() == H
     assert scr._view_seg.height() == H
+    assert scr._trash_btn.height() == H
+
+
+# ── kebab menu / trash flow ──────────────────────────────────────────────────
+def test_projects_screen_trash_button_starts_disabled_on_a_fresh_store(app, controller):
+    scr = _projects_screen(controller)
+    assert not scr._trash_btn.isEnabled()
+    assert "empty" in scr._trash_btn.toolTip()
+
+
+def test_projects_screen_card_has_exactly_one_more_button(app, controller):
+    scr = _projects_screen(controller)
+    p = controller.list_projects()[0]
+    card = scr._card(project_controller.to_card(p))
+    more_buttons = [b for b in card.findChildren(components.IconButton) if b.toolTip() == "More"]
+    assert len(more_buttons) == 1
+
+
+def test_projects_screen_list_row_has_exactly_one_more_button(app, controller):
+    scr = _projects_screen(controller)
+    p = controller.list_projects()[0]
+    row = scr._list_row(project_controller.to_card(p))
+    more_buttons = [b for b in row.findChildren(components.IconButton) if b.toolTip() == "More"]
+    assert len(more_buttons) == 1
+
+
+def test_projects_screen_card_menu_lists_open_and_move_to_trash(app, controller):
+    from PyQt6.QtWidgets import QToolButton
+    scr = _projects_screen(controller)
+    p = controller.list_projects()[0]
+    scr._open_card_menu(QToolButton(), p.id, p.name)
+    labels = [a.text() for a in scr._card_menu.actions() if not a.isSeparator()]
+    assert labels == ["Open", "Move to Trash"]
+    scr._card_menu.close()
+
+
+def test_projects_screen_do_trash_removes_from_grid_enables_trash_button_and_toasts(app, controller):
+    scr = _projects_screen(controller)
+    p = controller.list_projects()[0]
+    seen_toasts = []
+    scr._toast = lambda *a, **kw: seen_toasts.append((a, kw))
+
+    scr._do_trash(p.id, p.name)
+
+    assert p.id not in [x.id for x in controller.list_projects()]
+    assert scr._trash_btn.isEnabled()
+    assert "1 project" in scr._trash_btn.toolTip()
+    assert len(seen_toasts) == 1
+    (title, subtitle), kwargs = seen_toasts[0]
+    assert title == "Moved to Trash"
+    assert p.name in subtitle
+    assert kwargs.get("action_label") == "Undo"
+
+
+def test_projects_screen_do_trash_without_a_toast_callback_does_not_raise(app, controller):
+    """on_toast is optional (None by default, e.g. in the bare
+    _projects_screen() test helper) -- trashing must not assume it exists."""
+    scr = _projects_screen(controller)
+    p = controller.list_projects()[0]
+    assert scr._toast is None
+    scr._do_trash(p.id, p.name)  # must not raise
+    assert p.id not in [x.id for x in controller.list_projects()]
+
+
+def test_projects_screen_undo_trash_restores_the_project(app, controller):
+    scr = _projects_screen(controller)
+    p = controller.list_projects()[0]
+    scr._do_trash(p.id, p.name)
+    assert p.id not in [x.id for x in controller.list_projects()]
+
+    scr._undo_trash(p.id)
+
+    assert p.id in [x.id for x in controller.list_projects()]
+    assert not scr._trash_btn.isEnabled()  # back to empty
+
+
+def test_projects_screen_confirm_trash_only_acts_on_confirm(app, controller):
+    from studio.project_dialogs import ConfirmDialog
+    scr = _projects_screen(controller)
+    p = controller.list_projects()[0]
+
+    # scr itself is never shown in this offscreen wiring-test helper, so
+    # isVisible() (which depends on the whole ancestor chain) would read
+    # False even for the dialog that's genuinely open right now -- isHidden()
+    # reflects the widget's own explicit state instead, same distinction
+    # test_new_project_dialog.py's `parent` fixture comment already notes.
+    scr._confirm_trash(p.id, p.name)
+    dlg = next(w for w in scr.findChildren(ConfirmDialog) if not w.isHidden())
+    dlg.hide()  # Cancel (click-outside/close take the same path)
+    assert p.id in [x.id for x in controller.list_projects()]
+
+    scr._confirm_trash(p.id, p.name)
+    dlg = next(w for w in scr.findChildren(ConfirmDialog) if not w.isHidden())
+    dlg._confirm()
+    assert p.id not in [x.id for x in controller.list_projects()]
+
+
+def test_projects_screen_open_trash_builds_the_dialog_once_and_reuses_it(app, controller):
+    scr = _projects_screen(controller)
+    scr._open_trash()
+    first = scr._trash_dialog
+    assert first is not None
+    assert not first.isHidden()
+    first.hide()
+    scr._open_trash()
+    assert scr._trash_dialog is first  # same instance, reopened -- not rebuilt
 
 
 def test_projects_screen_engine_chip_has_the_right_dot_per_engine(app, controller):
