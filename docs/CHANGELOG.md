@@ -18,6 +18,20 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-21 — Rename repo + distribution `cellseg1` → `velum`
+
+The last outward-facing piece of the Velum rename.
+
+- **GitHub repo** renamed `Uutotora/cellseg1` → `Uutotora/velum` (GitHub keeps a
+  redirect from the old URL); local `origin` remotes re-pointed across all
+  worktrees.
+- **Distribution name** in `pyproject.toml`: `name = "cellseg1"` → `"velum"`
+  (and authors → "Velum contributors"). Updated `tests/test_packaging.py`'s
+  name guard to match.
+- The `cellseg1` / `cellseg1-studio` **console commands stay as aliases**
+  (alongside `velum`), and the `"cellseg1"` **engine** id is unchanged — only
+  the project/distribution name moved.
+
 ## 2026-07-21 — Git hygiene: PR template, CONTRIBUTING, editor ignores
 
 - **`.github/pull_request_template.md`** — codifies the discipline `AGENTS.md`

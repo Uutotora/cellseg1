@@ -3,13 +3,13 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cellseg1"
+name = "velum"
 version = "0.1.0"
 description = "Velum — a desktop app for cell instance segmentation in microscopy (SAM+LoRA and Cellpose-SAM engines)."
 requires-python = ">=3.10,<3.13"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "CellSeg1 contributors" }]
+authors = [{ name = "Velum contributors" }]
 keywords = ["segmentation", "microscopy", "cell", "SAM", "LoRA", "cellpose"]
 classifiers = [
     "Development Status :: 4 - Beta",

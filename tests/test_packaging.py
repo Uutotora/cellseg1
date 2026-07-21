@@ -19,7 +19,7 @@ def _load():
 
 def test_pyproject_exists_and_names_project():
     data = _load()
-    assert data["project"]["name"] == "cellseg1"
+    assert data["project"]["name"] == "velum"
     assert data["project"]["version"]
 
 
