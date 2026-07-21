@@ -58,6 +58,15 @@ def register(spec: EngineSpec) -> None:
     _registry[spec.key] = spec
 
 
+def unregister(key: str) -> None:
+    """Remove an engine by key if present (no error if it isn't).
+
+    Used when a user removes a custom engine plugin they loaded — the
+    built-in engines are never unregistered through this path.
+    """
+    _registry.pop(key, None)
+
+
 def get(key: str) -> EngineSpec:
     """Look up a registered engine, raising a clear error if unknown."""
     try:

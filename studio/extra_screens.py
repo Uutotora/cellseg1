@@ -23,7 +23,8 @@ from PyQt6.QtWidgets import (
 from studio import icons
 from studio import theme
 from studio.components import (
-    Chip, Badge, PillButton, SelectBox, GroupLabel, hline, soft_shadow, label,
+    Chip, Badge, PillButton, SelectBox, GroupLabel, SegControl, Accordion,
+    StatTile, hline, soft_shadow, label,
 )
 from studio.screens import page_header, scroll
 from studio import train_controller as tc
@@ -64,6 +65,10 @@ class ModelsScreen(QWidget):
         self._backbone_path: Optional[Path] = None
         self._lora_rank = tc.DEFAULT_RANK
         self._epochs = tc.DEFAULT_EPOCHS
+        # Which of the three sections is showing: 0 Train · 1 My models ·
+        # 2 Engines. Train is the default so every pre-existing test (which
+        # calls refresh() without touching this) still renders the form.
+        self._section = 0
 
         self._outer = QVBoxLayout(self)
         self._outer.setContentsMargins(0, 0, 0, 0)
@@ -99,19 +104,18 @@ class ModelsScreen(QWidget):
         t = self._t
         models = self._train.list_trained_models()
         n = len(models)
-        import_btn = PillButton("Import model", t, "ghost", "download")
-        import_btn.clicked.connect(self._import_model)
         self._outer.addWidget(page_header(
             "Models & Train",
             f"{n} trained adapter{'s' if n != 1 else ''} · one-shot LoRA fine-tuning",
-            t, import_btn))
+            t, self._header_action()))
+        self._outer.addWidget(self._section_bar())
 
-        body = bare_widget()
-        row = QHBoxLayout(body)
-        row.setContentsMargins(34, 4, 34, 40)
-        row.setSpacing(24)
-        row.addLayout(self._left(models), 1)
-        row.addLayout(self._aside(), 0)
+        if self._section == 1:
+            body = self._models_body(models)
+        elif self._section == 2:
+            body = self._engines_body()
+        else:
+            body = self._train_body(models)
         scroll_area = scroll(body)
         self._outer.addWidget(scroll_area)
         if scroll_pos is not None:
@@ -119,6 +123,48 @@ class ModelsScreen(QWidget):
 
         if self._train.is_training():
             self._live_timer.start()
+
+    # ── section navigation ──────────────────────────────────────────────────
+    def _section_bar(self) -> QWidget:
+        """The Train · My models · Engines segmented switch, in its own row
+        under the page header."""
+        t = self._t
+        wrap = bare_widget()
+        row = QHBoxLayout(wrap)
+        row.setContentsMargins(34, 2, 34, 14)
+        seg = SegControl(["Train", "My models", "Engines"], t, active=self._section)
+        seg.setFixedWidth(340)
+        seg.changed.connect(self._set_section)
+        row.addWidget(seg)
+        row.addStretch(1)
+        return wrap
+
+    def _set_section(self, idx: int) -> None:
+        self._section = idx
+        self.refresh()
+
+    def _header_action(self) -> Optional[QWidget]:
+        """The header's right-hand action, chosen per section — Import model on
+        the models tab, Register engine on the engines tab, nothing on Train
+        (its primary action is Start training, in the card)."""
+        t = self._t
+        if self._section == 1:
+            btn = PillButton("Import model", t, "ghost", "download")
+            btn.clicked.connect(self._import_model)
+            return btn
+        # Engines section has its own prominent Register button in the intro
+        # card, so the header stays clean there.
+        return None
+
+    # ── Train section body ───────────────────────────────────────────────────
+    def _train_body(self, models: list[TrainedModel]) -> QWidget:
+        body = bare_widget()
+        row = QHBoxLayout(body)
+        row.setContentsMargins(34, 4, 34, 40)
+        row.setSpacing(24)
+        row.addLayout(self._left(models), 1)
+        row.addLayout(self._aside(), 0)
+        return body
 
     def _scroll_pos(self) -> Optional[int]:
         for i in range(self._outer.count()):
@@ -133,22 +179,13 @@ class ModelsScreen(QWidget):
             return
         self.refresh()
 
-    # ── left: train form + trained models ───────────────────────────────────
+    # ── left: live progress (while training) + guided train form ─────────────
     def _left(self, models: list[TrainedModel]) -> QVBoxLayout:
-        t = self._t
         col = QVBoxLayout()
-        col.setSpacing(24)
+        col.setSpacing(20)
+        if self._train.is_training():
+            col.addWidget(self._live_progress_card())
         col.addWidget(self._train_card())
-
-        col.addWidget(label("Trained models", 15, t["text"], 600))
-        if models:
-            for m in models:
-                col.addWidget(self._model_row(m))
-        else:
-            cap = label("No trained models yet — train one above, or import an existing checkpoint.",
-                        12.5, t["text_muted"])
-            cap.setWordWrap(True)
-            col.addWidget(cap)
         col.addStretch(1)
         return col
 
@@ -196,8 +233,13 @@ class ModelsScreen(QWidget):
         cv = QVBoxLayout(card)
         cv.setContentsMargins(20, 20, 20, 20)
         cv.setSpacing(4)
-        cv.addWidget(label("Train a new model", 16, t["text"], 600))
-        cap = label("Fine-tune SAM with LoRA from a single annotated image — no ML setup, minutes on this device.",
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.addWidget(label("Train a new model", 16, t["text"], 600))
+        title_row.addWidget(Chip("One-shot LoRA", t, "primary"), alignment=Qt.AlignmentFlag.AlignVCenter)
+        title_row.addStretch(1)
+        cv.addLayout(title_row)
+        cap = label("Fine-tune SAM to your assay from a single annotated image — no ML setup, minutes on this device.",
                     13, t["text_muted"])
         cap.setWordWrap(True)
         cv.addWidget(cap)
@@ -215,19 +257,29 @@ class ModelsScreen(QWidget):
             backbone_box = SelectBox(self._backbone_field_text(), t, on_click=self._pick_backbone_file)
         rank_box = SelectBox(self._lora_rank, t, options=tc.RANK_OPTIONS, on_select=self._set_rank)
         epochs_box = SelectBox(self._epochs, t, options=tc.EPOCH_OPTIONS, on_select=self._set_epochs)
-        fields = [("Annotated image", image_box), ("SAM backbone", backbone_box),
-                  ("LoRA rank", rank_box), ("Epochs", epochs_box)]
-        for i, (fname, control) in enumerate(fields):
+        fields = [("Annotated image", image_box, None),
+                  ("SAM backbone", backbone_box, None),
+                  ("LoRA rank", rank_box, tc.rank_help(self._lora_rank)),
+                  ("Epochs", epochs_box, tc.epoch_help(self._epochs))]
+        for i, (fname, control, hint) in enumerate(fields):
             fc = QVBoxLayout()
-            fc.setSpacing(7)
+            fc.setSpacing(6)
             fc.addWidget(GroupLabel(fname, t))
             fc.addWidget(control)
+            if hint:
+                hl = label(hint, 11, t["text_muted"])
+                hl.setWordWrap(True)
+                fc.addWidget(hl)
+            fc.addStretch(1)
             form.addLayout(fc, i // 2, i % 2)
         cv.addLayout(form)
 
+        cv.addSpacing(14)
+        cv.addWidget(self._checklist())
+
         status = self._status_text()
         if status:
-            cv.addSpacing(4)
+            cv.addSpacing(8)
             st_lbl = label(status, 11.5, t["warning"])
             st_lbl.setWordWrap(True)
             cv.addWidget(st_lbl)
@@ -236,11 +288,127 @@ class ModelsScreen(QWidget):
         if self._train.is_training():
             btn = PillButton("Stop training", t, "danger")
             btn.clicked.connect(self._stop_training)
+            cv.addWidget(btn, alignment=Qt.AlignmentFlag.AlignLeft)
         else:
+            bottom = QHBoxLayout()
+            bottom.setSpacing(12)
             btn = PillButton("Start training", t, "primary", "run")
             btn.setEnabled(self._can_start())
             btn.clicked.connect(self._start_training)
-        cv.addWidget(btn, alignment=Qt.AlignmentFlag.AlignLeft)
+            bottom.addWidget(btn)
+            dev = label(f"Runs on {self._train.detected_device_label()}", 11.5, t["text_muted"])
+            bottom.addWidget(dev)
+            bottom.addStretch(1)
+            cv.addLayout(bottom)
+        return card
+
+    # ── guided readiness checklist ───────────────────────────────────────────
+    def _checklist(self) -> QFrame:
+        """A small "assistant" strip: the three things that must be true before
+        training can start, each ticking green as it's satisfied — so the user
+        always knows what the next step is instead of a greyed-out button."""
+        t = self._t
+        has_image = self._image_path is not None
+        has_mask = self._mask_path is not None
+        n = tc.count_cells_in_mask(self._mask_path) if has_mask else None
+        if not has_image:
+            img_state, img_text = "todo", "Pick an annotated image to fine-tune on"
+        elif not has_mask:
+            img_state, img_text = "warn", f"{self._image_path.name} — no mask found yet"
+        else:
+            cells = f" · {n} cells" if n is not None else ""
+            img_state, img_text = "done", f"{self._image_path.name}{cells}"
+
+        if self._has_backbone():
+            bb_state, bb_text = "done", f"SAM backbone · {self._backbone_field_text()}"
+        else:
+            bb_state, bb_text = "todo", "Choose a SAM backbone checkpoint"
+
+        if self._can_start():
+            rd_state = "done"
+            rd_text = f"Ready — rank {self._lora_rank}, {self._epochs} epochs on {self._train.detected_device_label()}"
+        else:
+            rd_state, rd_text = "todo", "Ready to train once the steps above are met"
+
+        panel = QFrame()
+        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        panel.setObjectName("TrainChecklist")
+        panel.setStyleSheet(f"QFrame#TrainChecklist{{background:{t['inset']}; border:1px solid {t['border']}; border-radius:10px;}}")
+        pv = QVBoxLayout(panel)
+        pv.setContentsMargins(14, 12, 14, 12)
+        pv.setSpacing(9)
+        pv.addWidget(self._check_row(img_state, img_text))
+        pv.addWidget(self._check_row(bb_state, bb_text))
+        pv.addWidget(self._check_row(rd_state, rd_text))
+        return panel
+
+    def _check_row(self, state: str, text: str) -> QWidget:
+        t = self._t
+        color = {"done": t["success"], "warn": t["warning"], "todo": t["text_muted"]}[state]
+        icon_name = {"done": "check", "warn": "diagnose", "todo": "target"}[state]
+        w = bare_widget()
+        row = QHBoxLayout(w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(9)
+        ic = QLabel()
+        ic.setPixmap(icons.pixmap(icon_name, color, 14))
+        ic.setFixedWidth(16)
+        row.addWidget(ic)
+        txt_color = t["text"] if state == "done" else t["text_subtle"] if state == "warn" else t["text_muted"]
+        lb = label(text, 12, txt_color, 600 if state == "done" else 500)
+        lb.setWordWrap(True)
+        row.addWidget(lb, 1)
+        return w
+
+    # ── live training progress ───────────────────────────────────────────────
+    def _live_progress_card(self) -> QFrame:
+        """The at-a-glance "watching over the run" panel shown while training —
+        epoch progress bar, current loss, and a live loss sparkline. Reads the
+        same drained progress the aside's run row does."""
+        t = self._t
+        run = self._train.current_run()
+        history = self._train.current_loss_history()
+        total = self._train.active_epoch_max() or 0
+        epoch = history[-1]["epoch"] if history else 0
+        loss = history[-1]["loss"] if history else None
+        frac = (epoch / total) if total else 0.0
+
+        card = QFrame()
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setObjectName("LiveTrainCard")
+        card.setStyleSheet(f"QFrame#LiveTrainCard{{background:{t['surface']}; border:1px solid {t['primary_line']}; border-radius:14px;}}")
+        soft_shadow(card, 16, 26, 3)
+        cv = QVBoxLayout(card)
+        cv.setContentsMargins(20, 18, 20, 18)
+        cv.setSpacing(10)
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        dot = QLabel()
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet(f"background:{t['signal']}; border-radius:4px;")
+        head.addWidget(dot)
+        head.addWidget(label("Training in progress", 14, t["text"], 600))
+        head.addStretch(1)
+        head.addWidget(Chip(f"epoch {epoch}/{total}" if total else "starting…", t, "signal"))
+        cv.addLayout(head)
+        name = self._train._active_name or (run.name if run else "run")
+        cv.addWidget(label(name, 11.5, t["text_muted"]))
+
+        cv.addWidget(_ProgressBar(frac, t))
+
+        stats = QHBoxLayout()
+        stats.setSpacing(10)
+        stats.addWidget(StatTile(f"{epoch}", f"/ {total}" if total else "", "EPOCH", t))
+        stats.addWidget(StatTile(f"{loss:.3f}" if loss is not None else "—", "", "LOSS", t))
+        stats.addWidget(StatTile(f"{int(frac*100)}", "%", "COMPLETE", t))
+        cv.addLayout(stats)
+
+        if len(history) >= 2:
+            cv.addSpacing(2)
+            cv.addWidget(label("Loss", 10.5, t["text_muted"], 600, 0.4))
+            chart = _LineChart([h["loss"] for h in history], t["primary"], t)
+            chart.setMinimumHeight(90)
+            cv.addWidget(chart)
         return card
 
     def _pick_image(self) -> None:
@@ -457,6 +625,233 @@ class ModelsScreen(QWidget):
         col.addWidget(tip)
         col.addStretch(1)
         return col
+
+    # ── My models section ────────────────────────────────────────────────────
+    def _models_body(self, models: list[TrainedModel]) -> QWidget:
+        t = self._t
+        body = bare_widget()
+        v = QVBoxLayout(body)
+        v.setContentsMargins(34, 4, 34, 40)
+        v.setSpacing(14)
+
+        head = QHBoxLayout()
+        head.addWidget(label("Your trained models", 15, t["text"], 600))
+        head.addStretch(1)
+        head.addWidget(label(
+            "Click a model to use it in the active project.", 12, t["text_muted"]))
+        v.addLayout(head)
+
+        if models:
+            for m in models:
+                v.addWidget(self._model_row(m))
+        else:
+            v.addWidget(self._models_empty_state())
+        v.addStretch(1)
+        return body
+
+    def _models_empty_state(self) -> QFrame:
+        t = self._t
+        card = QFrame()
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setObjectName("ModelsEmpty")
+        card.setStyleSheet(f"QFrame#ModelsEmpty{{background:{t['surface']}; border:1px dashed {t['border_strong']}; border-radius:14px;}}")
+        cv = QVBoxLayout(card)
+        cv.setContentsMargins(28, 34, 28, 34)
+        cv.setSpacing(8)
+        C = Qt.AlignmentFlag.AlignHCenter
+        ic = QLabel()
+        ic.setPixmap(icons.pixmap("models", t["text_muted"], 30))
+        ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cv.addWidget(ic, alignment=C)
+        h = label("No trained models yet", 15, t["text"], 600)
+        h.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cv.addWidget(h, alignment=C)
+        cap = label("Fine-tune one from a single annotated image, or import an existing "
+                    "checkpoint — both land here for you to reuse across projects.",
+                    12.5, t["text_muted"])
+        cap.setWordWrap(True)
+        cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cap.setFixedWidth(440)
+        cv.addWidget(cap, alignment=C)
+        cv.addSpacing(6)
+        cta_row = QHBoxLayout()
+        cta_row.setSpacing(10)
+        cta_row.addStretch(1)
+        train_btn = PillButton("Train a model", t, "primary", "run")
+        train_btn.clicked.connect(lambda: self._set_section(0))
+        import_btn = PillButton("Import checkpoint…", t, "ghost", "download")
+        import_btn.clicked.connect(self._import_model)
+        cta_row.addWidget(train_btn)
+        cta_row.addWidget(import_btn)
+        cta_row.addStretch(1)
+        cv.addLayout(cta_row)
+        return card
+
+    # ── Engines section ──────────────────────────────────────────────────────
+    def _engines_body(self) -> QWidget:
+        t = self._t
+        body = bare_widget()
+        v = QVBoxLayout(body)
+        v.setContentsMargins(34, 4, 34, 40)
+        v.setSpacing(16)
+
+        v.addWidget(self._engines_intro())
+
+        engines = self._train.list_engines()
+        grid = QGridLayout()
+        grid.setSpacing(14)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        for i, info in enumerate(engines):
+            grid.addWidget(self._engine_card(info), i // 2, i % 2)
+        v.addLayout(grid)
+
+        v.addWidget(self._engine_help())
+        v.addStretch(1)
+        return body
+
+    def _engines_intro(self) -> QFrame:
+        t = self._t
+        card = QFrame()
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setObjectName("EnginesIntro")
+        card.setStyleSheet(f"QFrame#EnginesIntro{{background:{t['surface']}; border:1px solid {t['border']}; border-radius:14px;}}")
+        soft_shadow(card, 14, 20, 3)
+        row = QHBoxLayout(card)
+        row.setContentsMargins(20, 16, 20, 16)
+        row.setSpacing(14)
+        badge = QLabel()
+        badge.setFixedSize(40, 40)
+        badge.setPixmap(icons.pixmap("cube3d", t["primary"], 20))
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setStyleSheet(f"background:{t['primary_weak']}; border-radius:10px;")
+        row.addWidget(badge, alignment=Qt.AlignmentFlag.AlignTop)
+        col = QVBoxLayout()
+        col.setSpacing(3)
+        col.addWidget(label("Segmentation engines", 15, t["text"], 600))
+        p = label("Every project runs on a segmentation engine. Velum ships three, and "
+                  "your own drop in the same way — a Python plugin that registers itself. "
+                  "Load one with “Register engine…” and it appears here and in the Segment "
+                  "tab’s engine picker.", 12.5, t["text_subtle"])
+        p.setWordWrap(True)
+        col.addWidget(p)
+        row.addLayout(col, 1)
+        register = PillButton("Register engine…", t, "primary", "plus")
+        register.clicked.connect(self._register_engine)
+        row.addWidget(register, alignment=Qt.AlignmentFlag.AlignVCenter)
+        return card
+
+    def _engine_dot(self, key: str) -> str:
+        return {"cellseg1": self._t["primary"], "cellpose": self._t["signal"],
+                "sam2": self._t["success"]}.get(key, self._t["warning"])
+
+    def _engine_card(self, info) -> QFrame:
+        t = self._t
+        card = QFrame()
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setObjectName("EngineCard")
+        card.setStyleSheet(
+            f"QFrame#EngineCard{{background:{t['surface']}; border:1px solid {t['border']}; border-radius:12px;}}"
+            f"QFrame#EngineCard:hover{{border-color:{t['border_strong']};}}")
+        cv = QVBoxLayout(card)
+        cv.setContentsMargins(16, 14, 16, 14)
+        cv.setSpacing(9)
+        top = QHBoxLayout()
+        top.setSpacing(9)
+        dot = QFrame()
+        dot.setFixedSize(9, 9)
+        dot.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        dot.setStyleSheet(f"background:{self._engine_dot(info.key)}; border-radius:4px;")
+        top.addWidget(dot, alignment=Qt.AlignmentFlag.AlignVCenter)
+        top.addWidget(label(info.label, 13.5, t["text"], 600), 1)
+        if info.custom:
+            top.addWidget(Chip("Custom", t, "warning"))
+        top.addWidget(Chip("Ready", t, "success") if info.available
+                      else Chip("Not installed", t, "muted"))
+        cv.addLayout(top)
+
+        sub = info.status or (
+            "Ready to run." if info.available
+            else "Optional dependency not installed — install it to enable this engine.")
+        sl = label(sub, 11.5, t["text_muted"] if info.available else t["text_subtle"])
+        sl.setWordWrap(True)
+        cv.addWidget(sl)
+
+        if info.custom:
+            foot = QHBoxLayout()
+            foot.addStretch(1)
+            remove = PillButton("Remove", t, "ghost", "trash")
+            remove.clicked.connect(lambda _=False, k=info.key: self._remove_engine(k))
+            foot.addWidget(remove)
+            cv.addLayout(foot)
+        return card
+
+    def _engine_help(self) -> Accordion:
+        t = self._t
+        acc = Accordion("How do I add my own engine?", t, lead="guide",
+                        caps=False, fill="surface2")
+        body = label(
+            "An engine plugin is a single Python file. At import time it calls "
+            "velum_core.engine_registry.register() with an EngineSpec — a stable "
+            "key, a display label, and a predict(image, config) → label-mask "
+            "function. Velum imports the file, registers whatever it declares, and "
+            "remembers it for next launch.", 12.5, t["text_subtle"])
+        body.setWordWrap(True)
+        acc.add(body)
+        snippet = QLabel(
+            "from velum_core.engine_registry import EngineSpec, register\n\n"
+            "def predict(image, config):\n"
+            "    # return an int label mask, one id per cell\n"
+            "    ...\n\n"
+            "register(EngineSpec(\n"
+            "    key=\"my_engine\", label=\"My Engine\",\n"
+            "    predict=predict, available=lambda: True))")
+        snippet.setStyleSheet(
+            f"color:{t['text_subtle']}; background:{t['inset']}; border:1px solid {t['border']};"
+            f"border-radius:8px; padding:12px 14px; font-family:{theme.MONO}; font-size:11.5px;")
+        acc.add(snippet)
+        return acc
+
+    def _register_engine(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Register an engine plugin", "", "Python (*.py);;All files (*)", options=_DLG)
+        if not path:
+            return
+        try:
+            keys = self._train.add_custom_engine(path)
+        except ValueError as e:
+            self._toast("Couldn't register engine", str(e))
+            return
+        self._toast("Engine registered", ", ".join(keys))
+        self.refresh()
+
+    def _remove_engine(self, key: str) -> None:
+        self._train.remove_custom_engine(key)
+        self._toast("Engine removed", key)
+        self.refresh()
+
+
+# ── small widgets ─────────────────────────────────────────────────────────────
+class _ProgressBar(QWidget):
+    """A slim rounded progress bar (0..1) — the live training epoch fill."""
+
+    def __init__(self, frac: float, t: dict):
+        super().__init__()
+        self._frac = max(0.0, min(1.0, frac))
+        self._t = t
+        self.setFixedHeight(8)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        w, h = self.width(), self.height()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(self._t["inset"]))
+        p.drawRoundedRect(QRectF(0, 0, w, h), h / 2, h / 2)
+        fw = max(h, w * self._frac)
+        p.setBrush(QColor(self._t["primary"]))
+        p.drawRoundedRect(QRectF(0, 0, fw, h), h / 2, h / 2)
+        p.end()
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────────

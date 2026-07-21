@@ -405,3 +405,107 @@ def test_is_training_false_and_current_run_none_when_idle(ctrl):
     assert ctrl.current_run() is None
     assert ctrl.current_loss_history() == []
     assert ctrl.active_epoch_max() is None
+
+
+# ── guided-form microcopy + device ───────────────────────────────────────────
+def test_rank_and_epoch_help_are_nonempty_for_every_option():
+    from studio.train_controller import RANK_OPTIONS, EPOCH_OPTIONS, rank_help, epoch_help
+    assert all(rank_help(r) for r in RANK_OPTIONS)
+    assert all(epoch_help(e) for e in EPOCH_OPTIONS)
+
+
+def test_help_lookups_are_safe_for_unknown_values():
+    from studio.train_controller import rank_help, epoch_help
+    assert rank_help("999") == ""
+    assert epoch_help("999") == ""
+
+
+def test_detected_device_label_maps_known_devices(ctrl, monkeypatch):
+    monkeypatch.setattr(ctrl, "_detect_device", lambda: "cpu")
+    assert "CPU" in ctrl.detected_device_label()
+    monkeypatch.setattr(ctrl, "_detect_device", lambda: "mps")
+    assert "MPS" in ctrl.detected_device_label()
+    monkeypatch.setattr(ctrl, "_detect_device", lambda: "0")
+    assert "CUDA" in ctrl.detected_device_label()
+
+
+# ── engines ("bring your own engine") ────────────────────────────────────────
+@pytest.fixture
+def isolated_registry():
+    """Snapshot the real registry's *contents* and restore them after, rather
+    than swapping the dict object — swapping it to ``{}`` and then triggering
+    the one-time ``import velum_core.engines`` inside that scope would land the
+    built-ins in a throwaway dict and permanently strip them from the real
+    registry (breaking every later built-in-engine test)."""
+    from velum_core import engine_registry
+    import velum_core.engines  # noqa: F401 — builtins into the REAL registry, once
+    try:
+        import velum_core.engines_sam2  # noqa: F401 — so sam2 is in the snapshot too
+    except Exception:
+        pass
+    saved = dict(engine_registry._registry)
+    yield engine_registry
+    engine_registry._registry.clear()
+    engine_registry._registry.update(saved)
+
+
+def test_list_engines_includes_registered_builtins(ctrl, isolated_registry):
+    infos = ctrl.list_engines()
+    keys = {i.key for i in infos}
+    assert {"cellseg1", "cellpose"} <= keys
+    assert all(not i.custom for i in infos)
+
+
+def test_add_custom_engine_registers_persists_and_lists(ctrl, isolated_registry, tmp_path):
+    plugin = tmp_path / "eng.py"
+    plugin.write_text(
+        "from velum_core.engine_registry import EngineSpec, register\n"
+        "register(EngineSpec(key='myeng', label='My Engine', predict=lambda i, c: i))\n")
+    keys = ctrl.add_custom_engine(plugin)
+    assert keys == ["myeng"]
+    infos = {i.key: i for i in ctrl.list_engines()}
+    assert infos["myeng"].custom is True
+    assert infos["myeng"].available is True
+    # persisted for the next launch
+    assert "myeng" in ctrl.engine_store.custom_keys()
+
+
+def test_add_custom_engine_invalid_file_raises(ctrl, isolated_registry, tmp_path):
+    empty = tmp_path / "empty.py"
+    empty.write_text("x = 1\n")
+    with pytest.raises(ValueError):
+        ctrl.add_custom_engine(empty)
+
+
+def test_remove_custom_engine_unregisters_and_forgets(ctrl, isolated_registry, tmp_path):
+    plugin = tmp_path / "eng.py"
+    plugin.write_text(
+        "from velum_core.engine_registry import EngineSpec, register\n"
+        "register(EngineSpec(key='myeng', label='My Engine', predict=lambda i, c: i))\n")
+    ctrl.add_custom_engine(plugin)
+    ctrl.remove_custom_engine("myeng")
+    assert "myeng" not in {i.key for i in ctrl.list_engines()}
+    assert "myeng" not in ctrl.engine_store.custom_keys()
+
+
+def test_custom_engine_persists_across_controller_instances(storage, isolated_registry, tmp_path):
+    from studio.train_controller import TrainController
+    plugin = tmp_path / "eng.py"
+    plugin.write_text(
+        "from velum_core.engine_registry import EngineSpec, register\n"
+        "register(EngineSpec(key='myeng', label='My Engine', predict=lambda i, c: i))\n")
+    TrainController(storage_dir=storage).add_custom_engine(plugin)
+    isolated_registry._registry.clear()  # simulate a fresh process
+    reloaded = TrainController(storage_dir=storage)
+    assert "myeng" in {i.key for i in reloaded.list_engines()}
+
+
+def test_engine_info_available_reflects_probe(ctrl, isolated_registry, tmp_path):
+    plugin = tmp_path / "eng.py"
+    plugin.write_text(
+        "from velum_core.engine_registry import EngineSpec, register\n"
+        "register(EngineSpec(key='off', label='Off Engine', predict=lambda i, c: i, "
+        "available=lambda: False))\n")
+    ctrl.add_custom_engine(plugin)
+    info = {i.key: i for i in ctrl.list_engines()}["off"]
+    assert info.available is False

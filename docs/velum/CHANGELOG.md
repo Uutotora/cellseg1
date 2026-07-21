@@ -7,6 +7,41 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-21 — Models & Train redesigned into a guided, three-section hub
+
+Rebuilt the Models & Train screen (`studio/extra_screens.py::ModelsScreen`)
+from a single sparse form into a guided workspace with a **Train · My models ·
+Engines** segmented switch — one screen for the three things power users do:
+train their own LoRAs, reuse their own models, and load their own engines.
+
+- **Train** — the form is now a coach. Each of LoRA rank / epochs carries a
+  one-line explanation of what the value does; a live **readiness checklist**
+  ticks green as the annotated image, mask, and SAM backbone fall into place
+  (so the disabled Start button always says *why*); the target device is shown
+  up front ("Runs on Apple GPU · MPS"). While a run is going, a **live
+  progress card** shows an epoch progress bar, epoch / loss / % stat tiles, and
+  a real-time loss sparkline.
+- **My models** — the trained-adapter list gets its own tab with a proper
+  empty state (Train / Import CTAs) instead of hanging under the form.
+- **Engines** — "bring your own engine": lists every registered engine with a
+  Ready/Not-installed badge and live status line, and a **Register engine…**
+  flow that loads a user Python plugin (a file that calls
+  `engine_registry.register(EngineSpec(...))`), badges it *Custom*, persists it
+  across launches, and lets you remove it. A "How do I add my own engine?"
+  help card shows the minimal plugin snippet.
+
+New pure-logic backend: `velum_core/custom_engines.py` (load + JSON-manifest
+persistence of engine plugins, captures `register()` calls so a re-loaded/
+replaced plugin is still reported), `engine_registry.unregister()`, and
+`TrainController.list_engines()/add_custom_engine()/remove_custom_engine()/
+detected_device_label()` + rank/epoch help text — all covered by
+`tests/test_custom_engines.py` and additions to `test_train_controller.py` /
+`test_extra_screens.py`. Verified offscreen (dark + light) for the Train
+(idle / ready / training), My models, and Engines (built-in + custom) states;
+**not** verified: real GUI interaction or a real training run.
+
+---
+
 ## 2026-07-21 — Renamed the product to **Velum**
 
 CellSeg1 Studio -> **Velum**. The product is no longer positioned as cells-only:

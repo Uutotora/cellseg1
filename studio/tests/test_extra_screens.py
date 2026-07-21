@@ -403,3 +403,94 @@ def test_dashboard_screen_open_in_aim_missing_aim_toasts_hint(
     monkeypatch.setattr(scr._dashboard, "open_in_aim", _raise)
     scr._open_in_aim()
     assert any("Aim isn't installed" in t for t, _ in toasts)
+
+
+# ── ModelsScreen sections (Train · My models · Engines) ──────────────────────
+def test_models_screen_defaults_to_train_section(parent, train_ctrl, project_ctrl, on_toast):
+    scr = es.ModelsScreen(theme.DARK, train_ctrl, project_ctrl, on_toast)
+    assert scr._section == 0
+
+
+def test_set_section_switches_and_rebuilds(parent, train_ctrl, project_ctrl, on_toast):
+    scr = es.ModelsScreen(theme.DARK, train_ctrl, project_ctrl, on_toast)
+    scr._set_section(2)
+    assert scr._section == 2
+    # engines body lists the built-in engines
+    from PyQt6.QtWidgets import QLabel
+    texts = [w.text() for w in scr.findChildren(QLabel)]
+    assert any("Segmentation engines" in t for t in texts)
+    assert any("CellSeg1" in t for t in texts)
+
+
+@pytest.fixture
+def isolated_registry():
+    """Snapshot/restore registry contents (see test_train_controller for why
+    swapping the dict object would strip the built-ins permanently)."""
+    from velum_core import engine_registry
+    import velum_core.engines  # noqa: F401
+    try:
+        import velum_core.engines_sam2  # noqa: F401
+    except Exception:
+        pass
+    saved = dict(engine_registry._registry)
+    yield engine_registry
+    engine_registry._registry.clear()
+    engine_registry._registry.update(saved)
+
+
+def test_engines_section_shows_custom_engine_and_can_remove(
+        parent, train_ctrl, project_ctrl, on_toast, toasts, tmp_path, isolated_registry):
+    plugin = tmp_path / "eng.py"
+    plugin.write_text(
+        "from velum_core.engine_registry import EngineSpec, register\n"
+        "register(EngineSpec(key='myeng', label='My Engine', predict=lambda i, c: i))\n")
+    train_ctrl.add_custom_engine(plugin)
+    scr = es.ModelsScreen(theme.DARK, train_ctrl, project_ctrl, on_toast)
+    scr._set_section(2)
+    from PyQt6.QtWidgets import QLabel
+    assert any("My Engine" in w.text() for w in scr.findChildren(QLabel))
+    scr._remove_engine("myeng")
+    assert "myeng" not in {i.key for i in train_ctrl.list_engines()}
+    assert any("Engine removed" in t for t, _ in toasts)
+
+
+def test_register_engine_invalid_file_toasts_error(
+        parent, train_ctrl, project_ctrl, on_toast, toasts, tmp_path, monkeypatch):
+    bad = tmp_path / "empty.py"
+    bad.write_text("x = 1\n")
+    scr = es.ModelsScreen(theme.DARK, train_ctrl, project_ctrl, on_toast)
+    monkeypatch.setattr(es.QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(bad), "")))
+    scr._register_engine()
+    assert any("Couldn't register engine" in t for t, _ in toasts)
+
+
+def test_register_engine_success_toasts_and_refreshes(
+        parent, train_ctrl, project_ctrl, on_toast, toasts, tmp_path, monkeypatch, isolated_registry):
+    plugin = tmp_path / "eng.py"
+    plugin.write_text(
+        "from velum_core.engine_registry import EngineSpec, register\n"
+        "register(EngineSpec(key='myeng', label='My Engine', predict=lambda i, c: i))\n")
+    scr = es.ModelsScreen(theme.DARK, train_ctrl, project_ctrl, on_toast)
+    scr._set_section(2)
+    monkeypatch.setattr(es.QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(plugin), "")))
+    scr._register_engine()
+    assert any("Engine registered" in t for t, _ in toasts)
+    assert "myeng" in {i.key for i in train_ctrl.list_engines()}
+
+
+def test_my_models_section_empty_state(parent, train_ctrl, project_ctrl, on_toast):
+    scr = es.ModelsScreen(theme.DARK, train_ctrl, project_ctrl, on_toast)
+    scr._set_section(1)
+    from PyQt6.QtWidgets import QLabel
+    assert any("No trained models yet" in w.text() for w in scr.findChildren(QLabel))
+
+
+def test_live_progress_card_renders_while_training(
+        parent, train_ctrl, project_ctrl, on_toast, monkeypatch):
+    monkeypatch.setattr(train_ctrl, "is_training", lambda: True)
+    train_ctrl._active_name = "run_x"
+    train_ctrl._active_total_epochs = 100
+    train_ctrl._loss_history = [{"epoch": e, "loss": 1.0 / e} for e in range(1, 12)]
+    scr = es.ModelsScreen(theme.DARK, train_ctrl, project_ctrl, on_toast)
+    from PyQt6.QtWidgets import QLabel
+    assert any("Training in progress" in w.text() for w in scr.findChildren(QLabel))

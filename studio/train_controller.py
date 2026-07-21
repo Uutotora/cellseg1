@@ -178,6 +178,45 @@ class TrainedModel:
 
 
 @dataclass
+class EngineInfo:
+    """One row of the "Engines" section — a registered segmentation engine,
+    with whether its dependency is installed and whether it's a user-loaded
+    custom plugin (vs. a built-in)."""
+
+    key: str
+    label: str
+    available: bool
+    status: str
+    custom: bool
+
+
+# Human-facing one-liners for each field the guided form exposes, keyed by the
+# chosen value — the "assistant" microcopy under each control. Kept here (not
+# in the Qt screen) so it's covered by the pure-logic tests.
+RANK_HELP = {
+    "4": "Lightest adapter — fastest, best when your assay is close to SAM's defaults.",
+    "8": "Balanced default — enough capacity for most assays.",
+    "16": "More capacity for unusual morphology; a little slower.",
+    "32": "Maximum capacity — use only if rank 16 underfits; slowest.",
+}
+EPOCH_HELP = {
+    "50": "Quick pass — good for a first look or an easy assay.",
+    "100": "Recommended default — converges on most single-image fine-tunes.",
+    "150": "A bit longer for harder assays.",
+    "300": "Long run — diminishing returns unless loss is still falling.",
+    "500": "Very long — only if the loss curve hasn't plateaued.",
+}
+
+
+def rank_help(value: str) -> str:
+    return RANK_HELP.get(str(value), "")
+
+
+def epoch_help(value: str) -> str:
+    return EPOCH_HELP.get(str(value), "")
+
+
+@dataclass
 class RecentRun:
     """One row of the "Recent training runs" aside — either the live
     in-progress run (``state="run"``) or a finished one from history."""
@@ -253,6 +292,13 @@ class TrainController:
         from velum_core.train_state_manager import TrainingStateManager
         self.state_manager = TrainingStateManager(str(self.storage_dir))
 
+        # Custom ("bring your own") engine plugins: re-register whatever the
+        # user loaded in a previous session, best-effort — a broken plugin is
+        # skipped, never fatal (see custom_engines.register_persisted).
+        from velum_core.custom_engines import CustomEngineStore, register_persisted
+        self.engine_store = CustomEngineStore(self.storage_dir)
+        register_persisted(self.engine_store)
+
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._progress_queue: "queue.Queue[dict]" = queue.Queue()
@@ -272,6 +318,66 @@ class TrainController:
 
     def find_mask_for_image(self, image_path: str | Path) -> Optional[Path]:
         return find_mask_for_image(image_path)
+
+    # ── engines ("bring your own engine") ─────────────────────────────────────
+    @staticmethod
+    def _ensure_engines_registered() -> None:
+        """Import the modules that register the built-in engines (mirrors
+        ``SegmentController._ensure_engines_registered``). SAM2's import is
+        guarded — it degrades to ``available()=False`` when the optional
+        dependency is absent, but a hard import error there must not empty the
+        engine list."""
+        import velum_core.engines  # noqa: F401 — registers cellseg1 + cellpose
+        try:
+            import velum_core.engines_sam2  # noqa: F401 — registers sam2
+        except Exception:
+            pass
+
+    def list_engines(self) -> list[EngineInfo]:
+        """Every registered engine as an ``EngineInfo`` row, built-ins plus any
+        loaded custom plugins, in registration order."""
+        self._ensure_engines_registered()
+        from velum_core.engine_registry import all_engines
+        custom_keys = self.engine_store.custom_keys()
+        out: list[EngineInfo] = []
+        for spec in all_engines():
+            try:
+                available = bool(spec.available())
+            except Exception:
+                available = False
+            status = ""
+            if available and spec.status_line is not None:
+                try:
+                    status = spec.status_line()
+                except Exception:
+                    status = ""
+            out.append(EngineInfo(
+                key=spec.key, label=spec.label, available=available,
+                status=status, custom=spec.key in custom_keys))
+        return out
+
+    def add_custom_engine(self, path: str | Path) -> list[str]:
+        """Load a user engine plugin, persist it, and return the keys it
+        registered. Raises ``ValueError`` (surfaced as a toast) on any failure —
+        missing file, import error, or a file that registers nothing."""
+        from velum_core.custom_engines import load_engine_file
+        keys = load_engine_file(path)
+        self.engine_store.add(path, keys)
+        return keys
+
+    def remove_custom_engine(self, key: str) -> None:
+        """Unregister a loaded custom engine and forget its plugin."""
+        from velum_core.engine_registry import unregister
+        unregister(key)
+        self.engine_store.remove_key(key)
+
+    def detected_device_label(self) -> str:
+        """Friendly name for the device training will actually run on — the
+        guided form shows it so the user knows the run will use their GPU."""
+        return {
+            "mps": "Apple GPU · MPS",
+            "cpu": "CPU (no GPU detected)",
+        }.get(self._detect_device(), "CUDA GPU")
 
     # ── live progress ────────────────────────────────────────────────────────
     def is_training(self) -> bool:
