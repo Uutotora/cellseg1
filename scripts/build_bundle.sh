@@ -3,7 +3,7 @@
 # ship to someone who has neither the repo nor a Python env. Produces a macOS
 # .app (+ .dmg) or a Linux dist folder (+ .tar.gz), auto-detected by OS.
 #
-# This is the "release" packaging (docstudio/PACKAGING.md, Mode 2) — heavier and
+# This is the "release" packaging (docs/velum/PACKAGING.md, Mode 2) — heavier and
 # slower than the dev-launcher (scripts/make_app.sh). It bundles Python + torch +
 # PyQt6 + the app, so the artifact is large (~1.5–2.5 GB, torch dominates). The
 # ~2.5 GB SAM ViT-H backbone is NOT bundled — it downloads on first use into the
@@ -34,7 +34,7 @@ COMMON=(
   --collect-all cellpose --collect-all numpy --collect-all cv2
   --collect-all tifffile --collect-all matplotlib
   # the app's own packages (pure-python, but keep them whole)
-  --collect-submodules studio --collect-submodules cellseg1_core
+  --collect-submodules studio --collect-submodules velum_core
   --collect-submodules segment_anything --collect-submodules peft
   # bundled assets + small LoRA checkpoints (NOT the big SAM backbone).
   # Source paths are ABSOLUTE: --add-data resolves the source relative to

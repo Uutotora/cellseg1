@@ -42,7 +42,7 @@ the common cases:
 The app owns its whole window — Home · Projects · **Segment** · Models & Train ·
 Dashboard — with its **own** Qt image canvas and layer model (it is *not* an
 embedded napari; nothing imports napari at runtime). The engine-agnostic ML core
-lives in a separate, Qt-free package, [`cellseg1_core/`](cellseg1_core/).
+lives in a separate, Qt-free package, [`velum_core/`](velum_core/).
 
 ## Screenshots
 
@@ -82,17 +82,17 @@ Apple-silicon MPS and CUDA are used when available).
 
 ```bash
 # 1. Create the environment and fetch SAM weights (one time)
-bash setup_napari.sh          # or set up your own env, see below
+bash scripts/setup.sh         # or set up your own env, see below
 
 # 2. Launch
-bash run_studio.sh            # or: cellseg1  /  cellseg1-studio
+bash run_studio.sh            # or: velum  /  cellseg1
 ```
 
 Prefer your own environment?
 
 ```bash
-pip install -e .              # installs the app + the `cellseg1` launcher
-cellseg1
+pip install -e .              # installs the app + the `velum` launcher
+velum
 ```
 
 <sub>No conda / fresh Linux box? See [`AGENTS.md`](AGENTS.md) for a `uv`-based
@@ -108,7 +108,7 @@ bash scripts/make_app.sh      # -> dist/Velum.app
 open "dist/Velum.app"
 ```
 
-See **[docstudio/PACKAGING.md](docstudio/PACKAGING.md)** for the full story
+See **[docs/velum/PACKAGING.md](docs/velum/PACKAGING.md)** for the full story
 (dev-launcher vs. a self-contained distributable, and how the icon works).
 
 ## Adding features (the update loop)
@@ -118,26 +118,26 @@ Studio is built so you add features by describing them, without re-packaging:
 1. **Once:** build the dev-launcher `.app` (above). Keep it in the Dock.
 2. **Each feature:** edit code under `studio/` (UI) — screens wire to plain,
    unit-tested controllers in `studio/*_controller.py`; the ML core is
-   `cellseg1_core/`.
+   `velum_core/`.
 3. **See it:** quit and relaunch from the Dock (or `bash run_studio.sh` for a
    terminal loop with live logs). Same `.app`, new code.
 4. **Keep it green:** run the tests (below); add one for new logic.
 
-Full guide: **[docstudio/PACKAGING.md](docstudio/PACKAGING.md)** ·
-architecture and how to wire a tab: **[docstudio/](docstudio/)**.
+Full guide: **[docs/velum/PACKAGING.md](docs/velum/PACKAGING.md)** ·
+architecture and how to wire a tab: **[docs/velum/](docs/velum/)**.
 
 ## Architecture
 
 ```
 studio/            The desktop app (PyQt6): screens, own canvas + layer model,
                    per-tab controllers. No napari.
-cellseg1_core/     Engine-agnostic ML core (Qt-free): predict controller,
+velum_core/     Engine-agnostic ML core (Qt-free): predict controller,
                    engines (CellSeg1 / Cellpose-SAM / SAM2), analysis,
                    benchmark, cohort, training, tiling, volume stitching.
 server/            Optional multi-user backend foundation (accounts, RBAC,
                    audit) — stdlib only, opt-in.
 segment_anything/  Vendored SAM fork · peft/ LoRA · data/ IO  (repo-root ML libs)
-docs/ · docstudio/ Project docs and Studio-specific docs (design, packaging,
+docs/ · docs/velum/ Project docs and Studio-specific docs (design, packaging,
                    backlog, changelog)
 ```
 

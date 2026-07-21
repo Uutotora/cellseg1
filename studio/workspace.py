@@ -5,7 +5,7 @@ napari-Labels-faithful) driving our own **Canvas** (``studio/canvas.py`` —
 not embedded napari), and the **inspector** (Segment settings · Results).
 Real segmentation is reused from the classic app via ``SegmentController``
 (``studio/segment_controller.py``), which wraps
-``cellseg1_core.predict_controller.PredictController`` unmodified.
+``velum_core.predict_controller.PredictController`` unmodified.
 
 Every reactive region rebuilds its own small container on demand rather than
 tearing down the whole screen (unlike ``ModelsScreen``/``DashboardScreen``,
@@ -15,7 +15,7 @@ mid-drag must never have its own container rebuilt (that would sever the
 mouse grab mid-gesture): value-only changes update an inline `Badge`
 directly and never call the container rebuild; only a *structural* change
 (add/remove/select a layer, switch engine, switch project/image) rebuilds a
-container. See ``docstudio/ARCHITECTURE.md``'s "Segment tab specifically".
+container. See ``docs/velum/ARCHITECTURE.md``'s "Segment tab specifically".
 """
 from __future__ import annotations
 
@@ -361,7 +361,7 @@ class WorkspaceScreen(QWidget):
 
         # An explicit \n, not setWordWrap(True) -- a wrapping QLabel with no
         # fixed width anchor has an ambiguous heightForWidth negotiation
-        # (see overlays.Toast's own subtitle fix, docstudio/CHANGELOG.md
+        # (see overlays.Toast's own subtitle fix, docs/velum/CHANGELOG.md
         # 2026-07-20); picking the line break ourselves for this short,
         # fixed copy sidesteps that whole bug class instead of re-risking it.
         sub = label("Open an existing project, or create a new one\nto start segmenting cells.",

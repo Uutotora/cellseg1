@@ -1,7 +1,7 @@
 """Velum — the application shell and entry point.
 
 This app is a faithful, native-Qt reproduction of the north-star mockup, with
-functionality wired back tab by tab (see ``docstudio/`` — OVERVIEW,
+functionality wired back tab by tab (see ``docs/velum/`` — OVERVIEW,
 ARCHITECTURE, BACKLOG, AGENT_PROMPT). Every screen is real: Home/Projects
 (``ProjectController``), Segment (``SegmentController`` + our own canvas/layer
 model), Models & Train/Dashboard (``TrainController``/``DashboardController``),
@@ -14,8 +14,8 @@ lazily, only inside the tab that needs them.
 ``StudioWindow`` owns a frameless, rounded window with our own dark title bar,
 a navigation sidebar, a stack of screens (Home · Projects · Segment · Models &
 Train · Dashboard), and overlay surfaces (Assistant drawer, Logs console, ⌘K
-command palette, toast). The classic napari-plugin app
-(``cellseg1_core.main`` / ``run_napari.sh`` / ``cellseg1``) is untouched.
+command palette, toast). Launch it with ``run_studio.sh`` or the ``velum`` /
+``cellseg1`` console command.
 """
 from __future__ import annotations
 

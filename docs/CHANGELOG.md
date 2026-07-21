@@ -18,6 +18,66 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-21 — Git hygiene: PR template, CONTRIBUTING, editor ignores
+
+- **`.github/pull_request_template.md`** — codifies the discipline `AGENTS.md`
+  already asks for (summary · test plan · *what's not verified* · changelog),
+  so every PR prompts for it.
+- **`CONTRIBUTING.md`** — a short front door that GitHub surfaces in its PR/issue
+  UI, pointing at `AGENTS.md` (the real guide) with quick setup/test pointers.
+- **`.gitignore`** — added a tidy `.vscode/` + `.idea/` editor block.
+
+## 2026-07-21 — Rename the ML core package `cellseg1_core` → `velum_core`
+
+Follows the product rename to **Velum**: the engine-agnostic ML-core package
+now matches the product name. A pure, mechanical identifier rename — no logic
+changed.
+
+- `git mv cellseg1_core/ velum_core/` and replaced all 266 occurrences of the
+  exact token `cellseg1_core` across 51 files (imports in `studio/`, `tests/`,
+  the core itself; `pyproject.toml`'s `packages.find` include; docs; comments).
+- The bare `cellseg1` name is deliberately untouched — it's still the console
+  command / distribution alias and the conda env name. Only the `_core`
+  package moved.
+
+Verified: full offscreen `pytest` green; `velum_core.*` and `studio.*` import
+cleanly after clearing stale bytecode.
+
+## 2026-07-21 — Docs: one tree, no more top-level `docstudio/`
+
+The repo had **two** top-level doc folders — `docs/` (project-wide) and
+`docstudio/` (the Velum app's own set) — which drifted and confused agents
+about which BACKLOG/CHANGELOG was live. Consolidated into a single `docs/`
+tree with no content lost:
+
+- **Moved** `docstudio/` → `docs/velum/` (the app-specific subset now nests
+  under `docs/`), and retargeted every `docstudio/…` reference (≈30 code
+  comments/docstrings in `studio/`, plus scripts, CI, README, AGENTS.md) to
+  `docs/velum/…`.
+- **Added** [`docs/README.md`](README.md) — a documentation map: project-wide
+  vs. Velum-specific, and which backlog/changelog a given change belongs in.
+- **Fixed** `docs/velum/README.md`'s stale premise (it still claimed the
+  "classic napari app is untouched" and that Velum "lives on its own branch,
+  never merged into main" — both false since the napari UI was deleted and
+  Velum became the product) and its now-one-level-deeper relative links
+  (app icon, `.github/workflows/release.yml`).
+
+## 2026-07-21 — Repo cleanup: drop dead files, fix napari-era naming
+
+Housekeeping pass after the napari→Studio→Velum evolution left dangling names
+and dead config. No behaviour change.
+
+- **Removed** `.streamlit/config.toml` — a leftover from the long-gone Streamlit
+  UI; nothing in the codebase imports Streamlit.
+- **Moved** `setup_napari.sh` → `scripts/setup.sh` (all shell tooling now lives
+  under `scripts/`), fixed its repo-root path resolution for the new location,
+  and pointed its "launch with" hint at `run_studio.sh` instead of the
+  nonexistent `run_napari.sh`.
+- **Fixed stale references** to the deleted napari app / `run_napari.sh` /
+  `setup_napari.sh` in `run_studio.sh`, `AGENTS.md`, `README.md`, and two
+  user-facing strings in `studio/` (the "no backbone" and "no mask" hints now
+  name `scripts/setup.sh` and the in-app Segment tab, not napari).
+
 ## 2026-07-21 — Multi-user backend foundation (`server/`): accounts, RBAC, a scalable DB
 
 New, **additive** top-level `server/` package — the accounts + shared-database
@@ -148,7 +208,7 @@ an NVIDIA GTX 1070) surfaced two things:
   actually usable, and `set_environment.DEVICE`/`shell.py`'s status label
   fall back to CPU instead of silently picking a doomed device.
 - **Studio's Home screen** hard-coded `("Compute", "Apple M-series · MPS")`
-  regardless of platform — fixed, detail in `docstudio/CHANGELOG.md`.
+  regardless of platform — fixed, detail in `docs/velum/CHANGELOG.md`.
 
 Verified: the full pure-logic + Studio suite (`pytest` — both `tests/` and
 `studio/tests/`) green on Linux via the throwaway light-group venv from
@@ -169,17 +229,17 @@ standard "old app + new app + shared core" monorepo shape. Studio is now
 self-contained (its own `icons.py`/`motion.py`; `napari_app/icons.py` reverted
 to pristine) with its own test suite in `studio/tests/`. Docs direction
 clarified: Studio builds its **own** canvas (not embedded napari) and reuses
-only the ML *logic*. Detail: `docstudio/CHANGELOG.md`.
+only the ML *logic*. Detail: `docs/velum/CHANGELOG.md`.
 
-## 2026-07-07 — Studio reset to a pure design skeleton + `docstudio/`
+## 2026-07-07 — Studio reset to a pure design skeleton + `docs/velum/`
 
 Reset CellSeg1 Studio to an all-design, **no-logic** skeleton: a faithful
 native-Qt reproduction of the north-star mockup (all screens + overlays) with
 napari/torch/model/IO stripped out — it launches on PyQt6 alone. Rationale and
-the tab-by-tab plan to wire functionality back live in a new **`docstudio/`**
+the tab-by-tab plan to wire functionality back live in a new **`docs/velum/`**
 doc set (OVERVIEW, DESIGN, ARCHITECTURE, BACKLOG, ROADMAP, CHANGELOG,
 AGENT_PROMPT). Rounded window corners added. The classic app
-(`napari_app/main.py`) remains untouched. Full detail: `docstudio/CHANGELOG.md`.
+(`napari_app/main.py`) remains untouched. Full detail: `docs/velum/CHANGELOG.md`.
 
 ## 2026-07-07 — Studio: own window chrome (no more grey OS title bar) + screen transitions
 

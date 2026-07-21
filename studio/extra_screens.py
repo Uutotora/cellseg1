@@ -3,7 +3,7 @@
 Models & Train is real (bound to ``studio.train_controller.TrainController`` —
 one-shot LoRA training on a background thread, a real trained-models list and
 recent-runs history from disk). Dashboard is real (bound to
-``studio.dashboard_controller.DashboardController``). See ``docstudio/
+``studio.dashboard_controller.DashboardController``). See ``docs/velum/
 BACKLOG.md`` / ``CHANGELOG.md`` for how each was wired.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ class ModelsScreen(QWidget):
     """Real one-shot LoRA training + model management, bound to a
     ``TrainController`` (``studio/train_controller.py``). Reuses the exact
     training pipeline the classic app's Train tab already uses
-    (``cellseg1_core.train_model``), imported lazily inside the controller
+    (``velum_core.train_model``), imported lazily inside the controller
     — this module itself never imports torch.
     """
 
@@ -172,11 +172,11 @@ class ModelsScreen(QWidget):
 
     def _status_text(self) -> str:
         if self._image_path is not None and self._mask_path is None:
-            return ("No mask found for this image — annotate it in the classic app "
-                    "(napari) first, then pick it here.")
+            return ("No mask found for this image — annotate it in the Segment tab "
+                    "first, then pick it here.")
         if not self._has_backbone():
             return ("No SAM backbone auto-detected — click SAM backbone to browse for a "
-                    "checkpoint, or run setup_napari.sh to download one.")
+                    "checkpoint, or run scripts/setup.sh to download one.")
         return ""
 
     def _can_start(self) -> bool:
