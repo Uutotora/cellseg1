@@ -18,6 +18,28 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-22 — Dashboard charts: analytics-grade line + bar rendering
+
+The Dashboard's two chart panels were the weakest visual moment in an
+otherwise premium app — the "F1 across runs" panel rendered a single
+benchmarked run as one panel-filling solid block, and the training-loss line
+chart was a bare polyline with no axis context.
+
+- **`_LineChart`** (training loss) now draws a Catmull-Rom-smoothed curve with a
+  vertical gradient area fill, dashed gridlines, right-aligned y-axis value
+  labels, and a soft-glow marker on the latest point. Flat series get a padded
+  range so they no longer sit on an edge; single points render cleanly.
+- **`_BarChart`** (F1 across runs) now uses width-capped (≤46 px), gradient-
+  filled, rounded-top columns with the F1 value printed above each bar, an
+  honest 0.0/0.5/1.0 axis, and a baseline — so one run reads as a single
+  labelled column, never a solid block. Latest run stays highlighted.
+- **Empty chart state** gained a designed icon chip above the text instead of a
+  bare centered label.
+- Pure `paintEvent`/geometry changes — chart classes' `(data, color, t)`
+  contract is unchanged, all existing dashboard tests stay green. Verified in
+  both themes via offscreen screenshots (real single-run data + synthetic
+  multi-run/loss series).
+
 ## 2026-07-21 — Rename repo + distribution `cellseg1` → `velum`
 
 The last outward-facing piece of the Velum rename.

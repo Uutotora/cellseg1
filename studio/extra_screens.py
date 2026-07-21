@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QPen, QPolygonF, QPainterPath
+from PyQt6.QtGui import (QPainter, QColor, QPen, QPolygonF, QPainterPath,
+                         QLinearGradient, QFont)
 from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QGridLayout, QScrollArea,
@@ -879,72 +880,183 @@ class _ProgressBar(QWidget):
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────────
+def _smooth_path(pts: list[QPointF]) -> QPainterPath:
+    """Catmull-Rom → cubic-Bézier smoothing through ``pts`` — the soft,
+    analytics-grade curve (vs. the old jagged polyline) the loss chart draws."""
+    path = QPainterPath()
+    if not pts:
+        return path
+    path.moveTo(pts[0])
+    for i in range(len(pts) - 1):
+        p0 = pts[i - 1] if i > 0 else pts[i]
+        p1, p2 = pts[i], pts[i + 1]
+        p3 = pts[i + 2] if i + 2 < len(pts) else p2
+        c1 = QPointF(p1.x() + (p2.x() - p0.x()) / 6.0, p1.y() + (p2.y() - p0.y()) / 6.0)
+        c2 = QPointF(p2.x() - (p3.x() - p1.x()) / 6.0, p2.y() - (p3.y() - p1.y()) / 6.0)
+        path.cubicTo(c1, c2, p2)
+    return path
+
+
+def _round_top_rect(r: QRectF, radius: float) -> QPainterPath:
+    """A rectangle with only its top corners rounded — a column that sits
+    flush on the baseline but reads as a soft, modern bar up top."""
+    rad = max(0.0, min(radius, r.width() / 2, r.height()))
+    path = QPainterPath()
+    path.moveTo(r.left(), r.bottom())
+    path.lineTo(r.left(), r.top() + rad)
+    path.quadTo(r.left(), r.top(), r.left() + rad, r.top())
+    path.lineTo(r.right() - rad, r.top())
+    path.quadTo(r.right(), r.top(), r.right(), r.top() + rad)
+    path.lineTo(r.right(), r.bottom())
+    path.closeSubpath()
+    return path
+
+
 class _LineChart(QWidget):
+    """A gradient-filled, smoothed line chart with y-axis value labels and a
+    glowing latest-value marker — the training-loss curve."""
+
     def __init__(self, data, color: str, t: dict):
         super().__init__()
         self._data = data
         self._color = color
         self._t = t
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(132)
 
     def paintEvent(self, e):
+        data = self._data
+        if not data:
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        w, h, pad = self.width(), self.height(), 8
-        p.setPen(QPen(QColor(self._t["border"]), 1))
-        for g in range(4):
-            y = pad + (h - 2 * pad) * g / 3
-            p.drawLine(0, int(y), w, int(y))
-        data = self._data
+        t = self._t
+        W, H = self.width(), self.height()
+        lpad, rpad, tpad, bpad = 42, 12, 12, 14
+        plot_w = max(1.0, W - lpad - rpad)
+        plot_h = max(1.0, H - tpad - bpad)
         mn, mx = min(data), max(data)
-        rng = (mx - mn) or 1
+        if mx - mn < 1e-9:
+            pad_v = abs(mx) * 0.1 or 1.0
+            mn, mx = mn - pad_v, mx + pad_v
+        rng = mx - mn
 
         def X(i):
-            return pad + (w - 2 * pad) * i / (len(data) - 1)
+            return lpad + plot_w * (i / (len(data) - 1) if len(data) > 1 else 0.5)
 
         def Y(v):
-            return pad + (h - 2 * pad) * (1 - (v - mn) / rng)
-        path = QPainterPath()
-        for i, v in enumerate(data):
-            pt = QPointF(X(i), Y(v))
-            path.moveTo(pt) if i == 0 else path.lineTo(pt)
+            return tpad + plot_h * (1 - (v - mn) / rng)
+
+        def fmt(v):
+            return f"{v:.2f}" if abs(mx) < 10 else f"{v:.1f}"
+
+        # dashed gridlines + right-aligned y-axis value labels
+        grid_pen = QPen(QColor(t["border"]), 1)
+        grid_pen.setDashPattern([2, 4])
+        lab_font = QFont(); lab_font.setPointSizeF(7.6)
+        for k in range(4):
+            frac = k / 3
+            y = tpad + plot_h * frac
+            p.setPen(grid_pen)
+            p.drawLine(int(lpad), int(y), int(W - rpad), int(y))
+            p.setPen(QColor(t["text_muted"]))
+            p.setFont(lab_font)
+            p.drawText(QRectF(0, y - 8, lpad - 8, 16),
+                       int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                       fmt(mx - rng * frac))
+
+        pts = [QPointF(X(i), Y(v)) for i, v in enumerate(data)]
+        line = _smooth_path(pts)
         col = QColor(self._color)
-        fill = QColor(self._color)
-        fill.setAlpha(34)
-        area = QPainterPath(path)
-        area.lineTo(X(len(data) - 1), h - pad)
-        area.lineTo(X(0), h - pad)
+
+        area = QPainterPath(line)
+        area.lineTo(pts[-1].x(), tpad + plot_h)
+        area.lineTo(pts[0].x(), tpad + plot_h)
         area.closeSubpath()
-        p.fillPath(area, fill)
-        p.setPen(QPen(col, 2))
-        p.drawPath(path)
-        p.setBrush(col)
+        grad = QLinearGradient(0, tpad, 0, tpad + plot_h)
+        top = QColor(col); top.setAlpha(72)
+        bot = QColor(col); bot.setAlpha(0)
+        grad.setColorAt(0.0, top)
+        grad.setColorAt(1.0, bot)
+        p.fillPath(area, grad)
+
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(col, 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                      Qt.PenJoinStyle.RoundJoin))
+        p.drawPath(line)
+
+        end = pts[-1]
         p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(QPointF(X(len(data) - 1), Y(data[-1])), 3, 3)
+        glow = QColor(col); glow.setAlpha(64)
+        p.setBrush(glow); p.drawEllipse(end, 7.5, 7.5)
+        p.setBrush(col); p.drawEllipse(end, 3.6, 3.6)
+        p.setBrush(QColor(t["surface"])); p.drawEllipse(end, 1.5, 1.5)
         p.end()
 
 
 class _BarChart(QWidget):
+    """F1-across-runs columns: width-capped, gradient-filled, rounded-top bars
+    with the value printed above each — a single run reads as one labelled
+    column, never a panel-filling solid block."""
+
     def __init__(self, data, color: str, t: dict):
         super().__init__()
         self._data = data
         self._color = color
         self._t = t
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(132)
 
     def paintEvent(self, e):
+        data = self._data
+        if not data:
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        w, h = self.width(), self.height()
-        bw = w / len(self._data)
+        t = self._t
+        W, H = self.width(), self.height()
+        lpad, rpad, tpad, bpad = 34, 14, 20, 6
+        plot_w = max(1.0, W - lpad - rpad)
+        plot_h = max(1.0, H - tpad - bpad)
+        ymax = 1.0  # F1 lives in [0, 1] — an honest absolute axis
+
+        # dashed gridlines + y labels at 0.0 / 0.5 / 1.0
+        grid_pen = QPen(QColor(t["border"]), 1)
+        grid_pen.setDashPattern([2, 4])
+        lab_font = QFont(); lab_font.setPointSizeF(7.6)
+        for gv in (0.0, 0.5, 1.0):
+            y = tpad + plot_h * (1 - gv / ymax)
+            p.setPen(grid_pen)
+            p.drawLine(int(lpad), int(y), int(W - rpad), int(y))
+            p.setPen(QColor(t["text_muted"]))
+            p.setFont(lab_font)
+            p.drawText(QRectF(0, y - 8, lpad - 8, 16),
+                       int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                       f"{gv:.1f}")
+
+        n = len(data)
+        slot = plot_w / n
+        barw = min(46.0, slot * 0.62)
         base = QColor(self._color)
-        faded = QColor(self._color)
-        faded.setAlpha(102)
-        for i, v in enumerate(self._data):
-            bh = max(4, v * (h - 10))
-            p.setBrush(base if i == len(self._data) - 1 else faded)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(QRectF(i * bw + 4, h - bh, bw - 8, bh), 3, 3)
+        val_font = QFont(); val_font.setPointSizeF(8.4); val_font.setBold(True)
+        for i, v in enumerate(data):
+            is_last = i == n - 1
+            cx = lpad + slot * (i + 0.5)
+            bh = plot_h * (max(0.0, min(v, 1.0)) / ymax)
+            y = tpad + plot_h - bh
+            rect = QRectF(cx - barw / 2, y, barw, bh)
+            grad = QLinearGradient(0, y, 0, tpad + plot_h)
+            top = QColor(base); top.setAlpha(255 if is_last else 150)
+            bot = QColor(base); bot.setAlpha(150 if is_last else 70)
+            grad.setColorAt(0.0, top)
+            grad.setColorAt(1.0, bot)
+            p.fillPath(_round_top_rect(rect, 4.0), grad)
+            p.setFont(val_font)
+            p.setPen(QColor(t["text"] if is_last else t["text_subtle"]))
+            p.drawText(QRectF(cx - 30, y - 17, 60, 14),
+                       int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom),
+                       f"{v:.2f}")
+
+        p.setPen(QPen(QColor(t["border_strong"]), 1))
+        p.drawLine(int(lpad), int(tpad + plot_h), int(W - rpad), int(tpad + plot_h))
         p.end()
 
 
@@ -1112,13 +1224,21 @@ class DashboardScreen(QWidget):
 
     def _chart_or_empty(self, cls, data: list[float], color: str, empty_msg: str) -> QWidget:
         if not data:
+            t = self._t
             w = QWidget()
-            w.setMinimumHeight(120)
+            w.setMinimumHeight(132)
             lay = QVBoxLayout(w)
             lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl = label(empty_msg, 12, self._t["text_muted"])
+            lay.setSpacing(8)
+            icon = QLabel()
+            icon.setFixedSize(34, 34)
+            icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            icon.setPixmap(icons.pixmap("chart", t["text_muted"], 18))
+            icon.setStyleSheet(f"background:{t['inset']}; border-radius:10px;")
+            lay.addWidget(icon, 0, Qt.AlignmentFlag.AlignHCenter)
+            lbl = label(empty_msg, 12, t["text_muted"])
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lay.addWidget(lbl)
+            lay.addWidget(lbl, 0, Qt.AlignmentFlag.AlignHCenter)
             return w
         return cls(data, color, self._t)
 
