@@ -883,6 +883,56 @@ def test_predict_result_survives_switching_images_and_back(app, segment, project
     assert ws._last_result["n_cells"] == 2
 
 
+def test_rebuilding_results_pane_does_not_accumulate_widgets(app, segment, projects, toasts, tmp_path, storage):
+    """Regression: `_rebuild_results_pane` lays its hero number, stat tiles and
+    action buttons into *nested* QHBox/QGrid layouts added via addLayout. The
+    old `_clear_layout` only removed direct child *widgets*, never recursing
+    into those nested layouts -- so every rebuild (a pixel-calibration edit, a
+    ground-truth load, a colour-by change...) orphaned the previous copies,
+    which kept the container as parent and stayed visible, stacking up. The
+    visible symptom was the "Refine…"/"Measurements" buttons overlapping and a
+    ghost "Measure" label bleeding over the calibration hint. Rebuilding many
+    times must leave exactly one copy of each action button."""
+    from studio.components import PillButton
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_predict()
+    _pump(app, ws)
+    assert ws._last_result is not None
+
+    def action_buttons():
+        return [b.text() for b in ws._results_container.findChildren(PillButton)
+                if b.text() in {"Save masks", "Export CSV", "Refine…", "Measurements"}]
+
+    assert sorted(action_buttons()) == ["Export CSV", "Measurements", "Refine…", "Save masks"]
+    for _ in range(5):
+        ws._rebuild_results_pane()
+        app.processEvents()
+    # still exactly one of each -- not 6 stacked copies
+    assert sorted(action_buttons()) == ["Export CSV", "Measurements", "Refine…", "Save masks"]
+
+
+def test_clear_layout_recurses_into_nested_layouts(app):
+    """Unit-level guard for the same bug: `_clear_layout` must empty widgets
+    held inside nested layouts, not just direct child widgets."""
+    from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QWidget
+    from studio.workspace import _clear_layout
+    host = QWidget()
+    outer = QVBoxLayout(host)
+    outer.addWidget(QLabel("direct"))
+    inner = QHBoxLayout()
+    nested_a, nested_b = QLabel("a"), QLabel("b")
+    inner.addWidget(nested_a)
+    inner.addWidget(nested_b)
+    outer.addLayout(inner)
+    assert len(host.findChildren(QLabel)) == 3
+    _clear_layout(outer)
+    app.processEvents()  # let deleteLater() run
+    assert outer.count() == 0
+    assert host.findChildren(QLabel) == []
+
+
 def test_predict_result_survives_a_full_project_reload(app, segment, projects, toasts, tmp_path, storage):
     """The literal "close and reopen the project" case: a brand new
     WorkspaceScreen (as if the app were restarted) must still show the

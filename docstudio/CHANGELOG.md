@@ -5,6 +5,37 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-21 — Segment/Results: kill the HiDPI text seams and the rebuild-overlap
+
+Two reported bugs in the Segment screen's right-hand inspector, both fixed and
+regression-tested.
+
+**1. "Чёрточки у начала текста" — a hairline down the left of every text block.**
+Each side panel painted its divider as a `border-left`/`border-right:1px solid`
+on its own `WA_StyledBackground` `QFrame`. That inset the panel's content by the
+border, and at HiDPI it left a `border`-coloured 1px seam down the left edge of
+every text block inside — the number `100`, each stat tile, the calibration
+field, `Instance ID`, each accordion title. Isolated to exactly this border by
+bisection (flattening the border colour, then removing it, made the seams
+vanish; the letter-spacing / opaque-box / nested-layout theories all rendered
+clean). Fixed by moving both dividers onto the **canvas** edges
+(`border-left`/`right` on the viewport, a dark image with no text to seam) — the
+divider reads identically, the panels no longer seam.
+
+**2. "Refine…/Measurements overlap" + a ghost "Measure" over the calibration
+hint.** `_rebuild_results_pane` lays its hero number, stat tiles and action
+buttons into *nested* QHBox/QGrid layouts (`addLayout`). `_clear_layout` only
+removed direct child *widgets* and never recursed into nested layouts, so every
+rebuild (pixel-calibration edit, GT load, colour-by change) orphaned the prior
+copies — they kept the container as parent and stayed visible, stacking up.
+`_clear_layout` now recurses into nested layouts.
+
+Both verified with offscreen renders (seams gone, no ghost) and covered by
+`test_rebuilding_results_pane_does_not_accumulate_widgets` +
+`test_clear_layout_recurses_into_nested_layouts`; full Studio suite green.
+
+---
+
 ## 2026-07-21 — Fix the faint "ruled border" boxes around panel text/labels
 
 Reported against both Segment side panels: text (section headings, field

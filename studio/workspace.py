@@ -102,6 +102,18 @@ def _clear_layout(layout) -> None:
         if w is not None:
             w.setParent(None)
             w.deleteLater()
+            continue
+        # Nested layouts (added via addLayout -- the results pane's hero/tiles/
+        # button-grid rows) hold widgets that are *not* returned by item.widget()
+        # here; without recursing into them, every rebuild orphaned those child
+        # widgets (they keep the container as parent and stay visible), so each
+        # _rebuild_results_pane() stacked a fresh copy on top of the last -- the
+        # reported "Refine…/Measurements overlap" and the ghost "Measure" text
+        # bleeding over the calibration hint. Recurse, then drop the empty layout.
+        child = item.layout()
+        if child is not None:
+            _clear_layout(child)
+            child.deleteLater()
 
 
 class WorkspaceScreen(QWidget):
@@ -469,7 +481,9 @@ class WorkspaceScreen(QWidget):
         # legible; the splitter owns the actual width.
         panel.setMinimumWidth(210)
         panel.setMaximumWidth(460)
-        panel.setStyleSheet(f"background:{t['inset']}; border-right:1px solid {t['border']};")
+        # No border-right here: the divider is drawn on the canvas edge instead
+        # (see _viewport) so this panel's text doesn't pick up a HiDPI border seam.
+        panel.setStyleSheet(f"background:{t['inset']};")
         v = QVBoxLayout(panel)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
@@ -1387,7 +1401,17 @@ class WorkspaceScreen(QWidget):
     def _viewport(self) -> QWidget:
         t = self._t
         vp = QFrame()
-        vp.setStyleSheet("background:#07090c;")
+        # The 1px dividers between the canvas and the two side panels live here,
+        # on the canvas edges, NOT as a border-left/right on the panels. A 1px
+        # CSS border on a WA_StyledBackground panel offsets its content and, at
+        # HiDPI, leaves a `border`-coloured hairline seam down the left edge of
+        # every text block inside it (the reported "чёрточки у начала текста" all
+        # over the Segment/Results inspector -- isolated to exactly this border).
+        # On the canvas (a dark image, no text) the same hairline is invisible,
+        # so the divider reads identically without seaming the panels' text.
+        vp.setStyleSheet(
+            f"background:#07090c; border-left:1px solid {t['border']};"
+            f" border-right:1px solid {t['border']};")
         self._canvas = Canvas(t, self._layers, on_status=self._on_canvas_status,
                              on_label_picked=self._on_label_picked,
                              on_mode_change=self._on_canvas_mode_changed)
@@ -1590,7 +1614,10 @@ class WorkspaceScreen(QWidget):
         panel = QFrame()
         panel.setMinimumWidth(300)
         panel.setMaximumWidth(520)
-        panel.setStyleSheet(f"background:{t['surface']}; border-left:1px solid {t['border']};")
+        # No border-left here: the divider is drawn on the canvas edge instead
+        # (see _viewport) so the inspector's text doesn't pick up a HiDPI border
+        # seam -- the root cause of the "чёрточки у начала текста" report.
+        panel.setStyleSheet(f"background:{t['surface']};")
         v = QVBoxLayout(panel)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
