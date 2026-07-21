@@ -5,6 +5,16 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-21 — New app icon
+
+Replaced the Dock/app icon with the new light rounded-square design: swapped
+`studio/assets/icon.png` (the 1024×1024 source `load_icon()` loads) for the new
+art and added the full multi-size source set under `docs/AppIcon.iconset/`
+(16→512 @1x/@2x) as the tracked origin for a future `.icns` bundle. Verified
+`load_icon()` picks it up and renders across Dock sizes offscreen.
+
+---
+
 ## 2026-07-21 — Segment: sync the cell count after edits, and fix "hard to select" image rows
 
 Two more reported bugs, both reproduced with offscreen scripts before fixing.
