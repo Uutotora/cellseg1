@@ -129,10 +129,8 @@ class HomeScreen(QWidget):
 
         left = QVBoxLayout()
         left.setSpacing(24)
-        left.addWidget(self._kpis())
-        hero = self._hero()
-        if hero is not None:
-            left.addWidget(hero)
+        self._top_widget = self._build_top()
+        left.addWidget(self._top_widget)
         self._quick_grid = self._quick()
         left.addLayout(self._quick_grid)
         self._recent_widget = self._recent_section()
@@ -208,6 +206,18 @@ class HomeScreen(QWidget):
         the list changed.
         """
         self._wave.play()
+
+        # KPIs + hero: always rebuilt from current state (cheap, no animation)
+        # so aggregate stats, the most-recent project and any cover change are
+        # live on every Home visit — not frozen at construction time.
+        top_idx = self._left.indexOf(self._top_widget)
+        old_top = self._top_widget
+        self._top_widget = self._build_top()
+        self._left.insertWidget(top_idx, self._top_widget)
+        self._left.removeWidget(old_top)
+        old_top.setParent(None)
+        old_top.deleteLater()
+
         sig = self._current_recent_sig()
         if sig == self._recent_sig:
             return  # identical list -- don't rebuild or re-animate it
@@ -231,6 +241,23 @@ class HomeScreen(QWidget):
         guarded, and ``getattr`` tolerates the widget having been torn down."""
         for row in getattr(widget, "_rows", ()):  # RRow frames collected below
             install_hover_lift(row)
+
+    # ── refreshable top block (KPIs + "continue" hero) ───────────────────────
+    def _build_top(self) -> QWidget:
+        """KPIs + hero wrapped in one container so ``refresh()`` can rebuild
+        them in place — without this they were built once and went stale, so a
+        changed cover, a new most-recent project, or updated stats didn't show
+        on Home until the app was relaunched (reported directly)."""
+        w = QWidget()
+        w.setStyleSheet("background:transparent;")
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(24)
+        v.addWidget(self._kpis())
+        hero = self._hero()
+        if hero is not None:
+            v.addWidget(hero)
+        return w
 
     # ── KPI row ──────────────────────────────────────────────────────────────
     def _kpis(self) -> QWidget:

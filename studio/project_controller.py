@@ -251,15 +251,41 @@ class ProjectController:
     def set_cover(self, project_id: str, *, kind: str, color: str = "",
                   image_path: str = "") -> Project:
         """Persist a project's chosen cover (Notion-style, applied instantly).
-        Unknown ``kind`` falls back to ``auto`` so a bad value can't corrupt a
-        project file."""
+
+        For an image cover the picked file is **copied into the project's own
+        folder** (``<project>/cover.<ext>``) and that copy is what's stored — so
+        the cover survives the user moving, renaming or deleting the original,
+        and travels with the project. Unknown ``kind`` falls back to ``auto`` so
+        a bad value can't corrupt a project file."""
         from studio.project import ProjectCover
         if kind not in ("auto", "color", "image"):
             kind = "auto"
         project = self.store.load(project_id)
+        if kind == "image" and image_path:
+            image_path = self._store_cover_image(project_id, image_path)
         project.cover = ProjectCover(kind=kind, color=color, image_path=image_path)
         self.store.save(project)
         return project
+
+    def _store_cover_image(self, project_id: str, src_path: str) -> str:
+        """Copy a picked cover image into the project's folder and return the
+        stored path. Re-applying the already-stored image is a no-op. Falls
+        back to the original path if the copy fails, so a cover is never lost to
+        an I/O hiccup."""
+        import shutil
+        src = Path(src_path)
+        proj_dir = self.store._dir(project_id)
+        try:
+            proj_dir.mkdir(parents=True, exist_ok=True)
+            dest = proj_dir / f"cover{src.suffix.lower()}"
+            if src.resolve() == dest.resolve():
+                return str(dest)
+            for old in proj_dir.glob("cover.*"):   # drop a prior cover of any ext
+                old.unlink()
+            shutil.copy2(src, dest)
+            return str(dest)
+        except OSError:
+            return str(src)
 
     # ── mutation ─────────────────────────────────────────────────────────────
     def toggle_favorite(self, project_id: str) -> Project:

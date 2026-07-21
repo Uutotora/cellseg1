@@ -7,6 +7,34 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-21 — Covers/Home fixes + a real Dashboard upgrade
+
+Follow-up to the covers work, from live-app feedback:
+
+- **Home hero/KPIs now refresh live.** They were built once at construction and
+  never rebuilt, so a changed cover, a new most-recent project, or updated
+  stats only appeared after relaunching the app. `HomeScreen.refresh()` now
+  rebuilds the KPI row + "pick up where you left off" hero on every Home visit
+  (cheap, no animation — the recent-list's change-gated fade is unchanged).
+- **Cover images are copied into the project.** Setting an image cover now
+  copies the picked file into `<project>/cover.<ext>` and stores *that* path, so
+  the cover survives the original being moved/renamed/deleted and travels with
+  the project (`ProjectController._store_cover_image`).
+- **Dashboard, redesigned for real.** Added a KPI-tile row (tracked runs · best
+  F1 · avg F1 · cells segmented) and an **Engine comparison** panel (average
+  benchmarked F1 and project count per engine, best-first) — both rolled up
+  from real on-disk data via new `DashboardController.dash_summary()` /
+  `engine_comparison()`. The training-loss and F1 charts and runs table are
+  unchanged. Deliberately did *not* add the mockup's cell-size histogram —
+  there's no per-cell morphometry aggregation to feed it yet, so it'd be faked.
+
+Tests added for `dash_summary`/`engine_comparison`, the cover-image copy, and a
+regression test that the hero tracks the most-recent project after `refresh()`.
+studio/tests green. Verified offscreen (Home hero updates + image cover shows;
+Dashboard KPIs + engine comparison). Not verified: real GUI, real image upload.
+
+---
+
 ## 2026-07-21 — Project covers + a richer, honest Home screen
 
 Give every project a **cover** — its own visual identity on cards and Home,
