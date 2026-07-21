@@ -169,6 +169,16 @@ class LabelsLayer(Layer):
     def max_label(self) -> int:
         return int(self.data.max()) if self.data.size else 0
 
+    @property
+    def n_labels(self) -> int:
+        """Count of *distinct* non-zero instances -- the real "cells detected".
+        Unlike ``max_label`` (the highest id), this stays correct when ids are
+        non-contiguous, e.g. after erasing a cell in the middle of the range,
+        so the canvas legend can't disagree with the Results panel's count."""
+        if not self.data.size:
+            return 0
+        return int((np.unique(self.data) > 0).sum())
+
     def get_color(self, label_id: int) -> tuple[int, int, int]:
         if label_id <= 0:
             return (0, 0, 0)

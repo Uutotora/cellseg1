@@ -5,6 +5,36 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-21 — Segment: sync the cell count after edits, and fix "hard to select" image rows
+
+Two more reported bugs, both reproduced with offscreen scripts before fixing.
+
+**1. "Project card says 122 cells, Results say 45."** Editing a mask
+(paint/erase/fill/undo/redo) updated only the canvas legend; the Results panel
+stats and the *persisted* project stats stayed frozen at the last predict run,
+so the project card drifted from what was on screen. Now a debounced sync
+(gated on a cheap content fingerprint so pure selection/visibility/reorder
+churn is ignored, and off the per-mouse-move paint path) recomputes the result
+after an edit settles and persists the new **distinct-cell** count. Added
+`LabelsLayer.n_labels` (distinct non-zero instances, unlike `max_label` = the
+highest id) so the legend can't disagree with the Results panel after a
+mid-range cell is erased; the exact count is computed once on settle, not
+`np.unique` on every paint tick (16 ms on a 2k² mask).
+
+**2. Image rows were "hard to select — they don't select."** `SwipeRow`'s
+tap-vs-swipe threshold was 4 px, so a click that drifted even a few px left —
+routine on a trackpad — was swallowed as a swipe and never selected the row.
+Raised the slop to 12 px and only move the row once a swipe is actually
+committed, so normal taps select while a deliberate left-swipe still reveals
+Delete. (Real event delivery through the mouse-transparent foreground was
+verified fine with QTest; the threshold was the whole bug.)
+
+Covered by `test_editing_the_mask_keeps_results_and_card_count_in_sync`,
+`test_labels_layer_n_labels_counts_distinct_not_max_id`, and
+`test_swiperow_small_wobble_still_taps`; full Studio suite green.
+
+---
+
 ## 2026-07-21 — Segment/Results: kill the HiDPI text seams and the rebuild-overlap
 
 Two reported bugs in the Segment screen's right-hand inspector, both fixed and

@@ -160,6 +160,21 @@ class WorkspaceScreen(QWidget):
         self._benching = False
         self._run_started_at: Optional[float] = None
 
+        # Keep the Results panel + the project card's cell count in sync with
+        # live mask edits (paint/erase/fill/undo/redo), not just fresh predict
+        # runs. `notify()` fires on every mouse-move tick of a paint drag, so
+        # the actual recompute (regionprops) is debounced to fire once after a
+        # burst settles; `_results_sig` is the cheap content fingerprint that
+        # gates it, so pure UI churn (selection, visibility, reorder) never
+        # triggers a recompute. Without this, erasing cells dropped the legend
+        # count but left the Results stats and the stored stats stale -- the
+        # reported "card says 122 cells, Results says 45" drift.
+        self._results_sig: Optional[tuple[int, int]] = None
+        self._results_sync_timer = QTimer(self)
+        self._results_sync_timer.setSingleShot(True)
+        self._results_sync_timer.setInterval(250)
+        self._results_sync_timer.timeout.connect(self._sync_results_after_edit)
+
         self._layers.on_change(self._on_layers_changed)
 
         outer = QVBoxLayout(self)
@@ -878,6 +893,38 @@ class WorkspaceScreen(QWidget):
         self._refresh_layers_list()
         self._sync_layers_pane_state()
         self._update_legend()
+        self._schedule_results_sync()
+
+    def _schedule_results_sync(self) -> None:
+        """Debounce a Results/stats recompute when the segmentation mask's
+        content actually changes. Gated on a cheap fingerprint so selection,
+        visibility and reorder churn (which also fire `notify()`) don't trigger
+        a recompute, and only once a result already exists to keep in sync."""
+        seg = self._layers.find("Segmentation")
+        if seg is None or self._last_result is None or self._current_image_array is None:
+            return
+        sig = (int(seg.max_label), int((seg.data > 0).sum()))
+        if sig == self._results_sig:
+            return
+        self._results_sig = sig
+        self._results_sync_timer.start()
+
+    def _sync_results_after_edit(self) -> None:
+        """Fired (debounced) after a mask edit settles: recompute the Results
+        panel from the edited mask and persist the new cell count so the
+        project card can't drift from what's on screen."""
+        if self._layers.find("Segmentation") is None or self._current_image_array is None:
+            return
+        self._recompute_results()
+        self._persist_cell_count()
+
+    def _persist_cell_count(self) -> None:
+        if self._project is None or self._last_result is None:
+            return
+        n = int(self._last_result.get("n_cells", 0))
+        if n != self._project.stats.n_cells:
+            self._segment.record_run(self._project, n_cells=n)
+            self._projects.store.save(self._project)
 
     def _refresh_layers_list(self) -> None:
         layout = self._layers_list_layout
@@ -1552,11 +1599,17 @@ class WorkspaceScreen(QWidget):
         if isinstance(self._layers.selected, LabelsLayer):
             self._rebuild_layer_controls()
 
-    def _update_legend(self) -> None:
+    def _update_legend(self, detected: Optional[int] = None) -> None:
         labels_layers = self._layers.by_kind("labels")
         primary = labels_layers[0] if labels_layers else None
-        n = primary.max_label if primary else 0
-        self._legend_detected.setText(f"● {n} detected")
+        # Live path (fires on every paint-drag tick) uses the cheap max id;
+        # the exact distinct-cell count (n_labels / regionprops is O(n log n))
+        # is passed in by _recompute_results after an edit settles, so the
+        # legend lands on the same number the Results panel shows without
+        # paying np.unique on every mouse-move (16ms on a 2k² mask).
+        if detected is None:
+            detected = primary.max_label if primary else 0
+        self._legend_detected.setText(f"● {detected} detected")
         target = self._canvas.edit_target() if self._canvas is not None else None
         self._legend_label.setText(f"● label {target.selected_label if target else 0}")
         self._legend_detected.adjustSize()
@@ -1987,6 +2040,13 @@ class WorkspaceScreen(QWidget):
         pixel_size = self._project.settings.pixel_size_um if self._project else 0.0
         self._last_result = self._segment.compute_measurements(
             seg.data, image=self._current_image_array, pixel_size_um=pixel_size)
+        # Refresh the edit-sync fingerprint here (not only in _schedule_results_sync)
+        # so the recompute this method just did -- and the notify() that predict
+        # fires right after -- don't immediately re-trigger the debounced sync.
+        self._results_sig = (int(seg.max_label), int((seg.data > 0).sum()))
+        # Land the canvas legend on the same exact count the Results panel shows
+        # (the live per-tick path only had the cheap max id).
+        self._update_legend(int(self._last_result.get("n_cells", 0)))
         self._rebuild_results_pane()
         self._refresh_images_pane()
 

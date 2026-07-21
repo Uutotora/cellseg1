@@ -921,6 +921,8 @@ class SwipeRow(QFrame):
     documents. The spring-back (the non-destructive case) *is* animated.
     """
 
+    _SWIPE_SLOP = 12  # px of leftward drift tolerated before a tap becomes a swipe
+
     def __init__(self, content: QWidget, t: dict, on_click, on_delete,
                  height: int = 46, reveal: int = 86):
         super().__init__()
@@ -929,6 +931,12 @@ class SwipeRow(QFrame):
         self._on_delete = on_delete
         self._reveal = reveal
         self._commit = reveal * 0.55  # drag this far left -> release deletes
+        # A tap almost never lands perfectly still: a trackpad/mouse click
+        # routinely drifts a few px. The old 4px threshold treated that drift
+        # as a swipe and swallowed the click, so rows were "hard to select"
+        # (a real report). Only past this larger slop do we commit to swipe
+        # mode; below it a release is a tap. iOS uses ~10px; 12 is a hair more
+        # forgiving without eating a deliberate swipe.
         self._drag_start: Optional[float] = None
         self._swiping = False
         self._offset = 0.0
@@ -968,9 +976,13 @@ class SwipeRow(QFrame):
         if self._drag_start is None:
             return
         dx = e.position().x() - self._drag_start
-        if dx < -4:
+        if not self._swiping and dx < -self._SWIPE_SLOP:
             self._swiping = True
-        self._set_offset(dx)
+        # Only move the row once we've committed to a swipe, and start the
+        # reveal from the slop point so it doesn't jump; below the slop a tap
+        # leaves the row perfectly still and still selects on release.
+        if self._swiping:
+            self._set_offset(dx + self._SWIPE_SLOP)
 
     def mouseReleaseEvent(self, e):
         if self._drag_start is None:

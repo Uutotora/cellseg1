@@ -87,6 +87,21 @@ def test_labels_layer_paint_stamps_a_circle():
     assert layer.max_label == 3
 
 
+def test_labels_layer_n_labels_counts_distinct_not_max_id():
+    """n_labels is the real "cells detected" -- distinct non-zero instances --
+    and must stay correct when ids are non-contiguous (a cell erased out of the
+    middle of the range), unlike max_label which tracks the highest id."""
+    data = np.zeros((10, 10), dtype=np.int32)
+    data[0:2, 0:2] = 1
+    data[0:2, 4:6] = 2
+    data[4:6, 0:2] = 5      # gap: ids present are {1, 2, 5}
+    layer = LabelsLayer("L", data)
+    assert layer.max_label == 5
+    assert layer.n_labels == 3
+    empty = LabelsLayer("E", np.zeros((4, 4), dtype=np.int32))
+    assert empty.n_labels == 0
+
+
 def test_labels_layer_erase_paints_background():
     layer = LabelsLayer("L", np.full((20, 20), 5, dtype=np.int32))
     layer.brush_size = 4

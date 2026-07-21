@@ -332,6 +332,18 @@ def test_swiperow_tap_selects_not_deletes(app):
     assert seen == {"click": 1, "delete": 0}
 
 
+def test_swiperow_small_wobble_still_taps(app):
+    """A tap that drifts a few px left -- normal for a trackpad/mouse -- must
+    still select, not get swallowed as a swipe. Regression for the reported
+    "the image row is hard to select / won't select": the old 4px threshold
+    turned any small drift into a swipe and dropped the click."""
+    row, seen = _swipe_row(app)
+    _press(row, 100)
+    _drag(row, 94)          # 6px of leftward drift, under the tap slop
+    _swipe_release(row, 94)
+    assert seen == {"click": 1, "delete": 0}
+
+
 def test_swiperow_full_swipe_left_deletes(app):
     row, seen = _swipe_row(app)
     _press(row, 200)

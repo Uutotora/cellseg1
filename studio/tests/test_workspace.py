@@ -913,6 +913,42 @@ def test_rebuilding_results_pane_does_not_accumulate_widgets(app, segment, proje
     assert sorted(action_buttons()) == ["Export CSV", "Measurements", "Refine…", "Save masks"]
 
 
+def test_editing_the_mask_keeps_results_and_card_count_in_sync(app, segment, projects, toasts, tmp_path, storage):
+    """Regression for the reported "project card says 122 cells, Results says
+    45" drift. Erasing cells used to update only the canvas legend (max id),
+    leaving the Results panel stats and the persisted project stats stale.
+    After an edit the debounced sync must recompute the result AND persist the
+    new distinct-cell count, so the Results panel, the stored stats, and the
+    legend all agree."""
+    import time
+    project = _make_project(tmp_path, projects, storage)
+    ws = _ws(app, segment, projects, toasts)
+    ws._load_project(project)
+    ws._start_predict()
+    _pump(app, ws)
+    seg = ws._layers.find("Segmentation")
+    assert ws._last_result["n_cells"] == 2
+    assert ws._project.stats.n_cells == 2
+
+    # erase one of the two cells -> one distinct instance remains
+    data = seg.data.copy()
+    data[data == 2] = 0
+    seg.data = data
+    ws._layers.notify()
+    # let the debounced results-sync timer fire
+    t0 = time.monotonic()
+    while ws._results_sync_timer.isActive() and time.monotonic() - t0 < 2:
+        app.processEvents(); time.sleep(0.01)
+    for _ in range(5):
+        app.processEvents()
+
+    assert ws._last_result["n_cells"] == 1                      # Results panel
+    assert ws._project.stats.n_cells == 1                       # in-memory stats
+    assert projects.store.load(project.id).stats.n_cells == 1   # persisted -> the card
+    assert seg.n_labels == 1
+    assert "1 detected" in ws._legend_detected.text()           # canvas legend
+
+
 def test_clear_layout_recurses_into_nested_layouts(app):
     """Unit-level guard for the same bug: `_clear_layout` must empty widgets
     held inside nested layouts, not just direct child widgets."""
