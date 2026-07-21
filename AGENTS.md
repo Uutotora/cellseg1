@@ -123,10 +123,14 @@ server/                THE MULTI-USER BACKEND (opt-in, additive) — the account
 tests/                 pytest suite (pure-logic, no GPU/GUI)
 .github/workflows/     CI (runs the pure-logic suite on py3.11/3.12)
 checkpoints/ data_store/   bundled weights + sample data (data_store/ is
-                       gitignored, created locally by setup_napari.sh / first
+                       gitignored, created locally by scripts/setup.sh / first
                        run — do not delete, paths reference it)
-docs/                  BACKLOG.md, AUDIT_2026.md, CHANGELOG.md,
-                       AGENT_KICKOFF_PROMPT.md — see above, one job each
+docs/                  project-wide docs (BACKLOG · AUDIT_2026 · CHANGELOG ·
+                       AGENT_KICKOFF_PROMPT) + docs/velum/ (the Velum app's own
+                       doc set: ARCHITECTURE · DESIGN · ROADMAP · OVERVIEW ·
+                       PACKAGING · its own BACKLOG/CHANGELOG). See docs/README.md.
+scripts/               shell tooling: setup.sh (env + SAM weights),
+                       build_bundle.sh + make_app.sh (packaging)
 README.md              human-facing front door (this file is the agent one)
 CLAUDE.md              one line, imports this file — see the Claude Code
                        note above; don't put instructions here directly
@@ -135,19 +139,19 @@ CLAUDE.md              one line, imports this file — see the Claude Code
 ## Environment & how to run things
 
 Packaging is a real `pyproject.toml` (setuptools): `pip install -e .` installs
-the app + a `cellseg1` launcher + a `napari.manifest` plugin entry point. Runtime
-deps live in `[project.dependencies]`; exact known-good pins are in
-`requirements.txt` (the lock). The pure-logic **test** deps are a PEP 735
-dependency-group (`pip install --group test` — no torch/napari). Use the existing
+the app + the `velum` / `cellseg1` console launchers. Runtime deps live in
+`[project.dependencies]`; exact known-good pins are in `requirements.txt` (the
+lock). The pure-logic **test** deps are a PEP 735 dependency-group
+(`pip install --group test` — no torch/PyQt6). Use the existing
 conda env for actual work:
 
 - **Python with all deps:** `/opt/homebrew/Caskroom/miniforge/base/envs/cellseg1/bin/python`
   (Python 3.11; numpy/torch/skimage/cv2/napari/tifffile/pytest present).
 - **Run the tests:** `<that python> -m pytest`  (fast, < 1 s, no GPU).
-- **Install from source:** `pip install -e .`  (or `bash setup_napari.sh` to
+- **Install from source:** `pip install -e .`  (or `bash scripts/setup.sh` to
   also create the env + fetch SAM weights).
-- **Run the app:** `bash run_napari.sh` or `cellseg1`  (needs a real display +
-  SAM weights; **cannot be driven headless** in CI or an agent sandbox).
+- **Run the app:** `bash run_studio.sh` or `velum` / `cellseg1`  (needs a real
+  display + SAM weights; **cannot be driven headless** in CI or an agent sandbox).
 
 **No conda, or a fresh Linux box?** The path above is one session's original
 macOS setup and won't exist elsewhere — confirmed 2026-07-18 on an Arch Linux

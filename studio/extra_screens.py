@@ -172,11 +172,11 @@ class ModelsScreen(QWidget):
 
     def _status_text(self) -> str:
         if self._image_path is not None and self._mask_path is None:
-            return ("No mask found for this image — annotate it in the classic app "
-                    "(napari) first, then pick it here.")
+            return ("No mask found for this image — annotate it in the Segment tab "
+                    "first, then pick it here.")
         if not self._has_backbone():
             return ("No SAM backbone auto-detected — click SAM backbone to browse for a "
-                    "checkpoint, or run setup_napari.sh to download one.")
+                    "checkpoint, or run scripts/setup.sh to download one.")
         return ""
 
     def _can_start(self) -> bool:

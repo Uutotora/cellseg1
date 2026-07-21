@@ -18,6 +18,22 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-21 — Repo cleanup: drop dead files, fix napari-era naming
+
+Housekeeping pass after the napari→Studio→Velum evolution left dangling names
+and dead config. No behaviour change.
+
+- **Removed** `.streamlit/config.toml` — a leftover from the long-gone Streamlit
+  UI; nothing in the codebase imports Streamlit.
+- **Moved** `setup_napari.sh` → `scripts/setup.sh` (all shell tooling now lives
+  under `scripts/`), fixed its repo-root path resolution for the new location,
+  and pointed its "launch with" hint at `run_studio.sh` instead of the
+  nonexistent `run_napari.sh`.
+- **Fixed stale references** to the deleted napari app / `run_napari.sh` /
+  `setup_napari.sh` in `run_studio.sh`, `AGENTS.md`, `README.md`, and two
+  user-facing strings in `studio/` (the "no backbone" and "no mask" hints now
+  name `scripts/setup.sh` and the in-app Segment tab, not napari).
+
 ## 2026-07-21 — Multi-user backend foundation (`server/`): accounts, RBAC, a scalable DB
 
 New, **additive** top-level `server/` package — the accounts + shared-database

@@ -82,17 +82,17 @@ Apple-silicon MPS and CUDA are used when available).
 
 ```bash
 # 1. Create the environment and fetch SAM weights (one time)
-bash setup_napari.sh          # or set up your own env, see below
+bash scripts/setup.sh         # or set up your own env, see below
 
 # 2. Launch
-bash run_studio.sh            # or: cellseg1  /  cellseg1-studio
+bash run_studio.sh            # or: velum  /  cellseg1
 ```
 
 Prefer your own environment?
 
 ```bash
-pip install -e .              # installs the app + the `cellseg1` launcher
-cellseg1
+pip install -e .              # installs the app + the `velum` launcher
+velum
 ```
 
 <sub>No conda / fresh Linux box? See [`AGENTS.md`](AGENTS.md) for a `uv`-based
