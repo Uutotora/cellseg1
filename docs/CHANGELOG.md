@@ -18,6 +18,15 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-21 — Git hygiene: PR template, CONTRIBUTING, editor ignores
+
+- **`.github/pull_request_template.md`** — codifies the discipline `AGENTS.md`
+  already asks for (summary · test plan · *what's not verified* · changelog),
+  so every PR prompts for it.
+- **`CONTRIBUTING.md`** — a short front door that GitHub surfaces in its PR/issue
+  UI, pointing at `AGENTS.md` (the real guide) with quick setup/test pointers.
+- **`.gitignore`** — added a tidy `.vscode/` + `.idea/` editor block.
+
 ## 2026-07-21 — Rename the ML core package `cellseg1_core` → `velum_core`
 
 Follows the product rename to **Velum**: the engine-agnostic ML-core package
