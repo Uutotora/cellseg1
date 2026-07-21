@@ -87,6 +87,24 @@ ML core (shared, imported by the app — do not delete):
                        set_environment.py, napari_app/widgets/shell.py,
                        predict_widget.py, train_widget.py, and studio/hardware.py
 
+server/                THE MULTI-USER BACKEND (opt-in, additive) — the accounts
+                       + shared-database contour the desktop apps never had, for
+                       team/collaborative use and a future web deployment. A
+                       dependency-free *foundation* (no HTTP tier yet — see
+                       server/README.md): stdlib sqlite3 in WAL mode by default,
+                       Postgres-portable, stateless-token auth, RBAC + immutable
+                       audit log, and the Label-Studio-shaped Organization →
+                       Project → Task → Annotation → Review model. Pure stdlib,
+                       so server/tests/ runs in CI's light `test` group.
+  security.py rbac.py  scrypt passwords + opaque session/API-key tokens; 6 roles
+                       + a permission matrix + privilege-escalation guard
+  validation.py errors.py  field validation/normalisation; the exception set
+  models.py db.py      entity dataclasses; sqlite3 connection factory + schema +
+                       migrations (thread-local conns, WAL, FK cascade)
+  repository.py service.py  data access (one repo per entity, plain SQL) + the
+                       business API (Auth/ApiKey/Org/Project/Task/Annotation/
+                       Audit services; ServerApp.create() is the front door)
+
 tests/                 pytest suite (pure-logic, no GPU/GUI)
 .github/workflows/     CI (runs the pure-logic suite on py3.11/3.12)
 checkpoints/ data_store/   bundled weights + sample data (data_store/ is

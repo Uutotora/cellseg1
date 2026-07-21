@@ -18,6 +18,48 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-21 — Multi-user backend foundation (`server/`): accounts, RBAC, a scalable DB
+
+New, **additive** top-level `server/` package — the accounts + shared-database
+contour the desktop apps never had, the substrate for team use and a future web
+deployment. It starts closing the P2 "platform / enterprise" band
+(`docs/BACKLOG.md`; `docs/AUDIT_2026.md` §8, which stood at 1.0/10 — "nothing").
+Requested directly: *"add Label-Studio-style features — accounts, and a proper
+database for 10 000+ users/day so nothing hangs."* A desktop app can't serve
+users/day, so the honest answer is a **server**, built here as a tested
+foundation (no HTTP tier yet — that's the next slice; see `server/README.md`).
+
+- **What it is.** The Label-Studio-shaped domain model retuned for microscopy —
+  Organization → Membership(role) → Project → Task → Annotation → Review — with
+  user accounts, login sessions, API keys, role-based access control, and an
+  immutable audit log. Usable today from Python via `ServerApp.create(path)`.
+- **Runs with zero infrastructure.** Default store is stdlib `sqlite3` in **WAL
+  mode** (concurrent readers + one writer; `busy_timeout` so a write burst
+  queues instead of erroring; foreign-key cascade) — one file, nothing to
+  install. Chosen per the user's steer ("no server yet, most optimal scheme").
+- **Designed to scale without a rewrite.** Stateless-token auth (validate = one
+  indexed hash lookup, no shared session store → horizontal scaling) and a thin
+  repository layer over portable SQL, so the route to 10k+ users/day is
+  Postgres + a connection pool + a task queue for the ML + object storage — a
+  driver swap and config, not a redesign. The scaling path is written up in
+  `server/README.md`.
+- **Security.** Passwords hashed with `scrypt` (self-describing cost params,
+  opportunistic rehash-on-login); session/API-key tokens stored only as SHA-256
+  hashes (a DB leak exposes no usable credential); timing-equalised auth to
+  resist user enumeration; RBAC with a privilege-escalation guard (grant only
+  strictly below your own role; owners may share/transfer ownership) and a
+  last-owner protection.
+- **The review workflow** (the collaboration differentiator): an annotator
+  submits → task COMPLETED; a *reviewer* (a distinct role) approves → REVIEWED,
+  or rejects → back to IN_PROGRESS for redo. Every mutation is RBAC-gated and
+  written to the audit log in the same transaction.
+- **Pure standard library**, so its **74 tests** (`server/tests/`) run in CI's
+  light `test` group like the rest of the pure-logic core — verified importing
+  zero heavy modules. Packaged into the wheel (`pyproject.toml`), tests
+  excluded. Three focused commits: pure-logic core → storage + services →
+  packaging/docs. **Not shipped yet:** the HTTP/REST tier, SSO, and the
+  Postgres/queue/object-storage scale-out — all noted as the next slices.
+
 ## 2026-07-18 — Second Linux verification pass (no GPU at all); real app can crash on exit too
 
 Full install-and-verify pass on a *third* machine profile: an Arch Linux

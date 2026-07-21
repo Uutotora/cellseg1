@@ -894,10 +894,27 @@ truth; the bullets below are a historical summary).
 
 ## P2 — platform / enterprise (own product surface; see `docs/AUDIT_2026.md` §8)
 
-- [ ] Service core (REST/gRPC) + task queue + object storage  · L
-- [ ] SSO / RBAC / immutable audit log  · L
+**Foundation landed 2026-07-21** — a new, additive top-level `server/` package
+(accounts, organizations, RBAC, immutable audit log, the Label-Studio-shaped
+Project→Task→Annotation→Review model) on a scale-ready DB (stdlib SQLite/WAL by
+default, Postgres-portable). Pure stdlib, 74 tests, no HTTP tier yet. See
+`server/README.md` and `docs/CHANGELOG.md`. This starts several items below;
+the acceptance criteria are narrowed to the real remaining gap.
+
+- [ ] Service core (REST/gRPC) + task queue + object storage  · L —
+      *data/service layer done in `server/`; remaining: the HTTP/REST tier over
+      `server.service` (a FastAPI `server` extra), a task queue for the ML, and
+      S3/MinIO object storage for images/masks.*
+- [ ] SSO / RBAC / immutable audit log  · L —
+      *RBAC (6 roles + permission matrix + escalation guard) and the immutable
+      audit log are done in `server/`; remaining: SSO (OIDC/SAML) + SCIM, which
+      need the HTTP tier first.*
 - [ ] Dataset + model versioning & lineage  · L
-- [ ] Collaborative annotation + review workflow  · L
+- [ ] Collaborative annotation + review workflow  · L —
+      *the review workflow (annotator→reviewer approve/reject with task-status
+      transitions) + the multi-user data model are done in `server/`; remaining:
+      the UI/API surface (assignment queues, comments, inter-annotator
+      agreement) and wiring Studio to it as a client.*
 - [ ] Docker / Helm / K8s deploy (on-prem + cloud)  · L
 - [ ] 21 CFR Part 11 / GxP compliance contour  · L
 
