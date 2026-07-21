@@ -341,3 +341,27 @@ def test_home_summary_empty_library(store):
     ctrl = ProjectController(store, seed_if_empty=False)
     s = ctrl.home_summary()
     assert s.n_projects == 0 and s.n_cells == 0 and s.avg_f1 is None
+
+
+def test_set_cover_image_copies_into_project_folder(store, tmp_path):
+    ctrl = ProjectController(store, seed_if_empty=False)
+    p = store.create("P")
+    src = tmp_path / "external_cover.png"
+    src.write_bytes(b"\x89PNG\r\n\x1a\n" + b"fake")
+    proj = ctrl.set_cover(p.id, kind="image", image_path=str(src))
+    stored = proj.cover.image_path
+    # stored path lives inside the project's own folder, not the original location
+    assert p.id in stored and stored.endswith("cover.png")
+    from pathlib import Path
+    assert Path(stored).exists()
+    assert Path(stored) != src
+
+
+def test_set_cover_image_reapplying_stored_path_is_stable(store, tmp_path):
+    ctrl = ProjectController(store, seed_if_empty=False)
+    p = store.create("P")
+    src = tmp_path / "c.png"
+    src.write_bytes(b"data")
+    first = ctrl.set_cover(p.id, kind="image", image_path=str(src)).cover.image_path
+    second = ctrl.set_cover(p.id, kind="image", image_path=first).cover.image_path
+    assert first == second

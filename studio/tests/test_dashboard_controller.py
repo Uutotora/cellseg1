@@ -183,3 +183,41 @@ def test_open_in_aim_propagates_runtime_error_when_aim_missing(dash, monkeypatch
     monkeypatch.setattr(tracking, "ensure_dashboard_running", _raise)
     with pytest.raises(RuntimeError, match="pip install aim"):
         dash.open_in_aim()
+
+
+# ── dash_summary + engine_comparison ─────────────────────────────────────────
+def test_dash_summary_rolls_up_runs_f1_and_cells(dash, project_ctrl):
+    _benchmarked_project(project_ctrl, "A", 0.90, 100, "2026-01-01T00:00:00+00:00")
+    _benchmarked_project(project_ctrl, "B", 0.80, 50, "2026-01-02T00:00:00+00:00")
+    _benchmarked_project(project_ctrl, "C", None, 20, "2026-01-03T00:00:00+00:00")  # unbenchmarked
+    s = dash.dash_summary()
+    assert s.n_cells == 170
+    assert s.n_benchmarked == 2
+    assert abs(s.best_f1 - 0.90) < 1e-9
+    assert abs(s.avg_f1 - 0.85) < 1e-9
+    assert s.n_runs == len(dash.runs_table())
+
+
+def test_dash_summary_empty_is_all_none_or_zero(dash):
+    s = dash.dash_summary()
+    assert s.n_runs == 0 and s.n_cells == 0
+    assert s.best_f1 is None and s.avg_f1 is None and s.n_benchmarked == 0
+
+
+def test_engine_comparison_averages_f1_per_engine_and_sorts_best_first(dash, project_ctrl):
+    _benchmarked_project(project_ctrl, "cs1", 0.94, 10, "2026-01-01T00:00:00+00:00", engine="cellseg1")
+    _benchmarked_project(project_ctrl, "cs2", 0.90, 10, "2026-01-02T00:00:00+00:00", engine="cellseg1")
+    _benchmarked_project(project_ctrl, "sam", 0.88, 10, "2026-01-03T00:00:00+00:00", engine="sam2")
+    _benchmarked_project(project_ctrl, "cp", None, 10, "2026-01-04T00:00:00+00:00", engine="cellpose")
+    rows = {r.engine_key: r for r in dash.engine_comparison()}
+    assert abs(rows["cellseg1"].avg_f1 - 0.92) < 1e-9
+    assert rows["cellseg1"].n_projects == 2
+    assert rows["cellpose"].avg_f1 is None  # unbenchmarked → None
+    # best-first ordering, unbenchmarked (None) last
+    order = [r.engine_key for r in dash.engine_comparison()]
+    assert order[0] == "cellseg1"
+    assert order[-1] == "cellpose"
+
+
+def test_engine_comparison_empty_library(dash):
+    assert dash.engine_comparison() == []

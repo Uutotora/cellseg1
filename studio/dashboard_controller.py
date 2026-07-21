@@ -39,6 +39,27 @@ class DashRun:
     ok: bool
 
 
+@dataclass
+class DashSummary:
+    """Rolled-up numbers for the Dashboard KPI tiles."""
+
+    n_runs: int
+    best_f1: Optional[float]
+    avg_f1: Optional[float]
+    n_cells: int
+    n_benchmarked: int
+
+
+@dataclass
+class EngineStat:
+    """One row of the Dashboard's engine-comparison panel."""
+
+    engine_key: str
+    engine_label: str
+    n_projects: int
+    avg_f1: Optional[float]
+
+
 def _sort_ts(iso: str) -> datetime:
     dt = parse_iso(iso)
     if dt is None:
@@ -127,6 +148,41 @@ class DashboardController:
         scored = [p for p in self.projects.store.list() if p.stats.last_f1 is not None]
         scored.sort(key=lambda p: _sort_ts(p.updated_at))
         return [p.stats.last_f1 for p in scored]
+
+    # ── summary KPIs ─────────────────────────────────────────────────────────
+    def dash_summary(self) -> "DashSummary":
+        """Headline numbers for the Dashboard KPI tiles — all real, rolled up
+        from tracked runs and benchmarked project stats."""
+        projects = self.projects.store.list()
+        f1s = [p.stats.last_f1 for p in projects if p.stats.last_f1 is not None]
+        return DashSummary(
+            n_runs=len(self.runs_table()),
+            best_f1=max(f1s) if f1s else None,
+            avg_f1=(sum(f1s) / len(f1s)) if f1s else None,
+            n_cells=sum(p.stats.n_cells for p in projects),
+            n_benchmarked=len(f1s),
+        )
+
+    def engine_comparison(self) -> list["EngineStat"]:
+        """Per-engine accuracy across the library — the "compare engines"
+        view: how many projects use each engine and their average benchmarked
+        F1. Engines with a real F1 sort first (best first); unbenchmarked ones
+        (avg_f1 = None) fall to the end."""
+        from collections import defaultdict
+        buckets: dict[str, list] = defaultdict(list)
+        for p in self.projects.store.list():
+            buckets[p.engine].append(p)
+        out: list[EngineStat] = []
+        for key, projs in buckets.items():
+            f1s = [p.stats.last_f1 for p in projs if p.stats.last_f1 is not None]
+            out.append(EngineStat(
+                engine_key=key,
+                engine_label=ENGINE_LABELS.get(key, key),
+                n_projects=len(projs),
+                avg_f1=(sum(f1s) / len(f1s)) if f1s else None,
+            ))
+        out.sort(key=lambda e: (e.avg_f1 is not None, e.avg_f1 or 0.0), reverse=True)
+        return out
 
     # ── Open in Aim ──────────────────────────────────────────────────────────
     def open_in_aim(self) -> str:

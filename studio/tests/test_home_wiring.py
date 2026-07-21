@@ -263,3 +263,37 @@ def test_quick_cards_and_recent_rows_get_hover_shadow(app, controller):
     recent = controller.recent(limit=1)
     row = home._recent_row(to_card(recent[0]))
     assert row.graphicsEffect() is not None
+
+
+def test_refresh_rebuilds_the_hero_for_the_new_most_recent_project(app, controller):
+    """Regression: the KPI row + "pick up where you left off" hero used to be
+    built once and never refreshed, so a changed cover / a newly-touched
+    most-recent project only showed after an app restart. refresh() now rebuilds
+    the top block, so the hero tracks the current most-recent project live."""
+    home = _home(app, controller)
+    newest = controller.recent(limit=1)[0]
+
+    # make a *different* project the most recent (explicit far-future stamp so
+    # it's unambiguously newest — _now_iso() is only second-resolution, which
+    # can tie with the just-seeded projects in a fast test)
+    others = [p for p in controller.list_projects() if p.id != newest.id]
+    bumped = others[0]
+    bumped.updated_at = "2099-01-01T00:00:00+00:00"
+    controller.store.save(bumped, touch=False)
+
+    home.refresh()
+    top_labels = [lb.text() for lb in home._top_widget.findChildren(QLabel)]
+    assert any(bumped.name in txt for txt in top_labels)
+
+
+def test_refresh_reflects_a_cover_change_in_the_hero(app, controller):
+    """A cover set on the most-recent project shows on the hero after refresh
+    (the hero's CoverView is rebuilt from current state, not frozen)."""
+    home = _home(app, controller)
+    newest = controller.recent(limit=1)[0]
+    controller.set_cover(newest.id, kind="color", color="#2bd4c0")
+    home.refresh()
+    # the hero's cover carries the new colour (find the CoverView by its state)
+    from studio.covers import CoverView
+    covers = [c for c in home._top_widget.findChildren(CoverView) if c._color == "#2bd4c0"]
+    assert covers, "hero cover did not pick up the new colour after refresh"

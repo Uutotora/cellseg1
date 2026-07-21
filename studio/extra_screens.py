@@ -990,6 +990,7 @@ class DashboardScreen(QWidget):
         v = QVBoxLayout(body)
         v.setContentsMargins(34, 4, 34, 40)
         v.setSpacing(16)
+        v.addWidget(self._kpi_row())
         charts = QHBoxLayout()
         charts.setSpacing(16)
         losses, loss_caption = self._dashboard.loss_curve()
@@ -1001,9 +1002,113 @@ class DashboardScreen(QWidget):
             "F1 across runs", "held-out validation" if bars else "No benchmarked runs yet",
             self._chart_or_empty(_BarChart, bars, t["signal"], "No runs yet")))
         v.addLayout(charts)
+        v.addWidget(self._engine_comparison_card())
         v.addWidget(self._runs_table())
         v.addStretch(1)
         self._outer.addWidget(scroll(body))
+
+    # ── KPI tiles ────────────────────────────────────────────────────────────
+    def _kpi_row(self) -> QWidget:
+        t = self._t
+        s = self._dashboard.dash_summary()
+        best = f"{s.best_f1:.2f}" if s.best_f1 is not None else "—"
+        avg = f"{s.avg_f1:.2f}" if s.avg_f1 is not None else "—"
+        from studio import project_controller as _pc
+        tiles = [
+            ("run", "primary", str(s.n_runs), "Tracked runs", "training + segmentation"),
+            ("spark", "success", best, "Best F1", "highest benchmarked"),
+            ("chart", "signal", avg, "Avg F1", f"over {s.n_benchmarked} benchmarked" if s.n_benchmarked else "none benchmarked yet"),
+            ("target", "warning", _pc.format_count(s.n_cells), "Cells segmented", "across all projects"),
+        ]
+        w = bare_widget()
+        row = QHBoxLayout(w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(14)
+        for icon_name, kind, value, cap, sub in tiles:
+            row.addWidget(self._kpi_tile(icon_name, kind, value, cap, sub))
+        return w
+
+    def _kpi_tile(self, icon_name: str, kind: str, value: str, cap: str, sub: str) -> QFrame:
+        t = self._t
+        colm = {"primary": t["primary"], "signal": t["signal"], "warning": t["warning"], "success": t["success"]}
+        weakm = {"primary": t["primary_weak"], "signal": t["signal_weak"], "warning": t["warning_weak"], "success": t["success_weak"]}
+        card = QFrame()
+        card.setObjectName("DashKpi")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setStyleSheet(f"#DashKpi{{background:{t['surface']}; border:1px solid {t['border']}; border-radius:14px;}}")
+        soft_shadow(card, 14, 20, 3)
+        cv = QVBoxLayout(card)
+        cv.setContentsMargins(15, 14, 15, 14)
+        cv.setSpacing(3)
+        badge = QLabel()
+        badge.setFixedSize(30, 30)
+        badge.setPixmap(icons.pixmap(icon_name, colm[kind], 16))
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setStyleSheet(f"background:{weakm[kind]}; border-radius:8px;")
+        cv.addWidget(badge)
+        cv.addSpacing(4)
+        val = QLabel(value)
+        val.setStyleSheet(f"color:{t['text']}; font-family:{theme.MONO}; font-size:23px; font-weight:600; letter-spacing:-0.5px;")
+        cv.addWidget(val)
+        cv.addWidget(label(cap.upper(), 10.5, t["text_muted"], 600, 0.3))
+        sub_lbl = label(sub, 11, t["text_muted"])
+        sub_lbl.setWordWrap(True)
+        cv.addWidget(sub_lbl)
+        return card
+
+    # ── engine comparison ────────────────────────────────────────────────────
+    def _engine_comparison_card(self) -> QFrame:
+        t = self._t
+        card = QFrame()
+        card.setObjectName("EngineCmpCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setStyleSheet(f"QFrame#EngineCmpCard{{background:{t['surface']}; border:1px solid {t['border']}; border-radius:14px;}}")
+        soft_shadow(card, 14, 20, 3)
+        v = QVBoxLayout(card)
+        v.setContentsMargins(18, 16, 18, 16)
+        v.setSpacing(2)
+        v.addWidget(label("Engine comparison", 13.5, t["text"], 600))
+        v.addWidget(label("average benchmarked F1 by engine, across your projects", 11.5, t["text_muted"]))
+        v.addSpacing(10)
+        rows = self._dashboard.engine_comparison()
+        if not rows:
+            v.addWidget(label("No projects yet — create one and pick an engine to compare.",
+                              12, t["text_muted"]))
+            return card
+        dotcol = {"cellseg1": t["primary"], "cellpose": t["signal"], "sam2": t["success"]}
+        for r in rows:
+            line = QHBoxLayout()
+            line.setSpacing(12)
+            name_w = QWidget()
+            name_w.setFixedWidth(150)
+            nl = QHBoxLayout(name_w)
+            nl.setContentsMargins(0, 0, 0, 0)
+            nl.setSpacing(8)
+            dot = QFrame()
+            dot.setFixedSize(8, 8)
+            dot.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            dot.setStyleSheet(f"background:{dotcol.get(r.engine_key, t['warning'])}; border-radius:4px;")
+            nl.addWidget(dot)
+            nl.addWidget(label(r.engine_label, 12.5, t["text"], 600), 1)
+            line.addWidget(name_w)
+
+            frac = (r.avg_f1 or 0.0)
+            bar = _ProgressBar(frac, t)
+            bar.setFixedHeight(8)
+            line.addWidget(bar, 1)
+
+            val = "F1 " + (f"{r.avg_f1:.2f}" if r.avg_f1 is not None else "—")
+            meta = f"{val} · {r.n_projects} project{'s' if r.n_projects != 1 else ''}"
+            ml = label(meta, 12, t["text_subtle"])
+            ml.setStyleSheet(f"color:{t['text_subtle']}; font-family:{theme.MONO}; font-size:12px; background:transparent;")
+            ml.setFixedWidth(150)
+            ml.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            line.addWidget(ml)
+            rowwrap = bare_widget()
+            rowwrap.setLayout(line)
+            line.setContentsMargins(0, 7, 0, 7)
+            v.addWidget(rowwrap)
+        return card
 
     def _chart_or_empty(self, cls, data: list[float], color: str, empty_msg: str) -> QWidget:
         if not data:
