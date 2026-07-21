@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Assistant tab's controller.
+"""Velum — the Assistant tab's controller.
 
 Qt-free glue (mirrors ``train_controller.py`` / ``segment_controller.py``:
 plain data in, plain callbacks out, background threads for anything that

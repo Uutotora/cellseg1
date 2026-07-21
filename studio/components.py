@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the static UI kit (design skeleton).
+"""Velum — the static UI kit (design skeleton).
 
 Presentational Qt widgets that reproduce the north-star mockup one-to-one:
 chips, buttons, selects, toggles, sliders, steppers, segmented controls, stat
@@ -864,9 +864,8 @@ class Sidebar(QFrame):
         lay.setSpacing(3)
 
         brand = QLabel(
-            f"<span style='font-size:19px;font-weight:600;letter-spacing:-0.4px;color:{t['text']}'>"
-            f"CellSeg<span style='color:{t['primary']}'>1</span></span>&nbsp;&nbsp;"
-            f"<span style='font-size:9px;font-weight:600;letter-spacing:1.4px;color:{t['text_muted']}'>STUDIO</span>")
+            f"<span style='font-size:21px;font-weight:600;letter-spacing:-0.4px;color:{t['text']}'>"
+            f"Velum<span style='color:{t['primary']}'>.</span></span>")
         brand.setContentsMargins(6, 2, 0, 12)
         lay.addWidget(brand)
 
@@ -893,7 +892,7 @@ class Sidebar(QFrame):
         appearance.clicked.connect(lambda: self.toggle_theme.emit())
         lay.addWidget(appearance)
 
-        ver = QLabel("v0.9.0 · Studio")
+        ver = QLabel("v0.1 · Velum")
         ver.setStyleSheet(f"color:{t['text_muted']}; font-size:10.5px; padding:6px 10px 0; font-family:{theme.MONO}; background:transparent;")
         lay.addWidget(ver)
 

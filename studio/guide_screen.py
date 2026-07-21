@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Guide & Docs screen.
+"""Velum — the Guide & Docs screen.
 
 The in-app documentation surface: a searchable article list on the left, the
 selected article rendered on the right — reached from the sidebar's

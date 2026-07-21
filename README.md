@@ -1,12 +1,13 @@
 <p align="center">
-  <img src="studio/assets/icon.png" width="128" alt="CellSeg1 Studio icon">
+  <img src="studio/assets/icon.png" width="128" alt="Velum icon">
 </p>
 
-<h1 align="center">CellSeg1 Studio</h1>
+<h1 align="center">Velum</h1>
 
 <p align="center">
-  A desktop app for <b>cell instance segmentation</b> in microscopy —
-  built for microscopists and cell biologists, not ML engineers.
+  <b>One-shot instance segmentation.</b> Annotate a single example and Velum
+  learns to find and cut out that object everywhere — cells, tissue, or anything
+  else. A desktop app, built for scientists, not ML engineers.
 </p>
 
 <p align="center">
@@ -17,17 +18,20 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/home.png" width="860" alt="CellSeg1 Studio — Home">
+  <img src="docs/screenshots/home.png" width="860" alt="Velum — Home">
 </p>
 
 ---
 
 ## What it is
 
-CellSeg1 Studio turns a microscopy image into labelled cells — and everything
-downstream (per-cell morphometry, cohort statistics, ground-truth evaluation,
-export) works the same **regardless of which engine produced the masks**. Three
-interchangeable engines cover the common cases:
+Velum turns an image into labelled objects — annotate **one** example and its
+one-shot LoRA engine learns to segment the rest, no big labelled dataset needed.
+Everything downstream (per-object morphometry, cohort statistics, ground-truth
+evaluation, export) works the same **regardless of which engine produced the
+masks**. It's tuned for microscopy today (cells, nuclei, tissue), but the
+one-shot engine isn't hard-wired to cells. Three interchangeable engines cover
+the common cases:
 
 | Engine | How it works | Best for |
 | --- | --- | --- |
@@ -100,8 +104,8 @@ Build a thin `.app` launcher once; after that you update it just by editing code
 and relaunching — no rebuild:
 
 ```bash
-bash scripts/make_app.sh      # -> dist/CellSeg1 Studio.app
-open "dist/CellSeg1 Studio.app"
+bash scripts/make_app.sh      # -> dist/Velum.app
+open "dist/Velum.app"
 ```
 
 See **[docstudio/PACKAGING.md](docstudio/PACKAGING.md)** for the full story

@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the microscopy 'nuclei' painter (design skeleton).
+"""Velum — the microscopy 'nuclei' painter (design skeleton).
 
 A QPainter port of the mockup's ``<canvas>``: a dark field of fluorescent
 nuclei (DAPI-like glow) with teal segmentation outlines and, on the big

@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Models & Train tab controller.
+"""Velum — the Models & Train tab controller.
 
 Qt-free glue between the real one-shot LoRA training pipeline
 (``cellseg1_core/train_model.py`` + ``train_state_manager.py`` — the exact

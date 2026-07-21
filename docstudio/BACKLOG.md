@@ -1,4 +1,4 @@
-# Backlog — CellSeg1 Studio (tab by tab)
+# Backlog — Velum (tab by tab)
 
 The plan to take Studio from **design skeleton** to **full product**, one tab
 at a time. Each tab below is its own mini-backlog: a goal, the work, and a

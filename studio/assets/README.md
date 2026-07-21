@@ -1,6 +1,6 @@
 # Bundled assets
 
-**`icon.png`** — the CellSeg1 Studio app icon, 1024×1024 RGBA (source
+**`icon.png`** — the Velum app icon, 1024×1024 RGBA (source
 resolution for crisp scaling to any size the OS requests). Set as
 `QApplication.setWindowIcon()` in `studio/app.py`'s `main()` — this is what
 macOS shows as the Dock tile for the running (unbundled — `run_studio.sh`

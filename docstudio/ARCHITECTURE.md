@@ -1,4 +1,4 @@
-# Architecture — CellSeg1 Studio
+# Architecture — Velum
 
 ## Module map (`studio/`)
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cellseg1"
 version = "0.1.0"
-description = "CellSeg1 Studio — a desktop app for cell instance segmentation in microscopy (SAM+LoRA and Cellpose-SAM engines)."
+description = "Velum — a desktop app for cell instance segmentation in microscopy (SAM+LoRA and Cellpose-SAM engines)."
 requires-python = ">=3.10,<3.13"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -110,7 +110,9 @@ dev = [
 ]
 
 [project.scripts]
-# Console launchers: both start the Studio desktop app (== run_studio.sh).
+# Console launchers: all start the Velum desktop app (== run_studio.sh).
+# `velum` is the primary name; `cellseg1`/`cellseg1-studio` stay as aliases.
+velum = "studio.app:main"
 cellseg1 = "studio.app:main"
 cellseg1-studio = "studio.app:main"
 

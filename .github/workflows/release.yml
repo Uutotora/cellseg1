@@ -1,4 +1,4 @@
-# Build downloadable CellSeg1 Studio bundles and attach them to a GitHub Release.
+# Build downloadable Velum bundles and attach them to a GitHub Release.
 #
 # Trigger: push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`),
 # or run manually from the Actions tab. Produces a macOS .dmg and a Linux
@@ -27,11 +27,11 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            artifact: dist/CellSeg1-Studio.dmg
-            asset: CellSeg1-Studio.dmg
+            artifact: dist/Velum.dmg
+            asset: Velum.dmg
           - os: ubuntu-latest
-            artifact: dist/CellSeg1-Studio-linux-x86_64.tar.gz
-            asset: CellSeg1-Studio-linux-x86_64.tar.gz
+            artifact: dist/Velum-linux-x86_64.tar.gz
+            asset: Velum-linux-x86_64.tar.gz
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

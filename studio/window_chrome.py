@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — custom window chrome (frameless title bar).
+"""Velum — custom window chrome (frameless title bar).
 
 Removes the native OS title bar (the grey strip) and replaces it with our own
 dark bar carrying the app's own traffic-light controls, exactly like the
@@ -82,7 +82,7 @@ class TitleBar(QWidget):
             row.addWidget(b)
 
         row.addStretch(1)
-        title = QLabel("CellSeg1 Studio")
+        title = QLabel("Velum")
         title.setStyleSheet(
             f"color:{t['text_muted']}; font-size:12.5px; font-weight:600; letter-spacing:0.2px;")
         row.addWidget(title)

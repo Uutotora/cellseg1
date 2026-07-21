@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — overlay surfaces: Logs console, command palette, toast.
+"""Velum — overlay surfaces: Logs console, command palette, toast.
 
 Created as children of the main window; the window shows/hides and positions
 them. ``LogsConsole`` is a real, live view onto ``studio.log_bus`` — every
@@ -501,7 +501,7 @@ class CommandPalette(QWidget):
         brand_ic = QLabel()
         brand_ic.setPixmap(icons.pixmap("spark", t["text_muted"], 13))
         fr.addWidget(brand_ic)
-        fr.addWidget(label("CellSeg1 Studio", 11, t["text_muted"], 600))
+        fr.addWidget(label("Velum", 11, t["text_muted"], 600))
         fr.addStretch(1)
         self._foot_action_lbl = label("", 11, t["text_subtle"], 600)
         fr.addWidget(self._foot_action_lbl)

@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Segment workspace's own image canvas.
+"""Velum — the Segment workspace's own image canvas.
 
 Not embedded napari (see ``docstudio/ARCHITECTURE.md``) — a self-contained
 ``QWidget`` that renders a :class:`studio.layer_model.LayerList` (image +

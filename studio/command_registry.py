@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the ⌘K command palette's action registry + fuzzy search.
+"""Velum — the ⌘K command palette's action registry + fuzzy search.
 
 Qt-free (pure stdlib) so it stays importable in CI's light `test` group and
 is unit-testable without a display: a `Command` is just a label/section/icon/

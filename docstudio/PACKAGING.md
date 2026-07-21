@@ -1,4 +1,4 @@
-# Packaging CellSeg1 Studio as a macOS `.app`
+# Packaging Velum as a macOS `.app`
 
 Today Studio runs **unbundled**: `run_studio.sh` launches the `python3.11`
 interpreter, so the Dock tile is *python*'s window icon (drawn by Qt as-is, no
@@ -21,7 +21,7 @@ code, **editing the code and relaunching is the whole update**. You build the
 `.app` **once**.
 
 ```
-CellSeg1 Studio.app/
+Velum.app/
 └── Contents/
     ├── Info.plist          # name, bundle id, icon, min-OS, retina flag
     ├── MacOS/launch        # tiny shell script -> runs studio/app.py from the repo
@@ -40,12 +40,12 @@ You only rebuild the `.app` if you change the **icon**, the app **name**, or the
 
 Paste this to an agent (Claude Code / Codex / Cursor) in the repo root:
 
-> Build a **thin macOS `.app` launcher** for CellSeg1 Studio. Do NOT freeze or
+> Build a **thin macOS `.app` launcher** for Velum. Do NOT freeze or
 > bundle the Python code — the `.app` must run the live source from this git
 > checkout so I can edit code and just relaunch, never rebuild.
 >
 > Requirements:
-> - Add a script `scripts/make_app.sh` that (re)creates `dist/CellSeg1 Studio.app`
+> - Add a script `scripts/make_app.sh` that (re)creates `dist/Velum.app`
 >   with this layout: `Contents/Info.plist`, `Contents/MacOS/launch` (executable),
 >   `Contents/Resources/AppIcon.icns`.
 > - `Contents/MacOS/launch` is a bash script that launches the app **without
@@ -57,16 +57,16 @@ Paste this to an agent (Claude Code / Codex / Cursor) in the repo root:
 >   `studio/app.py` with `PYTHONPATH` set to the repo root. Hard-code the repo
 >   path via a placeholder the script computes from its own location if the app
 >   is kept inside the repo, otherwise from an absolute path constant near the
->   top of `make_app.sh`. Redirect stdout/stderr to `~/Library/Logs/CellSeg1Studio.log`.
-> - `Info.plist` keys: `CFBundleName`/`CFBundleDisplayName` = "CellSeg1 Studio",
->   `CFBundleIdentifier` = "com.cellseg1.studio", `CFBundleExecutable` = "launch",
+>   top of `make_app.sh`. Redirect stdout/stderr to `~/Library/Logs/Velum.log`.
+> - `Info.plist` keys: `CFBundleName`/`CFBundleDisplayName` = "Velum",
+>   `CFBundleIdentifier` = "com.velum.app", `CFBundleExecutable` = "launch",
 >   `CFBundleIconFile` = "AppIcon", `CFBundlePackageType` = "APPL",
 >   `LSMinimumSystemVersion` = "13.0", `NSHighResolutionCapable` = true,
 >   `LSUIElement` = false.
 > - Copy `docs/app_icon/AppIcon.icns` to `Contents/Resources/AppIcon.icns`.
-> - After building, run `codesign --force --deep --sign - "dist/CellSeg1 Studio.app"`
+> - After building, run `codesign --force --deep --sign - "dist/Velum.app"`
 >   (ad-hoc sign) so Gatekeeper/Dock behave, and print how to launch it.
-> - Verify it opens (`open "dist/CellSeg1 Studio.app"`), confirm the log file
+> - Verify it opens (`open "dist/Velum.app"`), confirm the log file
 >   gets written, and tell me exactly what you did and did NOT verify.
 > - Add a short `docstudio/PACKAGING.md` section (or update it) with how to
 >   rebuild and where the log lives. Commit on a branch.
@@ -101,8 +101,8 @@ env, freeze everything into a bundle with **PyInstaller**. This is wired up:
 ```bash
 pip install -e . pyinstaller
 bash scripts/build_bundle.sh
-#   macOS  -> dist/CellSeg1 Studio.app  +  dist/CellSeg1-Studio.dmg
-#   Linux  -> dist/CellSeg1 Studio/     +  dist/CellSeg1-Studio-linux-x86_64.tar.gz
+#   macOS  -> dist/Velum.app  +  dist/Velum.dmg
+#   Linux  -> dist/Velum/     +  dist/Velum-linux-x86_64.tar.gz
 ```
 
 **In CI / Releases** — [`.github/workflows/release.yml`](../.github/workflows/release.yml)

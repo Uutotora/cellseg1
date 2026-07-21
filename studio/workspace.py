@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Workspace (Segment) screen, wired for real.
+"""Velum — the Workspace (Segment) screen, wired for real.
 
 The signature screen: an evented **Layers** panel (list + full controls,
 napari-Labels-faithful) driving our own **Canvas** (``studio/canvas.py`` —

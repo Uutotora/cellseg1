@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Assistant drawer: a real chat, not a static mockup.
+"""Velum — the Assistant drawer: a real chat, not a static mockup.
 
 Own UI, reuse the logic: everything here is Studio's own Qt (its own chat
 view, its own icons/tokens — no import of ``cellseg1_core.widgets.chat`` or

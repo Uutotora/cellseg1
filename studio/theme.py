@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the design language (tokens + Qt stylesheet builders).
+"""Velum — the design language (tokens + Qt stylesheet builders).
 
 The Studio identity, derived from the Label Studio design system and retuned
 for a microscopy desktop tool:

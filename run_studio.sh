@@ -1,5 +1,5 @@
 #!/bin/bash
-# Launch CellSeg1 Studio — the standalone desktop app.
+# Launch Velum — the standalone desktop app.
 #
 # Currently a pure design skeleton (native Qt reproduction of the mockup, no
 # logic — launches on PyQt6 alone, no napari/torch/GPU needed). Functionality

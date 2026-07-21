@@ -1,4 +1,4 @@
-# Roadmap — CellSeg1 Studio
+# Roadmap — Velum
 
 Phases from design skeleton to shippable product. Each phase closes when its
 `BACKLOG.md` items are done and logged in `CHANGELOG.md`.

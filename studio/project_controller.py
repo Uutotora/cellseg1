@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Projects tab controller.
+"""Velum — the Projects tab controller.
 
 Qt-free glue between the ``Project``/``ProjectStore`` data model
 (``studio/project.py``) and the Home/Projects screens: search + filter,

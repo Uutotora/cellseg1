@@ -1,14 +1,15 @@
 <p align="center">
-  <img src="../studio/assets/icon.png" width="120" alt="CellSeg1 Studio app icon">
+  <img src="../studio/assets/icon.png" width="120" alt="Velum app icon">
 </p>
 
-# CellSeg1 Studio — documentation
+# Velum — documentation
 
-Studio is the standalone desktop app for CellSeg1: a self-contained product
-that owns its window (Home · Projects · Segment · Models & Train · Dashboard),
-with its **own** image canvas (Segment's `studio/canvas.py` — explicitly
-*not* embedded napari; see `ARCHITECTURE.md`). It replaces the "napari
-plugin in a dock" experience.
+Velum is the standalone desktop app: a self-contained product that owns its
+window (Home · Projects · Segment · Models & Train · Dashboard), with its
+**own** image canvas (Segment's `studio/canvas.py` — explicitly *not* embedded
+napari; see `ARCHITECTURE.md`). It replaces the "napari plugin in a dock"
+experience. (The Python package is still named `studio/`; "Velum" is the
+product name.)
 
 This folder is Studio's own doc set — separate from the repo-wide `docs/`
 (which covers the whole CellSeg1 project). Read in this order:

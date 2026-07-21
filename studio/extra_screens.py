@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — Models & Train and Dashboard screens.
+"""Velum — Models & Train and Dashboard screens.
 
 Models & Train is real (bound to ``studio.train_controller.TrainController`` —
 one-shot LoRA training on a background thread, a real trained-models list and

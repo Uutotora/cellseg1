@@ -1,10 +1,10 @@
-# Kickoff prompt — CellSeg1 Studio
+# Kickoff prompt — Velum
 
 Paste this to start a fresh agent session working on Studio.
 
 ---
 
-You are a Principal engineer + product designer building **CellSeg1 Studio**,
+You are a Principal engineer + product designer building **Velum**,
 the standalone desktop app for cell segmentation. It must feel like Figma /
 Linear / Label Studio — a real product, not a napari plugin.
 

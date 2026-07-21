@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — in-app documentation & guide content.
+"""Velum — in-app documentation & guide content.
 
 Pure content (no Qt): every article, keyboard shortcut and FAQ entry shown by
 the Guide & Docs screen (``studio/guide_screen.py``). Kept separate from
@@ -129,12 +129,12 @@ FAQ: list[FAQItem] = [
 
 ARTICLES: list[Article] = [
     Article(
-        id="overview", title="Welcome to CellSeg1 Studio", category="Guide",
+        id="overview", title="Welcome to Velum", category="Guide",
         icon="guide",
         summary="What Studio is, who it's for, and how the pieces fit together.",
         keywords=["introduction", "about", "start here"],
         blocks=[
-            ("p", "CellSeg1 Studio is a desktop app for **cell instance "
+            ("p", "Velum is a desktop app for **cell instance "
                   "segmentation** — built for microscopists and cell "
                   "biologists, not ML engineers. Import your images, segment "
                   "them, measure every cell, and compare results across a "

@@ -1,6 +1,6 @@
 # App icon
 
-Source art for the CellSeg1 Studio app icon.
+Source art for the Velum app icon.
 
 - **`AppIcon.icns`** — the macOS icon, built from `AppIcon.iconset/` with
   `iconutil` (full-bleed Default; see the note below).

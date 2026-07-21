@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — small, safe motion helpers (self-contained).
+"""Velum — small, safe motion helpers (self-contained).
 
 Micro-interactions for the shell: a soft fade on screen switches, and a hover
 "lift" for cards/rows. Defensive: if animations can't run (e.g. offscreen),

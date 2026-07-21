@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the "New Project" creation flow.
+"""Velum — the "New Project" creation flow.
 
 A frameless, scrim-backed modal (same construction as ``overlays.
 CommandPalette``: full-window overlay, click-outside-to-close, Escape via the

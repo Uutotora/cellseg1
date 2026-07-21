@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the standalone desktop application layer.
+"""Velum — the standalone desktop application layer.
 
 A faithful, native-Qt reproduction of the north-star mockup, with real
 functionality wired back tab by tab; the plan, the fresh-agent prompt, the

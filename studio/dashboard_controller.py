@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Dashboard tab controller.
+"""Velum — the Dashboard tab controller.
 
 Real experiment data for the Dashboard screen's two charts and runs table,
 built from the same plain on-disk JSON this app already writes for real

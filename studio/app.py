@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the application shell and entry point.
+"""Velum — the application shell and entry point.
 
 This app is a faithful, native-Qt reproduction of the north-star mockup, with
 functionality wired back tab by tab (see ``docstudio/`` — OVERVIEW,
@@ -152,7 +152,7 @@ class StudioWindow(QMainWindow):
         # so a chosen backend/model/API key isn't lost on a theme switch.
         self._assistant_controller = assistant_controller or AssistantController()
         self._screens: dict[str, QWidget] = {}
-        self.setWindowTitle("CellSeg1 Studio")
+        self.setWindowTitle("Velum")
         self.resize(1320, 860)
         self.setMinimumSize(1040, 680)
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
@@ -555,10 +555,10 @@ def _install_exception_hook() -> None:
 
 
 def main() -> None:
-    """Launch CellSeg1 Studio (pure-design skeleton — no napari/torch needed)."""
+    """Launch Velum (pure-design skeleton — no napari/torch needed)."""
     _install_exception_hook()
     install_handler()
-    _log.info("CellSeg1 Studio starting…")
+    _log.info("Velum starting…")
     app = QApplication.instance() or QApplication(sys.argv)
     app.setWindowIcon(load_icon())
     family = load_fonts()

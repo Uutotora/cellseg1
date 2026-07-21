@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — static demo content for the design skeleton.
+"""Velum — static demo content for the design skeleton.
 
 Hard-coded stand-in data mirroring the north-star mockup, so every screen
 renders a believable, consistent picture with **no logic** behind it. When a

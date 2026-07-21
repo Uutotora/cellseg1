@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — its own icon set (from the mockup), rendered to QIcon/QPixmap.
+"""Velum — its own icon set (from the mockup), rendered to QIcon/QPixmap.
 
 Studio has its **own** icons — the ones drawn for the north-star mockup, not
 the classic app's. Every icon is a 24×24 stroke path recoloured on demand so it

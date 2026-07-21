@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the screens.
+"""Velum — the screens.
 
 Native reproductions of the mockup, one screen per class, driven by the
 ``components``/``paint`` kits. Home and Projects are wired to the real

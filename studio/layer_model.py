@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Segment workspace's own layer model.
+"""Velum — the Segment workspace's own layer model.
 
 Studio does not embed napari (see ``docstudio/ARCHITECTURE.md``'s "Segment tab
 specifically" section) — this is our **own** evented layer list, built to

@@ -1,9 +1,25 @@
-# Changelog — CellSeg1 Studio
+# Changelog — Velum
 
 What actually shipped in Studio, dated, newest first. (The repo-wide log is
 `docs/CHANGELOG.md`; this one is Studio-specific.)
 
 ---
+
+---
+
+## 2026-07-21 — Renamed the product to **Velum**
+
+CellSeg1 Studio -> **Velum**. The product is no longer positioned as cells-only:
+its one-shot LoRA engine learns to segment *any* object from a single annotated
+example, so the name shed the "CellSeg". Renamed the user-facing name everywhere
+it shows: window title + title bar, the sidebar wordmark ("Velum." with a small
+accent dot), version footer, the `.app` bundle (name/identifier `com.velum.app`),
+the release artifacts (`Velum.dmg`, `Velum-linux-x86_64.tar.gz`), the log file
+(`~/Library/Logs/Velum.log`), README (broadened the pitch to "one-shot instance
+segmentation of any object"), and the docs. Added a `velum` console launcher
+(`cellseg1`/`cellseg1-studio` kept as aliases). Deliberately NOT renamed: the
+Python packages `studio/` and `cellseg1_core/`, and the **CellSeg1 engine** (one
+of the three engines — that's its method name, not the product).
 
 ---
 

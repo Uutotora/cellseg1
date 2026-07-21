@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build a thin macOS .app launcher for CellSeg1 Studio.
+# Build a thin macOS .app launcher for Velum.
 #
 # The .app contains ONLY an icon + a launch script — NOT the Python code. It
 # runs the live source from this git checkout, so you update the app by editing
@@ -8,7 +8,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"        # repo root (this script lives in scripts/)
-APP="$REPO/dist/CellSeg1 Studio.app"
+APP="$REPO/dist/Velum.app"
 CONTENTS="$APP/Contents"
 
 echo "Repo:  $REPO"
@@ -57,7 +57,7 @@ iconutil -c icns "$ICONSET" -o "$CONTENTS/Resources/AppIcon.icns"
 cat > "$CONTENTS/MacOS/launch" <<LAUNCH
 #!/bin/bash
 REPO="$REPO"
-LOG="\$HOME/Library/Logs/CellSeg1Studio.log"
+LOG="\$HOME/Library/Logs/Velum.log"
 mkdir -p "\$(dirname "\$LOG")"
 if [ -n "\${CELLSEG1_PYTHON:-}" ] && [ -x "\${CELLSEG1_PYTHON}" ]; then
   PY="\$CELLSEG1_PYTHON"
@@ -70,7 +70,7 @@ else
 fi
 export PYTHONPATH="\$REPO"
 {
-  echo "=== \$(date) launching CellSeg1 Studio (PY=\$PY) ==="
+  echo "=== \$(date) launching Velum (PY=\$PY) ==="
   if [ "\$PY" = "conda-run" ]; then
     exec conda run --no-capture-output -n cellseg1 python "\$REPO/studio/app.py"
   else
@@ -86,9 +86,9 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>CellSeg1 Studio</string>
-  <key>CFBundleDisplayName</key><string>CellSeg1 Studio</string>
-  <key>CFBundleIdentifier</key><string>com.cellseg1.studio</string>
+  <key>CFBundleName</key><string>Velum</string>
+  <key>CFBundleDisplayName</key><string>Velum</string>
+  <key>CFBundleIdentifier</key><string>com.velum.app</string>
   <key>CFBundleVersion</key><string>0.1.0</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleExecutable</key><string>launch</string>
@@ -121,5 +121,5 @@ To use the .app from the Dock instead:
      System Settings > Privacy & Security > scroll down > "Open Anyway".
      After that it launches from the Dock like any app.
 
-Logs: ~/Library/Logs/CellSeg1Studio.log
+Logs: ~/Library/Logs/Velum.log
 EOF

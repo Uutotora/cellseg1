@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the real, central log stream.
+"""Velum — the real, central log stream.
 
 Every tab already produces real operational log lines: the reused
 ``cellseg1_core.predict_controller.PredictController``'s ``on_log``

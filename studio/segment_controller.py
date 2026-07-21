@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Segment tab's predict/GT/batch/benchmark controller.
+"""Velum — the Segment tab's predict/GT/batch/benchmark controller.
 
 Qt-free glue between a ``Project``'s settings (``studio/project.py``) and the
 real segmentation pipeline — reuses the classic app's proven ML core

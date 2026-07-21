@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Project data model and on-disk store.
+"""Velum — the Project data model and on-disk store.
 
 A **Project** is the unit of work the whole product is organised around (the
 concept Label Studio gets right and the current app lacks entirely): a named

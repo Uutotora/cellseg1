@@ -1,4 +1,4 @@
-# Design language — CellSeg1 Studio
+# Design language — Velum
 
 Derived from the Label Studio design system, retuned for a scientific
 microscopy tool. The authoritative values live in

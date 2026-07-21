@@ -1,4 +1,4 @@
-"""CellSeg1 Studio — the Projects tab's small modals: a generic confirm
+"""Velum — the Projects tab's small modals: a generic confirm
 dialog and the Project Settings dialog (General + Danger Zone).
 
 Both are scrim-backed, centred panels -- the same construction

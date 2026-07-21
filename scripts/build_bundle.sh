@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build a SELF-CONTAINED CellSeg1 Studio bundle with PyInstaller — the kind you
+# Build a SELF-CONTAINED Velum bundle with PyInstaller — the kind you
 # ship to someone who has neither the repo nor a Python env. Produces a macOS
 # .app (+ .dmg) or a Linux dist folder (+ .tar.gz), auto-detected by OS.
 #
@@ -16,7 +16,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
-NAME="CellSeg1 Studio"
+NAME="Velum"
 OS="$(uname -s)"
 DIST="$REPO/dist"
 BUILD="$REPO/build"
@@ -49,13 +49,13 @@ if [ "$OS" = "Darwin" ]; then
   echo "==> macOS build"
   pyinstaller "${COMMON[@]}" \
     --icon "${REPO}/docs/app_icon/AppIcon.icns" \
-    --osx-bundle-identifier "com.cellseg1.studio" \
+    --osx-bundle-identifier "com.velum.app" \
     studio/app.py
   APP="$DIST/$NAME.app"
   # Ad-hoc codesign so Gatekeeper lets a locally-built app run.
   codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "(codesign skipped)"
   echo "==> DMG (drag-to-Applications layout)"
-  DMG="$DIST/CellSeg1-Studio.dmg"
+  DMG="$DIST/Velum.dmg"
   rm -f "$DMG"
   # Stage the app next to an /Applications symlink so opening the DMG shows the
   # standard "drag the app onto Applications" install window, like every normal
@@ -71,7 +71,7 @@ else
   echo "==> Linux build"
   pyinstaller "${COMMON[@]}" studio/app.py
   echo "==> tar.gz"
-  TARBALL="$DIST/CellSeg1-Studio-linux-x86_64.tar.gz"
+  TARBALL="$DIST/Velum-linux-x86_64.tar.gz"
   ( cd "$DIST" && tar czf "$(basename "$TARBALL")" "$NAME" )
   echo "Built: $DIST/$NAME/"
   echo "       $TARBALL"
