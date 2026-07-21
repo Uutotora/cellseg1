@@ -34,7 +34,8 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from PyQt6.QtCore import Qt, QRectF
-from PyQt6.QtGui import QFontDatabase, QFont, QIcon, QRegion, QPainterPath, QShortcut, QKeySequence
+from PyQt6.QtGui import (QFontDatabase, QFont, QIcon, QPixmap, QPainter, QRegion,
+                         QPainterPath, QShortcut, QKeySequence)
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QApplication,
 )
@@ -93,15 +94,38 @@ def load_fonts() -> str:
     return family
 
 
+# macOS Dock/app-icon grid: system icons fill ~0.875 of the square canvas, the
+# rest transparent margin. scripts/make_app.sh bakes the .app's .icns at this
+# ratio, so it looks right at rest -- but QApplication.setWindowIcon() overrides
+# the Dock tile the moment the app runs, and if it drew the raw full-bleed
+# icon.png the tile ballooned on launch (reported: "иконка стала огромной").
+_ICON_GRID_RATIO = 0.875
+
+
 def load_icon() -> QIcon:
-    """The bundled app icon -- macOS uses QApplication's windowIcon as the
-    Dock tile for the running (unbundled -- run_studio.sh launches the
-    interpreter directly, no .app yet, see docstudio/BACKLOG.md's
-    "Packaging" entry) process. Returns a null QIcon (Qt's own, safe
-    default -- no Dock tile override) if the asset is missing, matching
-    load_fonts()'s degrade-quietly-if-missing pattern rather than raising.
+    """The app icon for ``QApplication.setWindowIcon`` (the running Dock tile /
+    window icon). Pads the full-bleed source art to the macOS icon grid so the
+    running tile matches the bundled ``.icns`` and sits at the same size as
+    system icons. Returns a null QIcon (Qt's safe default) if the asset is
+    missing, matching load_fonts()'s degrade-quietly pattern.
     """
-    return QIcon(str(_ICON_PATH)) if _ICON_PATH.exists() else QIcon()
+    if not _ICON_PATH.exists():
+        return QIcon()
+    src = QPixmap(str(_ICON_PATH))
+    if src.isNull():
+        return QIcon()
+    canvas = max(src.width(), src.height()) or 1024
+    content = round(canvas * _ICON_GRID_RATIO)
+    art = src.scaled(content, content, Qt.AspectRatioMode.KeepAspectRatio,
+                     Qt.TransformationMode.SmoothTransformation)
+    padded = QPixmap(canvas, canvas)
+    padded.fill(Qt.GlobalColor.transparent)
+    p = QPainter(padded)
+    x = (canvas - art.width()) // 2
+    y = round((canvas - art.height()) * 18 / 32)  # slight downward bias, like macOS
+    p.drawPixmap(x, y, art)
+    p.end()
+    return QIcon(padded)
 
 
 class StudioWindow(QMainWindow):
