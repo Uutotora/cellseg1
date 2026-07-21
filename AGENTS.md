@@ -19,10 +19,19 @@ cohort stats, the Assistant, export) is engine-agnostic:
 - **CellSeg1** — SAM ViT backbone + **LoRA**, one-shot fine-tuning from a
   single annotated image (`cellseg1_train.py`, `peft/`, `predict.py`).
 - **Cellpose-SAM** — zero-shot generalist, no training required
-  (`napari_app/engines.py`).
+  (`cellseg1_core/engines.py`).
 - **SAM 2** — zero-shot, the flagship choice for z-stacks/time-lapse
-  (`napari_app/engines_sam2.py`; optional dependency, degrades gracefully
+  (`cellseg1_core/engines_sam2.py`; optional dependency, degrades gracefully
   when not installed — see `docs/BACKLOG.md`'s "SAM 2 engine" entry).
+
+> **2026-07-21 — the app is now `studio/`, not `napari_app/`.** Studio (its own
+> PyQt6 app, its own canvas — never embedded napari) is THE product. The old
+> `napari_app/` napari-plugin UI has been **deleted**; its engine-agnostic ML
+> core moved to a new Qt-free package **`cellseg1_core/`**. Wherever this doc
+> still says `napari_app/…` for a *core* module (engines, analysis, benchmark,
+> cohort, advisor, tiling, volume_stitch, inference_cache, engine_registry, or
+> anything under `core/`), read `cellseg1_core/…`. The repo map below is updated;
+> some prose further down may still lag.
 
 Target users are microscopists and cell biologists, **not** ML engineers.
 The commercial goal is a world-class, enterprise-grade segmentation platform.
@@ -39,43 +48,50 @@ prompt to paste.
 ## Repo map
 
 ```
-napari_app/            THE PRODUCT (napari desktop app)
-  main.py              entry point: builds the tabbed dock (Predict/Annotate/
-                       Assistant/Train/Guide)
-  widgets/             Qt widgets, one per tab. predict_widget.py wires the
-                       Predict tab's UI to a PredictController instance —
-                       widget-only code left: Qt construction, view-update
-                       slots, drag/drop, refine, GT/evaluate, measurements
-  core/                product-side logic, Qt-free and unit-tested:
-                       predict_controller.py (config build + predict/batch/
-                       benchmark orchestration — see below), training/predict
-                       state managers, training entry — moved out of the old
-                       Streamlit GUI
+studio/                THE PRODUCT (PyQt6 desktop app — NOT napari)
+  app.py               entry point: window chrome + sidebar + screen stack
+                       (Home · Projects · Segment · Models & Train · Dashboard)
+  screens.py extra_screens.py guide_screen.py   the non-Segment screens
+  workspace.py         the Segment screen: three-pane IDE (Images/Layers ·
+                       canvas · Segment/Results inspector) wired to a
+                       SegmentController
+  canvas.py            our OWN Qt image canvas (paint/erase/fill/pick/pan-zoom,
+                       n-D) — explicitly not embedded napari
+  layer_model.py       our OWN evented layer list + LabelsLayer (reproduces
+                       napari's Labels interaction model 1:1, no napari dep)
+  *_controller.py      Qt-free, unit-tested product logic: segment/project/
+                       train/dashboard/assistant controllers (take plain dicts
+                       + callbacks, not Qt widgets — see tests/)
+  components.py theme.py icons.py motion.py overlays.py   the UI kit
+  assets/icon.png      the app icon (see docs/app_icon/, docstudio/PACKAGING.md)
+
+cellseg1_core/         THE ML CORE (engine-agnostic, Qt-free, no napari) — what
+                       studio imports as its backend. Extracted 2026-07-21 from
+                       the deleted napari_app/.
+  predict_controller.py  THE single prediction choke point: config build +
+                       predict/batch/benchmark orchestration. Plain dicts +
+                       callbacks; unit-tested without Qt/torch.
   engine_registry.py   EngineSpec + register/get/all_engines — the pluggable
-                       engine interface predict_controller.py dispatches
-                       through
-  engines.py           Cellpose-SAM engine + registers the two SAM1-era
-                       built-in engines (cellseg1, cellpose) with engine_registry
-  engines_sam2.py       SAM2 engine (lazy `sam2` import; degrades to
-                       available()=False when not installed) — the
-                       flagship z-stack/time-lapse engine, but its 2-D
-                       predict() works like any other registered engine
-  inference_cache.py   model + ViT-embedding cache (smart: changing only
-                       thresholds skips the encoder)
+                       engine interface predict_controller dispatches through
+  engines.py           Cellpose-SAM engine + registers the built-ins
+                       (cellseg1, cellpose)
+  engines_sam2.py      SAM2 engine (lazy `sam2` import; degrades to
+                       available()=False when absent) — flagship for z-stacks
+  inference_cache.py   model + ViT-embedding cache (changing only thresholds
+                       skips the encoder)
   tiling.py            native-resolution tiled inference for large 2-D images
   volume_stitch.py     engine-agnostic z-stack/time-lapse instance linking
-                       (IoU-based, adjacent-slice) — stitches any engine's
-                       independent per-plane masks into one n-D label volume;
-                       see predict_controller.py's _predict_volume for the
-                       per-plane-predict + stitch orchestration that uses it
+                       (IoU-based) — stitches per-plane masks into one n-D volume
   advisor.py           the Assistant's offline diagnostic engine + Ollama bridge
-  analysis.py          per-cell morphometry (skimage regionprops); dispatches
-                       on mask.ndim to a 3-D-specific schema (volume, 3-D
-                       centroid, ...) for z-stack results
+  analysis.py          per-cell morphometry (skimage regionprops); 3-D schema
+                       for z-stack results
   benchmark.py         instance F1/AP vs ground truth
   cohort.py            batch/population aggregation
+  channels.py train_model.py train_state_manager.py experiment_tracking.py
+  tuning_loop.py       (multi-channel IO · training entry + state · Aim tracking
+                       · auto-tune loop)
 
-ML core (shared, imported by the app — do not delete):
+repo-root ML libs (shared, imported by cellseg1_core — do not delete):
   segment_anything/    vendored SAM fork (incl. the mask-NMS generators)
   peft/                LoRA implementation for SAM
   data/                dataset + image IO (data/utils.py has read/resize)
@@ -84,8 +100,7 @@ ML core (shared, imported by the app — do not delete):
   device_utils.py      shared CUDA-capability check (a GPU can be "available"
                        per torch yet ship no kernels for the installed
                        build's CUDA version — see its docstring); used by
-                       set_environment.py, napari_app/widgets/shell.py,
-                       predict_widget.py, train_widget.py, and studio/hardware.py
+                       set_environment.py and studio/hardware.py
 
 server/                THE MULTI-USER BACKEND (opt-in, additive) — the accounts
                        + shared-database contour the desktop apps never had, for
@@ -162,13 +177,13 @@ dependency (e.g. `napari`'s own `pydantic` via `npe2`) is actually installed.
 
 ### Verifying changes without a display
 
-You usually cannot launch the napari GUI. Verify what you can:
+You usually cannot launch the Studio GUI. Verify what you can:
 
 1. `python -m py_compile <file>` for syntax.
 2. Headless **import** check (works for Qt modules — import doesn't need a
    display, only instantiating a `QApplication`/`Viewer` does):
    ```
-   QT_QPA_PLATFORM=offscreen PYTHONPATH=. <python> -c "import napari_app.widgets.predict_widget"
+   QT_QPA_PLATFORM=offscreen PYTHONPATH=. <python> -c "import studio.workspace"
    ```
 3. Extract new logic into **pure, importable functions** and unit-test them
    with a fake engine/predictor (see `tests/test_tiling.py` and
@@ -188,7 +203,7 @@ throwaway venv that installs *only* the declared group — run from the repo
 root, **no trailing `.`**: that would also pull in the project's own
 `[project.dependencies]` (torch/napari/PyQt6 — everything this check exists
 to exclude), silently turning it back into the full-env check it's supposed
-to replace (`pytest.ini`'s `pythonpath = .` is what makes `napari_app`/`data`/
+to replace (`pytest.ini`'s `pythonpath = .` is what makes `cellseg1_core`/`data`/
 etc. importable with nothing installed, so the package itself never needs to
 be):
 ```
@@ -214,9 +229,7 @@ python3.12 -m venv /tmp/civenv && /tmp/civenv/bin/pip install --group test \
   here (GUI, model) goes behind an **opt-in flag, off by default**, so existing
   behaviour is byte-for-byte unchanged (see the `tiled` toggle for the pattern).
 - **The single prediction choke point** is `_predict_cached(config)` in
-  `napari_app/core/predict_controller.py` (re-exported by
-  `napari_app/widgets/predict_widget.py`, which existing wiring tests still
-  import it through). `PredictController` in the same module owns config
+  `cellseg1_core/predict_controller.py`. `PredictController` in the same module owns config
   building (`build_config`/`sam_config`) and predict/batch/benchmark
   orchestration; it takes plain dicts and plain callbacks, not Qt widgets/
   signals, so it's unit-tested without PyQt6/torch (`tests/
