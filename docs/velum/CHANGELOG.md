@@ -5,6 +5,38 @@ What actually shipped in Studio, dated, newest first. (The repo-wide log is
 
 ---
 
+## 2026-07-22 — Removed the synthetic "sample dataset" (fabricated F1 hurt credibility)
+
+The bundled demo project (`studio/sample_data.py`, shipped earlier the same
+day) synthesised a DAPI-style nuclei field **and a perturbed "engine result"
+so a fabricated F1 of ~0.94 fell out** — then presented that manufactured
+number as if it were a real evaluation. For a tool whose whole value rests on
+honest segmentation metrics, showing a hardcoded fake accuracy on
+procedurally-generated cells is a credibility liability, not an onboarding win
+(a microscopist who realises the 0.94 is invented trusts the tool *less*).
+Removed on the product owner's call.
+
+- Deleted `studio/sample_data.py` + `studio/tests/test_sample_data.py`.
+- Dropped the startup `ensure_sample_project` seeding, the Segment empty-state
+  **"Explore the sample dataset"** button (its `on_open_sample` hook removed
+  from `WorkspaceScreen`), the Home **"Open Sample"** quick card (replaced with
+  a **Datasets** card that navigates to the new tab), the ⌘K **Open Sample**
+  command, and the Guide's **"Open a sample"** step.
+- The Segment "No project open" state is now honest: **New Project** /
+  **Open a Project**, nothing fabricated.
+- Verified: affected suites green (home/guide/workspace/app/command wiring);
+  offscreen screenshots confirm the button is gone and the Home card row reads
+  New Project / Import Images / Train a Model / Datasets.
+
+> **Flagged, not touched here:** `project_controller._seed_sample_projects()`
+> is a *separate* mechanism that seeds **6 fake demo projects** into a fresh
+> store (the "794 images / 296.4k cells / F1 0.93" the Home hero shows on first
+> launch). Same fabricated-data concern, bigger surface — left for a separate
+> decision since removing it changes the whole first-run Home/Projects
+> experience to empty.
+
+---
+
 ## 2026-07-22 — Datasets are now a first-class tab, not just an export button
 
 The one-click "Export dataset" (shipped earlier the same day) was too thin for
