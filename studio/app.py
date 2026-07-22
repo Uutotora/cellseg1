@@ -151,7 +151,11 @@ class StudioWindow(QMainWindow):
         # core) reach the Logs console's shared LogBus.
         install_handler()
         self._theme_name = theme_name
-        self._projects = project_controller or ProjectController()
+        # seed_if_empty=False: a fresh install starts with an honest, empty
+        # library -- never fabricated demo projects (and their invented
+        # image/cell/F1 stats) presented as real. The seeding path stays for
+        # tests that need sample data to exercise search/sort/filter.
+        self._projects = project_controller or ProjectController(seed_if_empty=False)
         self._train = train_controller or TrainController()
         self._segment = segment_controller or SegmentController()
         self._datasets = DatasetController(segment=self._segment)

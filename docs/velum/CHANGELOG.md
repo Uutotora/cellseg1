@@ -24,16 +24,20 @@ Removed on the product owner's call.
   command, and the Guide's **"Open a sample"** step.
 - The Segment "No project open" state is now honest: **New Project** /
   **Open a Project**, nothing fabricated.
-- Verified: affected suites green (home/guide/workspace/app/command wiring);
-  offscreen screenshots confirm the button is gone and the Home card row reads
-  New Project / Import Images / Train a Model / Datasets.
-
-> **Flagged, not touched here:** `project_controller._seed_sample_projects()`
-> is a *separate* mechanism that seeds **6 fake demo projects** into a fresh
-> store (the "794 images / 296.4k cells / F1 0.93" the Home hero shows on first
-> launch). Same fabricated-data concern, bigger surface — left for a separate
-> decision since removing it changes the whole first-run Home/Projects
-> experience to empty.
+- **Also removed the bigger instance of the same problem** (found while
+  screenshotting Home, confirmed with the product owner): the app no longer
+  seeds **6 fake demo projects** into a fresh store. `StudioWindow` now builds
+  its `ProjectController` with `seed_if_empty=False`, so a fresh install opens
+  an honest empty library — Home shows `0 projects / 0 images / 0 cells / — F1`
+  and "No projects yet", Projects shows its ghost "New Project" card — instead
+  of a fabricated `794 images / 296.4k cells / F1 0.93` hero. The seeding path
+  (`_seed_sample_projects`/`_SEED_PROJECTS`) stays *only* as a test fixture (a
+  dozen `test_project_controller` search/sort/filter tests legitimately need
+  sample data); it is never reached by the product.
+- Verified: affected suites green (home/guide/workspace/app/command/project
+  wiring); offscreen screenshots confirm the button is gone, the Home card row
+  reads New Project / Import Images / Train a Model / Datasets, and both the
+  empty Home and empty Projects degrade gracefully with honest zeros.
 
 ---
 
