@@ -5,10 +5,11 @@ CommandPalette``: full-window overlay, click-outside-to-close, Escape via the
 window's shortcut) implementing the Label Studio 3-step pattern
 ``docs/velum/BACKLOG.md`` calls for: name & description -> import images ->
 pick an engine. The final step writes through the real ``ProjectStore``
-(``studio/project.py``). Image files are only ever collected as paths (drag
-&drop or a native file picker) — never opened, decoded or previewed — so this
-module stays exactly as dependency-free as the rest of the design skeleton
-(no napari, no torch, no ``data.utils``).
+(``studio/project.py``). Image files are collected as paths (drag &drop or a
+native file picker); the import step shows a small cached **thumbnail** of the
+first few (decoded at reduced size via ``QImageReader``, degrading to an icon
+for formats Qt can't read, e.g. native ND2/CZI/LIF). No napari/torch/
+``data.utils`` — Qt's own image reader only, so the module stays light.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImageReader, QPixmap
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QLineEdit, QFileDialog,
 )
@@ -240,13 +242,50 @@ class NewProjectDialog(QWidget):
             v.addWidget(label("Optional — you can add images later.", 11.5, t["text_muted"]))
         return w
 
+    _THUMB = 40
+
+    def _thumb(self, path: str) -> Optional[QPixmap]:
+        """A small, cached preview for ``path`` (``None`` if it can't be decoded,
+        e.g. a native microscopy format QImageReader doesn't handle). Decoded at
+        reduced size so even a large image is cheap to preview."""
+        if path in self._thumb_cache:
+            pm = self._thumb_cache[path]
+            return pm if not pm.isNull() else None
+        pm = QPixmap()
+        try:
+            reader = QImageReader(path)
+            reader.setAutoTransform(True)
+            img = reader.read()   # Qt's own decoder; null for ND2/CZI/LIF etc.
+            if not img.isNull():
+                pm = QPixmap.fromImage(img).scaled(
+                    self._THUMB, self._THUMB, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+        except Exception:
+            pm = QPixmap()
+        self._thumb_cache[path] = pm
+        return pm if not pm.isNull() else None
+
     def _file_row(self, idx: int, path: str) -> QWidget:
         t = self._t
         row = QWidget()
         row.setStyleSheet("background:transparent;")
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(6)
+        h.setSpacing(9)
+
+        thumb = QLabel()
+        thumb.setFixedSize(self._THUMB, self._THUMB)
+        thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pm = self._thumb(path)
+        if pm is not None:
+            thumb.setPixmap(pm)
+            thumb.setStyleSheet(f"background:{t['inset']}; border-radius:6px;")
+        else:
+            thumb.setPixmap(icons.icon("image", t["text_muted"], 20).pixmap(20, 20))
+            thumb.setStyleSheet(f"background:{t['inset']}; border:1px solid {t['border']};"
+                                f"border-radius:6px;")
+        h.addWidget(thumb)
+
         name = label(Path(path).name, 12, t["text_subtle"])
         name.setStyleSheet(name.styleSheet() + f"font-family:{theme.MONO};")
         h.addWidget(name, 1)
@@ -353,6 +392,7 @@ class NewProjectDialog(QWidget):
         self._description = ""
         self._image_paths: list[str] = []
         self._engine_idx = 0
+        self._thumb_cache: dict[str, QPixmap] = {}
 
     def open(self) -> None:
         self._reset()

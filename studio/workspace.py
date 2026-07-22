@@ -154,6 +154,11 @@ class WorkspaceScreen(QWidget):
         self._thumb_cache: dict[str, QPixmap] = {}
         self._current_image_path: Optional[str] = None
         self._current_image_array: Optional[np.ndarray] = None
+        # Which image a background predict is running on — so a result that
+        # arrives after the user switched image/project is discarded, not
+        # painted onto the wrong picture (cellpose runs can be minutes long).
+        self._predicting_path: Optional[str] = None
+        self._predicting_project = None   # the project that predict belongs to
         self._last_result: Optional[dict] = None
         self._gt_metrics: Optional[dict] = None
         self._bench_rows: list[tuple[str, str]] = []
@@ -448,7 +453,7 @@ class WorkspaceScreen(QWidget):
         self._export_btn_topbar.clicked.connect(self._export_csv)
         row.addWidget(self._export_btn_topbar)
         self._run_btn_topbar = PillButton("Run", t, "primary", "run", small=True)
-        self._run_btn_topbar.clicked.connect(self._start_predict)
+        self._run_btn_topbar.clicked.connect(lambda: self._start_predict())
         row.addWidget(self._run_btn_topbar)
         # ── right-panel (inspector) toggle ────────────────────────────────────
         self._toggle_right_btn = IconButton("panel_right", t, 30, "Hide / show the Segment · Results panel",
@@ -787,6 +792,8 @@ class WorkspaceScreen(QWidget):
             except Exception:
                 pass
         if self._canvas is not None:
+            self._canvas.clear_roi()       # a box drawn on the previous image no longer applies
+            self._canvas.set_highlight(0)  # clear any inspected-cell highlight
             self._canvas.mip = False  # the previous image's volume context (if any) no longer applies
             self._canvas.home()
             self._sync_toolbars()
@@ -2007,7 +2014,7 @@ class WorkspaceScreen(QWidget):
         row.setSpacing(9)
         self._run_btn_bar = PillButton("Run segmentation", t, "primary", "run")
         self._run_btn_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._run_btn_bar.clicked.connect(self._start_predict)
+        self._run_btn_bar.clicked.connect(lambda: self._start_predict())
         row.addWidget(self._run_btn_bar, 1)
         row.addWidget(IconButton("batch", t, 38, "Batch predict", self._start_batch))
         v.addLayout(row)
@@ -2021,6 +2028,10 @@ class WorkspaceScreen(QWidget):
         self._progress_frame.setVisible(running)
 
     def _start_predict(self, region: Optional[tuple] = None) -> None:
+        # Defensive: a Qt ``clicked`` signal passes a ``checked`` bool as the
+        # first positional arg, which must never be mistaken for a region box.
+        if not isinstance(region, (tuple, list)):
+            region = None
         if self._project is None:
             self._toast("No project open", "Open or create a project first.")
             return
@@ -2037,6 +2048,8 @@ class WorkspaceScreen(QWidget):
             return
         del config_ok  # only built to validate synchronously before spawning the thread
         self._run_started_at = time.monotonic()
+        self._predicting_path = self._current_image_path
+        self._predicting_project = self._project
         self._set_running(True)
         self._segment.run_predict_async(
             self._project, self._current_image_path, region=region,
@@ -2062,6 +2075,19 @@ class WorkspaceScreen(QWidget):
             pass
 
     def _on_predict_result(self, img, mask, _stack) -> None:
+        # A slow run can finish after the user has already switched to another
+        # image or project. Don't paint this result onto whatever is on screen
+        # now — save it to disk for the image it actually belongs to (so the
+        # work isn't lost) and stop.
+        if self._predicting_path is not None and self._predicting_path != self._current_image_path:
+            if self._predicting_project is not None:
+                try:
+                    self._segment.save_result_mask(
+                        self._predicting_project, self._predicting_path,
+                        np.ascontiguousarray(mask).astype(np.int32))
+                except OSError:
+                    pass
+            return
         self._current_image_array = img
         mask = np.ascontiguousarray(mask).astype(np.int32)
         seg = self._layers.find("Segmentation")

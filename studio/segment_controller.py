@@ -200,8 +200,9 @@ class SegmentController:
                           on_tile: Optional[Callable[[int, int], None]] = None) -> threading.Thread:
         config = self.build_config(project, image_path)
         # region = (r0, c0, r1, c1) in image pixels — segment only inside the
-        # box the user dragged on the canvas. Absent → whole image, unchanged.
-        if region is not None:
+        # box the user dragged on the canvas. Absent (or not a 4-tuple) → whole
+        # image, unchanged.
+        if isinstance(region, (tuple, list)) and len(region) == 4:
             config["region"] = tuple(int(v) for v in region)
         return self._pc().run_prediction_async(
             config, on_tile=on_tile, on_result=on_result, on_log=on_log, on_finish=on_finish)

@@ -18,6 +18,34 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-22 — Fixes: Run crash, cross-image races, New-Project thumbnails
+
+Follow-up on live user testing of the two canvas features below.
+
+- **Critical: every Run crashed** (`TypeError: 'bool' object is not iterable`).
+  The two Run buttons connected `clicked` straight to `_start_predict`, so
+  Qt's `checked` bool arrived as the new `region` param and
+  `tuple(int(v) for v in region)` blew up. Fixed: both connections wrapped in
+  `lambda: self._start_predict()`, plus defensive `isinstance` guards in
+  `_start_predict` and `SegmentController.run_predict_async` (a 4-tuple/list or
+  nothing).
+- **Cross-image / cross-project result races.** A slow run (cellpose can be
+  minutes) that finished *after* the user switched image or project used to
+  paint its mask onto whatever was on screen. Now the workspace records which
+  image+project a predict belongs to (`_predicting_path`/`_predicting_project`)
+  and, if it's no longer current when the result arrives, saves the mask to
+  disk for the right image and does **not** repaint the wrong one.
+- **Stale canvas state on image switch.** A segmentation box or inspected-cell
+  highlight drawn on one image no longer lingers onto the next — `_select_image`
+  clears both (`canvas.clear_roi()` / `set_highlight(0)`).
+- **New-Project dialog shows image thumbnails.** The import step now renders a
+  small cached preview of the first five images (decoded via `QImageReader`,
+  degrading to an icon for formats Qt can't read), instead of filenames alone.
+- **Confirmed NOT a bug:** opening/creating a project does not auto-run
+  segmentation (`_load_project` only selects the first image); the apparent
+  "auto-run" was the Run crash's traceback. Cellpose-SAM being slow is the real
+  model on CPU/MPS (and a first-run weight download), not a regression.
+
 ## 2026-07-22 — Canvas: click-to-inspect a cell + segment-inside-a-box
 
 Two interactive canvas tools in the Segment workspace (floating tool strip +
