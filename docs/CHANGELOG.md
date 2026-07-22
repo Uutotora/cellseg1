@@ -18,6 +18,37 @@ narrative, not a mirror of it. Don't transcribe every commit; one bullet per
 
 ---
 
+## 2026-07-22 — Prototype Memory Bank: training-free few-shot retrieval core
+
+New `velum_core/memory_bank.py` — the buildable, GPU-free core of the
+"CellSeg1 v2" idea of giving the model *retrievable experience* instead of
+dissolving a support image into LoRA weights. This is the PerSAM / Matcher
+family of **training-free** SAM personalisation: store the feature *prototype*
+of an annotated cell (pooled from the ViT embedding the app already caches in
+`inference_cache`), and at inference retrieve the most similar prototype and
+read SAM point prompts off its similarity map.
+
+- **Real, unit-tested (pure NumPy, no torch/GPU/model):** masked prototype
+  pooling (`masked_prototype`: feature map + instance mask → one L2-normalised
+  vector), cosine-similarity retrieval over a persistent, label-filterable
+  `MemoryBank` (add/remove/retrieve/aggregate/labels), per-location
+  `similarity_map`, and `points_from_similarity` — the training-free "dynamic
+  prompt generator" that turns a retrieved prototype's heatmap into positive/
+  negative SAM point prompts (PerSAM's location prior). Local, inspectable
+  JSON+`.npz` store (prototypes are your data, on your machine). 19 tests
+  (`tests/test_memory_bank.py`).
+- **Integration seam (not yet wired into the live predict path):**
+  `prototype_from_predictor_features` pools from a real `SamPredictor.features`
+  tensor; the caller supplies it. Wiring it into a real predict run and
+  measuring an actual segmentation-quality uplift needs the real model + a GPU
+  + a benchmark — **none available in this sandbox, so deliberately not done or
+  claimed here.** The retrieval/pooling/prompt *math* is verified with
+  synthetic embeddings; the end-to-end ML gain is not.
+- **Deliberately out of scope** (research effort, needs training + validation,
+  can't be shipped as verified code from here): the *learned* prompt-generator
+  network and the CNN×ViT multi-scale feature-fusion module from the same v2
+  sketch — documented as roadmap, not implemented.
+
 ## 2026-07-22 — Model Library: a browsable model hub + sample data
 
 A **Library** section inside *Models & Train*

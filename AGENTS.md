@@ -87,6 +87,10 @@ velum_core/         THE ML CORE (engine-agnostic, Qt-free, no napari) — what
                        for z-stack results
   benchmark.py         instance F1/AP vs ground truth
   cohort.py            batch/population aggregation
+  memory_bank.py       training-free prototype memory + retrieval (PerSAM-style:
+                       pool a cell's ViT-embedding prototype, retrieve by cosine
+                       similarity, derive SAM prompts from the similarity map).
+                       Pure-NumPy core; not yet wired into the live predict path
   channels.py train_model.py train_state_manager.py experiment_tracking.py
   tuning_loop.py       (multi-channel IO · training entry + state · Aim tracking
                        · auto-tune loop)
